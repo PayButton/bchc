@@ -12,12 +12,16 @@
 static const uint64_t ONE_MEGABYTE = 1000000;
 /** The maximum allowed size for a transaction, in bytes */
 static const uint64_t MAX_TX_SIZE = ONE_MEGABYTE;
-/** The minimum allowed size for a transaction, in bytes */
-static const uint64_t MIN_TX_SIZE = 100;
+/** The minimum allowed size for a transaction, in bytes.
+ * ABCH: Implements CHIP-2021-01 Minimum Transaction Size. */
+static const uint64_t MIN_TX_SIZE = 65;
 /** The maximum allowed size for a block, before the UAHF */
 static const uint64_t LEGACY_MAX_BLOCK_SIZE = ONE_MEGABYTE;
-/** Default setting for maximum allowed size for a block, in bytes */
-static const uint64_t DEFAULT_MAX_BLOCK_SIZE = 32 * ONE_MEGABYTE;
+/** Default setting for maximum allowed size for a block, in bytes.
+ * ABCH: Disabled because of CHIP-2023-04 Adaptive Blocksize Limit Algorithm for
+ * Bitcoin Cash.
+ */
+static const uint64_t DEFAULT_MAX_BLOCK_SIZE = 0x7fffffffffffffff;
 /** Allowed number of signature check operations per transaction. */
 static const uint64_t MAX_TX_SIGCHECKS = 3000;
 /**

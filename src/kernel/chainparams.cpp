@@ -203,7 +203,7 @@ public:
                                              std::end(pnSeed6_main));
 
         fDefaultConsistencyChecks = false;
-        fRequireStandard = true;
+        fRequireStandard = false; // ABCH: allow non-standard txs in mempool
         m_is_test_chain = false;
         m_is_mockable_chain = false;
 

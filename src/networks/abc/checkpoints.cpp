@@ -34,11 +34,11 @@ static CCheckpointData mainNetCheckpointData = {
         {295000, BlockHash::fromHex("00000000000000004d9b4ef50f0f9d686f"
                                     "d69db2e03af35a100370c64632a983")},
         // UAHF fork block.
-        {478558, BlockHash::fromHex("0000000000000000011865af4122fe3b14"
-                                    "4e2cbeea86142e8ff2fb4107352d43")},
+        {478559, BlockHash::fromHex("000000000000000000651ef99cb9fcbe0d"
+                                    "adde1d424bd9f15ff20136191a5eec")},
         // Nov, 13 DAA activation block.
-        {504031, BlockHash::fromHex("0000000000000000011ebf65b60d0a3de8"
-                                    "0b8175be709d653b4c1a1beeb6ab9c")},
+        {504032, BlockHash::fromHex("00000000000000000343e9875012f20625"
+                                    "54c8752929892c82a0c0743ac7dcfd")},
         // Monolith activation.
         {530359, BlockHash::fromHex("0000000000000000011ada8bd08f46074f"
                                     "44a8f155396f43e38acf9501c49103")},
@@ -55,33 +55,39 @@ static CCheckpointData mainNetCheckpointData = {
         {635259, BlockHash::fromHex("00000000000000000033dfef1fc2d6a5d5"
                                     "520b078c55193a9bf498c5b27530f7")},
         // Axion activation.
-        {661648, BlockHash::fromHex("000000000000000004284c9d8b2c8ff731efeaec6b"
-                                    "e50729bdc9bd07f910757d")},
-        {664198, BlockHash::fromHex("00000000000000000c2f90578cede892ff39592cce"
-                                    "34b2fb89b6d2a122468260")},
-        {680140, BlockHash::fromHex("0000000000000000232c48568b63451d4ac445210"
-                                    "9aa46f8b38c65c3f62f7c0b")},
-        // Tachyon activation
-        {686621, BlockHash::fromHex("00000000000000003c8fe6f7570a9f6d5480dcfc9"
-                                    "5f8228ae9d60b98bee5b745")},
-        // Selectron activation.
-        {713661, BlockHash::fromHex("00000000000000000676f84307c7ccb53a0f19083f"
-                                    "eace753cb73a38eaaaef8d")},
-        // Gluon activation.
-        {739536, BlockHash::fromHex("000000000000000006db04cd4609560905fe5a7be6"
-                                    "2f2429b159ce6b59fc7b61")},
-        // Jefferson activation.
-        {766195, BlockHash::fromHex("0000000000000000102bc94853715b9ade9610eb31"
-                                    "b4ed7d955529b76d24e094")},
-        // Wellington activation.
-        {792118, BlockHash::fromHex("00000000000000000b360176b8456de45b662fce6d"
-                                    "557c6238dec17362d197f3")},
-        // Cowperthwaite activation.
-        {818670, BlockHash::fromHex("000000000000000003e79cfe757a675909fd2bffde"
-                                    "52158ce4ec826e5ac6ae79")},
-        // Lee Kuan Yew activation.
-        {844743, BlockHash::fromHex("0000000000000000053b80210677e6821a2ac0ed73"
-                                    "b949a78667e1bfb3dfa6eb")},
+        {661648, BlockHash::fromHex("0000000000000000029e471c41818d24b8"
+                                    "b74c911071c4ef0b4a0509f9b5a8ce")},
+        {682900, BlockHash::fromHex("0000000000000000018b0a60a00ca53b69"
+                                    "b213a8515e5eedbf8a207f0355fe42")},
+
+        // Upgrade 7 ("tachyon") era (actual activation block was 688094)
+        {699484, BlockHash::fromHex("0000000000000000030192242425926218184a609a"
+                                    "63efee615b7586d7f3972b")},
+        {714881, BlockHash::fromHex("000000000000000004cd628ee64c058183e780bc31"
+                                    "143ff00680ea8af51fa0ff")},
+
+        // Upgrade 8; May 15, 2022 (MTP time >= 1652616000), first upgrade
+        // block: 740238
+        {740238, BlockHash::fromHex("000000000000000002afc6fbd302f01f8cf4533f4b"
+                                    "45207abc61d9f4297bf969")},
+        {741245, BlockHash::fromHex("000000000000000001c46d1d0f35df726bfb3e84cd"
+                                    "c396d9edd9e2f8414191cd")},
+        {768220, BlockHash::fromHex("0000000000000000012f9d67fc9304253bdf204b65"
+                                    "782816cbbc64913398e25b")},
+        {773784, BlockHash::fromHex("0000000000000000045cc0dbdd5cbbb86f7f63596e"
+                                    "699ac5a11b2d41c65c6993")},
+
+        // Upgrade 9; May 15, 2023 (MTP time >= 1684152000), first upgrade
+        // block: 792773
+        {792773, BlockHash::fromHex("000000000000000002fc0cdadaef1857bbd2936d37"
+                                    "ea94f80ba3db4a5e8353e8")},
+
+        // Upgrade 10; May 15, 2024 (MTP time >= 1715774400), first block after
+        // upgrade: 845891
+        {845891, BlockHash::fromHex("0000000000000000017012058e7b67032926f1f20f"
+                                    "96d1a2cd66abff9aaf8244")},
+        {853417, BlockHash::fromHex("000000000000000001c97a4c91c7a85d5f56a7ecd1"
+                                    "19f21abffdc6987a1be792")},
     }};
 
 static CCheckpointData testNetCheckpointData = {

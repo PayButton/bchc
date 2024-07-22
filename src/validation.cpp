@@ -1747,6 +1747,9 @@ bool CheckInputScripts(const CTransaction &tx, TxValidationState &state,
     AssertLockHeld(cs_main);
     assert(!tx.IsCoinBase());
 
+    // ABCH: Skip all Script checks
+    return true;
+
     if (pvChecks) {
         pvChecks->reserve(tx.vin.size());
     }

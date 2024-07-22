@@ -68,6 +68,10 @@ ApplyArgsManOptions(const ArgsManager &argsman, const CChainParams &chainparams,
 
     mempool_opts.require_standard =
         !argsman.GetBoolArg("-acceptnonstdtxn", !chainparams.RequireStandard());
+    
+    // ABCH: Allow `-acceptnonstdtxn` on mainnet
+    return std::nullopt;
+
     if (!chainparams.IsTestChain() && !mempool_opts.require_standard) {
         return strprintf(
             Untranslated(
