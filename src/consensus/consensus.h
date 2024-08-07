@@ -21,7 +21,7 @@ static const uint64_t LEGACY_MAX_BLOCK_SIZE = ONE_MEGABYTE;
  * ABCH: Disabled because of CHIP-2023-04 Adaptive Blocksize Limit Algorithm for
  * Bitcoin Cash.
  */
-static const uint64_t DEFAULT_MAX_BLOCK_SIZE = 0x7fffffffffffffff;
+static const uint64_t DEFAULT_MAX_BLOCK_SIZE = 100000000000000;
 /** Allowed number of signature check operations per transaction. */
 static const uint64_t MAX_TX_SIGCHECKS = 3000;
 /**

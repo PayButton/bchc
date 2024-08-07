@@ -4770,7 +4770,8 @@ void PeerManagerImpl::ProcessMessage(
         m_connman.PushMessage(&pfrom, msg_maker.Make(NetMsgType::VERACK));
 
         // Signal ADDRv2 support (BIP155).
-        m_connman.PushMessage(&pfrom, msg_maker.Make(NetMsgType::SENDADDRV2));
+	// ABCH: BCHN causes problems
+        // m_connman.PushMessage(&pfrom, msg_maker.Make(NetMsgType::SENDADDRV2));
 
         pfrom.m_has_all_wanted_services =
             HasAllDesirableServiceFlags(nServices);
@@ -4971,11 +4972,12 @@ void PeerManagerImpl::ProcessMessage(
         return;
     }
 
-    if (!pfrom.fSuccessfullyConnected) {
+    // ABCH: BCHN does this, so don't ban
+    /*if (!pfrom.fSuccessfullyConnected) {
         // Must have a verack message before anything else
         Misbehaving(*peer, 10, "non-verack message before version handshake");
         return;
-    }
+    }*/
 
     if (msg_type == NetMsgType::ADDR || msg_type == NetMsgType::ADDRV2) {
         int stream_version = vRecv.GetVersion();

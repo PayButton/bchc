@@ -108,7 +108,7 @@ public:
         consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
 
         // The miner fund is enabled by default on mainnet.
-        consensus.enableMinerFund = true;
+        consensus.enableMinerFund = false;
 
         // The staking rewards are enabled by default on mainnet.
         consensus.enableStakingRewards = true;
