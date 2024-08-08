@@ -1085,6 +1085,8 @@ function convertToTokenInNode(token: proto.Token): Token_InNode {
         tokenType: convertToTokenType(token.tokenType),
         amount: token.amount,
         isMintBaton: token.isMintBaton,
+        capabilities: token.capabilities,
+        commitment: toHex(token.commitment),
     };
 
     // We do not bother including entryIdx for utxos, where it is always -1
@@ -1546,6 +1548,10 @@ export interface Token_InNode {
     amount: string;
     /** Whether the token is a mint baton */
     isMintBaton: boolean;
+    /** CashTokens "NFT" capabilities bitflags */
+    capabilities: number;
+    /** CashTokens "NFT" commitment */
+    commitment: string;
 }
 
 /**
