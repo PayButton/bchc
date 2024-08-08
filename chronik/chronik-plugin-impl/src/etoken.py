@@ -4,7 +4,7 @@
 
 from typing import Literal, NamedTuple, Optional
 
-TokenProtocol = Literal["SLP", "ALP"]
+TokenProtocol = Literal["SLP", "ALP", "CashTokens"]
 
 
 class GenesisInfo(NamedTuple):

@@ -76,7 +76,7 @@ impl TokenTx {
     pub fn token(&self, token_output: &TokenOutput) -> Token {
         Token {
             meta: self.entries[token_output.token_idx].meta,
-            variant: token_output.variant,
+            variant: token_output.variant.clone(),
         }
     }
 
@@ -87,7 +87,7 @@ impl TokenTx {
         SpentToken {
             token: Token {
                 meta: entry.meta,
-                variant: token_output.variant,
+                variant: token_output.variant.clone(),
             },
             group_token_meta: entry.group_token_meta,
         }

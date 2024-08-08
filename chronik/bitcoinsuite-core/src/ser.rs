@@ -143,7 +143,8 @@ fn write_compact_size<S: BitcoinSerializer>(bytes: &mut S, size: u64) {
     }
 }
 
-fn read_compact_size(bytes: &mut Bytes) -> Result<u64, DataError> {
+/// Read a CompactSize (VARINT)
+pub fn read_compact_size(bytes: &mut Bytes) -> Result<u64, DataError> {
     let first_byte = read_array::<1>(bytes)?[0];
     match first_byte {
         0..=0xfc => Ok(first_byte as u64),

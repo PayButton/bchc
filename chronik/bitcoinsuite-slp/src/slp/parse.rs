@@ -59,7 +59,7 @@ pub fn parse(
                 return Ok(None);
             }
             Ok(Some(parsed))
-        },
+        }
         Err(err) if should_ignore_err(&err) => Ok(None),
         Err(err) => Err(err),
     }

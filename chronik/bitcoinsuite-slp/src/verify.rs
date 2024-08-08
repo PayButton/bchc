@@ -441,12 +441,15 @@ impl VerifyContext<'_> {
 
             // All other bare burns are invalid
             bare_burn.is_invalid = true;
-            match input.token.variant {
-                TokenVariant::Atoms(atoms) => {
+            match &input.token.variant {
+                &TokenVariant::Atoms(atoms) => {
                     bare_burn.burn_atoms += u128::from(atoms)
                 }
                 TokenVariant::MintBaton => bare_burn.burns_mint_batons = true,
                 TokenVariant::Unknown(_) => {}
+                TokenVariant::Commitment(commitment) => {
+                    bare_burn.burn_atoms += u128::from(commitment.atoms);
+                }
             }
         }
         bare_burns

@@ -12,6 +12,9 @@ abc-rust-lint = { path = "../abc-rust-lint" }
 
 bitcoinsuite-core = { path = "../bitcoinsuite-core" }
 
+# Ergonomic bitflags
+bitflags = "2.6"
+
 # Efficient byte strings, with ref counted substrings
 bytes = { version = "1.4", features = ["serde"] }
 

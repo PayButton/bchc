@@ -51,7 +51,7 @@ pub enum TxType {
 }
 
 /// "Taint" of a UTXO, e.g a token amount in atoms or mint baton
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum TokenVariant {
     /// UTXO has a token atoms that can be transferred
     Atoms(Atoms),
@@ -61,12 +61,25 @@ pub enum TokenVariant {
     /// This exists to gracefully introduce new token types, so wallets don't
     /// accidentally burn them.
     Unknown(u8),
+    /// CashTokens "NFT" commitment
+    Commitment(TokenCommitment),
+}
+
+/// CashTokens "NFT" commitment
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct TokenCommitment {
+    /// Atoms in the NFT (NFTs can have an amount in CT)
+    pub atoms: Atoms,
+    /// Bitfield of the token capabilities
+    pub capabilities: u8,
+    /// Commitment bytes of the NFT
+    pub commitment: Bytes,
 }
 
 /// A [`TokenVariant`] which also stores at which index the token metadata is
 /// stored. Token transactions can involve multiple tokens, and this allows us
 /// to distinguish them cleanly by referencing a token in a list of tokens.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TokenOutput {
     /// Index of the token metadata in the tx.
     pub token_idx: usize,
@@ -124,6 +137,7 @@ impl TokenVariant {
             &TokenVariant::Atoms(atoms) => atoms,
             TokenVariant::MintBaton => 0,
             TokenVariant::Unknown(_) => 0,
+            TokenVariant::Commitment(commitment) => commitment.atoms,
         }
     }
 
@@ -131,16 +145,43 @@ impl TokenVariant {
     pub fn is_mint_baton(&self) -> bool {
         *self == TokenVariant::MintBaton
     }
+
+    /// CashTokens "NFT" capabilities
+    pub fn capabilities(&self) -> Option<u8> {
+        match self {
+            TokenVariant::Commitment(commitment) => {
+                Some(commitment.capabilities)
+            }
+            _ => None,
+        }
+    }
+
+    /// CashTokens "NFT" capabilities
+    pub fn commitment(&self) -> Option<&Bytes> {
+        match self {
+            TokenVariant::Commitment(commitment) => {
+                Some(&commitment.commitment)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.variant {
+        match &self.variant {
             TokenVariant::Atoms(atoms) => write!(f, "{atoms}")?,
             TokenVariant::MintBaton => write!(f, "Mint baton")?,
             TokenVariant::Unknown(_) => {
                 return write!(f, "{}", self.meta.token_type)
             }
+            TokenVariant::Commitment(commitment) => write!(
+                f,
+                "{} (capabilities: {:02x}, commitment: {:?})",
+                commitment.atoms,
+                commitment.capabilities,
+                commitment.commitment,
+            )?,
         };
         write!(f, " of {} ({})", self.meta.token_id, self.meta.token_type)
     }

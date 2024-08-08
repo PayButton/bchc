@@ -160,7 +160,7 @@ impl TxModule {
                         py,
                         &py_token_entries[token.token_idx],
                         token.token_idx,
-                        token.variant,
+                        &token.variant,
                     )
                 })
                 .transpose()?,
@@ -232,7 +232,7 @@ impl TxModule {
                         py,
                         &py_token_entries[entry_idx],
                         entry_idx,
-                        token.token.variant,
+                        &token.token.variant,
                     ))
                 })
                 .transpose()?,

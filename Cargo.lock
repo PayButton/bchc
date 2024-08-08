@@ -294,6 +294,7 @@ version = "0.1.0"
 dependencies = [
  "abc-rust-lint",
  "bitcoinsuite-core",
+ "bitflags",
  "bytes",
  "hex",
  "itertools 0.10.5",

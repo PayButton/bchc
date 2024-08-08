@@ -227,6 +227,11 @@ impl<'m> TxTokenData<'m> {
             entry_idx,
             atoms: token.variant.atoms(),
             is_mint_baton: token.variant.is_mint_baton(),
+            capabilities: token.variant.capabilities().unwrap_or_default() as _,
+            commitment: token
+                .variant
+                .commitment()
+                .map_or(vec![], |commitment| commitment.to_vec()),
         })
     }
 
@@ -244,6 +249,11 @@ impl<'m> TxTokenData<'m> {
             entry_idx: token_output.token_idx as _,
             atoms: token.variant.atoms() as _,
             is_mint_baton: token.variant.is_mint_baton(),
+            capabilities: token.variant.capabilities().unwrap_or_default() as _,
+            commitment: token
+                .variant
+                .commitment()
+                .map_or(vec![], |commitment| commitment.to_vec()),
         })
     }
 
@@ -333,6 +343,9 @@ pub fn make_token_type_proto(token_type: TokenType) -> proto::TokenType {
                     AlpTokenType::Unknown(unknown) => unknown as _,
                 })
             }
+            TokenType::CashTokens => {
+                proto::token_type::TokenType::CashTokens(proto::Empty {})
+            }
         }),
     }
 }
@@ -372,6 +385,11 @@ pub fn make_utxo_token_proto(token: &Token) -> proto::Token {
         entry_idx: -1,
         atoms: token.variant.atoms(),
         is_mint_baton: token.variant.is_mint_baton(),
+        capabilities: token.variant.capabilities().unwrap_or_default() as _,
+        commitment: token
+            .variant
+            .commitment()
+            .map_or(vec![], |commitment| commitment.to_vec()),
     }
 }
 
