@@ -1,6 +1,6 @@
 //! Module for Chronik handlers.
 
-use std::{collections::HashMap, fmt::Display, str::FromStr};
+use std::{borrow::Cow, collections::HashMap, fmt::Display, str::FromStr};
 
 use abc_rust_error::{Report, Result};
 use bitcoinsuite_slp::token_id::TokenId;
@@ -84,7 +84,8 @@ pub async fn handle_script_confirmed_txs(
     let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     let script = script_variant.to_script();
-    script_history.confirmed_txs(&script, page_num as usize, page_size as usize)
+    let script = Cow::Borrowed(&script);
+    script_history.confirmed_txs(script, page_num as usize, page_size as usize)
 }
 
 /// Return a page of the tx history of the given script, in reverse
@@ -102,7 +103,8 @@ pub async fn handle_script_history(
     let page_num: u32 = get_param(query_params, "page")?.unwrap_or(0);
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     let script = script_variant.to_script();
-    script_history.rev_history(&script, page_num as usize, page_size as usize)
+    let script = Cow::Borrowed(&script);
+    script_history.rev_history(script, page_num as usize, page_size as usize)
 }
 
 /// Return a page of the unconfirmed txs of the given script.
@@ -116,7 +118,8 @@ pub async fn handle_script_unconfirmed_txs(
     let script_variant = parse_script_variant_hex(script_type, payload)?;
     let script_history = indexer.script_history(node)?;
     let script = script_variant.to_script();
-    script_history.unconfirmed_txs(&script)
+    let script = Cow::Borrowed(&script);
+    script_history.unconfirmed_txs(script)
 }
 
 /// Return the UTXOs of the given script.
@@ -129,7 +132,7 @@ pub async fn handle_script_utxos(
     let script_variant = parse_script_variant_hex(script_type, payload)?;
     let script_utxos = indexer.script_utxos()?;
     let script = script_variant.to_script();
-    let utxos = script_utxos.utxos(&script)?;
+    let utxos = script_utxos.utxos(Cow::Borrowed(&script))?;
     Ok(proto::ScriptUtxos {
         script: script.bytecode().to_vec(),
         utxos,

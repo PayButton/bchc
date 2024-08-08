@@ -2,10 +2,13 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+use std::borrow::Cow;
+
 use bitcoinsuite_core::{
     script::{compress_script_variant, Script},
     tx::Tx,
 };
+use bitcoinsuite_slp::cashtokens;
 use bytes::Bytes;
 
 use crate::{
@@ -45,7 +48,7 @@ pub struct ScriptGroupIter<'a> {
 }
 
 impl<'a> Iterator for ScriptGroupIter<'a> {
-    type Item = MemberItem<&'a Script>;
+    type Item = MemberItem<Cow<'a, Script>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.is_coinbase && !self.is_outputs {
@@ -53,13 +56,20 @@ impl<'a> Iterator for ScriptGroupIter<'a> {
         }
         let idx = self.idx;
         self.idx += 1;
+        let mut script = if self.is_outputs {
+            Cow::Borrowed(&self.tx.outputs.get(idx)?.script)
+        } else {
+            Cow::Borrowed(
+                &self.tx.inputs.get(idx)?.coin.as_ref()?.output.script,
+            )
+        };
+        if let Ok(Some(parsed)) = cashtokens::parse_script(script.as_ref()) {
+            // Cut out CashTokens prefix
+            script = Cow::Owned(parsed.script);
+        }
         Some(MemberItem {
             idx,
-            member: if self.is_outputs {
-                &self.tx.outputs.get(idx)?.script
-            } else {
-                &self.tx.inputs.get(idx)?.coin.as_ref()?.output.script
-            },
+            member: script,
         })
     }
 }
@@ -67,7 +77,7 @@ impl<'a> Iterator for ScriptGroupIter<'a> {
 impl Group for ScriptGroup {
     type Aux = ();
     type Iter<'a> = ScriptGroupIter<'a>;
-    type Member<'a> = &'a Script;
+    type Member<'a> = Cow<'a, Script>;
     type MemberSer = Bytes;
     type UtxoData = UtxoDataValue;
 
@@ -118,6 +128,8 @@ impl Group for ScriptGroup {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use bitcoinsuite_core::{
         script::Script,
         tx::{Coin, Tx, TxId, TxInput, TxMut, TxOutput},
@@ -157,14 +169,15 @@ mod tests {
                 ..Default::default()
             },
         );
-        let make_script = |script: Vec<u8>| Script::new(script.into());
+        let make_script =
+            |script: Vec<u8>| Cow::Owned(Script::new(script.into()));
         fn make_member_item(
             idx: usize,
             script: &Script,
-        ) -> MemberItem<&Script> {
+        ) -> MemberItem<Cow<'_, Script>> {
             MemberItem {
                 idx,
-                member: script,
+                member: Cow::Borrowed(script),
             }
         }
         let query = GroupQuery {
@@ -174,10 +187,10 @@ mod tests {
         assert_eq!(
             tx_members_for_group(&script_group, query, &()).collect::<Vec<_>>(),
             vec![
-                &make_script(vec![0x51]),
-                &make_script(vec![0x52]),
-                &make_script(vec![0x53]),
-                &make_script(vec![0x51]),
+                make_script(vec![0x51]),
+                make_script(vec![0x52]),
+                make_script(vec![0x53]),
+                make_script(vec![0x51]),
             ],
         );
         assert_eq!(
@@ -202,8 +215,8 @@ mod tests {
         assert_eq!(
             tx_members_for_group(&script_group, query, &()).collect::<Vec<_>>(),
             vec![
-                &Script::new(vec![0x53].into()),
-                &Script::new(vec![0x51].into()),
+                Cow::Owned(Script::new(vec![0x53].into())),
+                Cow::Owned(Script::new(vec![0x51].into())),
             ],
         );
         assert_eq!(
@@ -219,7 +232,7 @@ mod tests {
         );
 
         assert_eq!(
-            script_group.ser_member(&&make_script(vec![0x53])),
+            script_group.ser_member(&make_script(vec![0x53])),
             [[0x07].as_ref(), &[0x53]].concat(),
         );
     }

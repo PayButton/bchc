@@ -4,7 +4,7 @@
 
 //! Module for [`handle_subscribe_socket`].
 
-use std::{collections::HashMap, time::Duration};
+use std::{borrow::Cow, collections::HashMap, time::Duration};
 
 use abc_rust_error::Result;
 use axum::extract::ws::{self, WebSocket};
@@ -162,15 +162,15 @@ impl SubRecv {
                 }
             }
             WsSubType::Script(script_variant) => {
-                let script = script_variant.to_script();
+                let script = Cow::Owned(script_variant.to_script());
                 if sub.is_unsub {
                     log_chronik!("WS unsubscribe from {}\n", script_variant);
                     std::mem::drop(self.scripts.remove(&script_variant));
-                    subs.subs_script_mut().unsubscribe_from_member(&&script)
+                    subs.subs_script_mut().unsubscribe_from_member(&script)
                 } else {
                     log_chronik!("WS subscribe to {}\n", script_variant);
                     let recv =
-                        subs.subs_script_mut().subscribe_to_member(&&script);
+                        subs.subs_script_mut().subscribe_to_member(&script);
                     self.scripts.insert(script_variant, recv);
                 }
             }
@@ -216,7 +216,9 @@ impl SubRecv {
         for (script_variant, receiver) in self.scripts {
             std::mem::drop(receiver);
             subs.subs_script_mut()
-                .unsubscribe_from_member(&&script_variant.to_script());
+                .unsubscribe_from_member(&Cow::Borrowed(
+                    &script_variant.to_script(),
+                ));
         }
     }
 }
