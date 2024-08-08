@@ -9,7 +9,7 @@ use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{
-    alp,
+    alp, cashtokens,
     color::ColorError::*,
     empp,
     parsed::{ParsedData, ParsedGenesis, ParsedMintData, ParsedTxType},
@@ -68,6 +68,8 @@ pub enum ParseError {
     Slp(slp::ParseError),
     /// Parsing a pushdata in an OP_RETURN as ALP failed
     Alp(alp::ParseError),
+    /// Parsing a CashTokens token prefix failed
+    CashTokens(cashtokens::ParseError),
 }
 
 /// Report of a failed parsing attempt
@@ -556,7 +558,7 @@ impl ColoredTx {
         let section = &self.sections[token_output.token_idx];
         Token {
             meta: section.meta,
-            variant: token_output.variant,
+            variant: token_output.variant.clone(),
         }
     }
 }
@@ -591,6 +593,7 @@ impl std::fmt::Display for ParseError {
             ParseError::Empp(err) => write!(f, "eMPP error: {err}"),
             ParseError::Slp(err) => write!(f, "SLP error: {err}"),
             ParseError::Alp(err) => write!(f, "ALP error: {err}"),
+            ParseError::CashTokens(err) => write!(f, "CashTokens error: {err}"),
         }
     }
 }

@@ -372,7 +372,7 @@ impl<'a> TokenWriter<'a> {
             if db_token_tx
                 .outputs
                 .iter()
-                .any(|&output| output != DbToken::NoToken)
+                .any(|output| *output != DbToken::NoToken)
             {
                 // Skip txs that have any token outputs
                 continue;
@@ -415,23 +415,24 @@ impl<'a> TokenWriter<'a> {
                 let original_input_token = db_token_tx
                     .inputs
                     .get(input_idx)
-                    .copied()
+                    .cloned()
                     .unwrap_or(DbToken::NoToken);
 
                 // Load actual input token and which token tx_num it has
-                let (actual_input_token, token_tx_num) = match self
-                    .col
-                    .fetch_token_tx(input_tx_num)?
-                {
-                    Some(input_db_token_tx) => {
-                        let db_token = *input_db_token_tx
-                            .outputs
-                            .get(prev_out.out_idx as usize)
-                            .ok_or(TokenOutputDoesntExist(prev_out))?;
-                        (db_token, input_db_token_tx.token_tx_num(&db_token))
-                    }
-                    None => (DbToken::NoToken, None),
-                };
+                let (actual_input_token, token_tx_num) =
+                    match self.col.fetch_token_tx(input_tx_num)? {
+                        Some(input_db_token_tx) => {
+                            let db_token = input_db_token_tx
+                                .outputs
+                                .get(prev_out.out_idx as usize)
+                                .ok_or(TokenOutputDoesntExist(prev_out))?
+                                .clone();
+                            let token_tx_num =
+                                input_db_token_tx.token_tx_num(&db_token);
+                            (db_token, token_tx_num)
+                        }
+                        None => (DbToken::NoToken, None),
+                    };
 
                 // Create new DbToken based on actual_input_token, but must
                 // update the token_idx to be based on the *spending* tx.

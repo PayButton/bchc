@@ -49,6 +49,9 @@ pub enum TokenType {
     /// This allows users to mix ALP txs with other protocols, and to do atomic
     /// swaps, etc.
     Alp(AlpTokenType),
+
+    /// CashTokens (see https://cashtokens.org/docs/spec/chip/)
+    CashTokens,
 }
 
 /// Token type of a token, determining the rules of the token, e.g. fungible,
@@ -150,6 +153,7 @@ impl TokenType {
         match self {
             TokenType::Slp(slp) => slp.to_u8(),
             TokenType::Alp(slp) => slp.to_u8(),
+            TokenType::CashTokens => 0,
         }
     }
 }
@@ -180,6 +184,7 @@ impl std::fmt::Display for TokenType {
         match self {
             TokenType::Slp(slp) => write!(f, "SLP {slp}"),
             TokenType::Alp(alp) => write!(f, "ALP {alp}"),
+            TokenType::CashTokens => write!(f, "CashTokens"),
         }
     }
 }

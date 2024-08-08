@@ -326,7 +326,7 @@ impl<'tx> BatchProcessor<'tx> {
             };
             let db_token = &db_token_tx.outputs[out_idx];
             let Some(token_tx_num) = db_token_tx.token_tx_num(db_token) else {
-                db_inputs.push(*db_token);
+                db_inputs.push(db_token.clone());
                 continue;
             };
             let token_num_idx = db_token_tx_nums
@@ -353,7 +353,7 @@ impl<'tx> BatchProcessor<'tx> {
         }
 
         // Skip non-token tx if we don't have any token inputs
-        if db_inputs.iter().any(|&input| input != DbToken::NoToken) {
+        if db_inputs.iter().any(|input| *input != DbToken::NoToken) {
             processed_batch.db_token_txs.insert(
                 tx.tx_num,
                 DbTokenTx {
@@ -449,16 +449,23 @@ fn to_db_token(token: Option<&Token>, metas: &[TokenMeta]) -> DbToken {
     let Some(token) = token else {
         return DbToken::NoToken;
     };
-    match token.variant {
-        TokenVariant::Amount(amount) => {
+    match &token.variant {
+        &TokenVariant::Amount(amount) => {
             DbToken::Amount(meta_idx(&token.meta, metas), amount)
         }
         TokenVariant::MintBaton => {
             DbToken::MintBaton(meta_idx(&token.meta, metas))
         }
-        TokenVariant::Unknown(token_type) => match token.meta.token_type {
+        &TokenVariant::Unknown(token_type) => match token.meta.token_type {
             TokenType::Slp(_) => DbToken::UnknownSlp(token_type),
             TokenType::Alp(_) => DbToken::UnknownAlp(token_type),
+            TokenType::CashTokens => unreachable!(),
         },
+        TokenVariant::Commitment(commitment) => DbToken::Commitment(
+            meta_idx(&token.meta, metas),
+            commitment.amount,
+            commitment.capabilities,
+            commitment.commitment.clone(),
+        ),
     }
 }

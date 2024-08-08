@@ -242,6 +242,8 @@ message TokenType {
         SlpTokenType slp = 1;
         // ALP token type. Can have unknown values for unknown token types
         AlpTokenType alp = 2;
+        // CashTokens.
+        Empty cash_tokens = 3;
     }
 }
 
@@ -335,6 +337,10 @@ message Token {
     uint64 amount = 4;
     // Whether the token is a mint baton
     bool is_mint_baton = 5;
+    // CashToken "NFT" capabilities
+    uint32 capabilities = 6;
+    // CashToken "NFT" Commitment
+    bytes commitment = 7;
 }
 
 // A report of a failed parsing attempt of SLP/ALP.

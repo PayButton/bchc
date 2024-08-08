@@ -5,6 +5,7 @@
 abc_rust_lint::lint! {
     pub mod alp;
     mod burn_summary;
+    pub mod cashtokens;
     pub mod color;
     pub mod consts;
     pub mod empp;

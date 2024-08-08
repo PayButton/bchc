@@ -79,6 +79,7 @@ impl TokenModule {
             match entry.meta.token_type {
                 TokenType::Slp(_) => "SLP",
                 TokenType::Alp(_) => "ALP",
+                TokenType::CashTokens => "CashTokens",
             },
         )?;
         kwargs.set_item(
@@ -86,6 +87,7 @@ impl TokenModule {
             match entry.meta.token_type {
                 TokenType::Slp(token_type) => token_type.to_u8(),
                 TokenType::Alp(token_type) => token_type.to_u8(),
+                TokenType::CashTokens => 0,
             },
         )?;
         kwargs.set_item(
@@ -125,7 +127,7 @@ impl TokenModule {
         py: Python<'_>,
         entry: &PyObject,
         entry_idx: usize,
-        token_variant: TokenVariant,
+        token_variant: &TokenVariant,
     ) -> PyResult<PyObject> {
         let kwargs = PyDict::new_bound(py);
         kwargs.set_item("token_id", entry.getattr(py, "token_id")?)?;

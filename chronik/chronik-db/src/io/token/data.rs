@@ -7,11 +7,12 @@
 use std::collections::BTreeMap;
 
 use bitcoinsuite_slp::{
-    structs::{Amount, Token, TokenMeta, TokenVariant},
+    structs::{Amount, Token, TokenCommitment, TokenMeta, TokenVariant},
     token_id::TokenId,
     token_type::{AlpTokenType, SlpTokenType, TokenType},
     verify::SpentToken,
 };
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::io::TxNum;
@@ -45,7 +46,7 @@ pub struct DbTokenTx {
 }
 
 /// Token from the DB.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DbToken {
     /// No token value
     NoToken,
@@ -57,6 +58,8 @@ pub enum DbToken {
     UnknownSlp(u8),
     /// Unknown ALP token
     UnknownAlp(u8),
+    /// CashTokens commitment
+    Commitment(TokenIdx, Amount, u8, Bytes),
 }
 
 impl DbTokenTx {
@@ -107,6 +110,14 @@ impl DbTokenTx {
                     group_token_meta: None,
                 }));
             }
+            DbToken::Commitment(idx, amount, capabilities, ref commitment) => (
+                idx,
+                TokenVariant::Commitment(TokenCommitment {
+                    amount,
+                    capabilities,
+                    commitment: commitment.clone(),
+                }),
+            ),
         };
         let group_token_tx_num = self
             .group_token_indices
@@ -137,7 +148,10 @@ impl DbToken {
         match *self {
             DbToken::Amount(_, amount) => DbToken::Amount(idx, amount),
             DbToken::MintBaton(_) => DbToken::MintBaton(idx),
-            _ => *self,
+            DbToken::Commitment(_, amount, capability, ref commitment) => {
+                DbToken::Commitment(idx, amount, capability, commitment.clone())
+            }
+            _ => self.clone(),
         }
     }
 
@@ -150,6 +164,7 @@ impl DbToken {
             DbToken::MintBaton(idx) => Some(idx),
             DbToken::UnknownSlp(_) => None,
             DbToken::UnknownAlp(_) => None,
+            DbToken::Commitment(idx, _, _, _) => Some(idx),
         }
     }
 }
