@@ -2,7 +2,7 @@ use bitcoinsuite_core::{
     bytes::{read_array, read_bytes},
     script::Script,
     ser::read_compact_size,
-    tx::TxId,
+    tx::{Tx, TxId},
 };
 use bitflags::bitflags;
 use bytes::Bytes;
@@ -70,6 +70,16 @@ pub struct ParsedData {
     pub amount: Amount,
     /// Actual locking bytecode of the output
     pub script: Script,
+}
+
+/// Whether the tx has any outputs with PREFIX_TOKEN
+pub fn has_any_prefix_token(tx: &Tx) -> bool {
+    tx.outputs.iter().any(|output| {
+        if output.script.bytecode().is_empty() {
+            return false;
+        }
+        output.script.bytecode()[0] == PREFIX_TOKEN
+    })
 }
 
 /// Parse the given script as token data
