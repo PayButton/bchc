@@ -29,6 +29,15 @@ use crate::{
     token_type::{SlpTokenType, TokenType},
 };
 
+/// flexUSD (dd21be4532d93661e8ffe16db6535af0fb8ee1344d1fef81a193e2b4cfa9fbc9)
+/// has a lot of txs but CoinFlex went bankrupt; it should be blacklisted by
+/// default to avoid long sync times for a dead token.
+const FLEX_USD_TOKEN_ID: TokenId = TokenId::new(TxId::new([
+    201, 251, 169, 207, 180, 226, 147, 161, 129, 239, 31, 77, 52, 225, 142,
+    251, 240, 90, 83, 182, 109, 225, 255, 232, 97, 54, 217, 50, 69, 190, 33,
+    221,
+]));
+
 /// Parse the tx as SLP
 pub fn parse_tx(tx: &Tx) -> Result<Option<ParsedData>, ParseError> {
     if tx.outputs.is_empty() {
@@ -44,7 +53,13 @@ pub fn parse(
     script: &Script,
 ) -> Result<Option<ParsedData>, ParseError> {
     match parse_with_ignored_err(txid, script) {
-        Ok(parsed) => Ok(Some(parsed)),
+        Ok(parsed) => {
+            // flexUSD is blacklisted, treat it as if there's no SLP data
+            if parsed.meta.token_id == FLEX_USD_TOKEN_ID {
+                return Ok(None);
+            }
+            Ok(Some(parsed))
+        }
         Err(err) if should_ignore_err(&err) => Ok(None),
         Err(err) => Err(err),
     }
