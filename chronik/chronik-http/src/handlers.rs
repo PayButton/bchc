@@ -1,6 +1,6 @@
 //! Module for Chronik handlers.
 
-use std::{collections::HashMap, fmt::Display, str::FromStr};
+use std::{borrow::Cow, collections::HashMap, fmt::Display, str::FromStr};
 
 use abc_rust_error::{Report, Result};
 use bitcoinsuite_core::{
@@ -125,7 +125,7 @@ pub async fn handle_unconfirmed_txs(
 fn get_group_member(
     script_type: &str,
     payload: &str,
-) -> Result<GroupMember<Script>> {
+) -> Result<GroupMember<Cow<'static, Script>>> {
     if script_type == "scripthash" {
         let script_hash = Sha256::from_be_hex(payload)
             .map_err(|_| InvalidScriptHash(payload.to_string()))?;
@@ -133,7 +133,7 @@ fn get_group_member(
     } else {
         let script =
             parse_script_variant_hex(script_type, payload)?.to_script();
-        Ok(GroupMember::Member(script))
+        Ok(GroupMember::Member(Cow::Owned(script)))
     }
 }
 
@@ -151,7 +151,7 @@ pub async fn handle_script_confirmed_txs(
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     let member = get_group_member(script_type, payload)?;
     script_history.confirmed_txs(
-        member.as_ref(),
+        member,
         page_num as usize,
         page_size as usize,
     )
@@ -172,7 +172,7 @@ pub async fn handle_script_history(
     let page_size: u32 = get_param(query_params, "page_size")?.unwrap_or(25);
     let member = get_group_member(script_type, payload)?;
     script_history.rev_history(
-        member.as_ref(),
+        member,
         page_num as usize,
         page_size as usize,
     )
@@ -188,7 +188,7 @@ pub async fn handle_script_unconfirmed_txs(
 ) -> Result<proto::TxHistoryPage> {
     let script_history = indexer.script_history(node)?;
     let member = get_group_member(script_type, payload)?;
-    script_history.unconfirmed_txs(member.as_ref())
+    script_history.unconfirmed_txs(member)
 }
 
 /// Return the UTXOs of the given script.
@@ -201,8 +201,12 @@ pub async fn handle_script_utxos(
 ) -> Result<proto::ScriptUtxos> {
     let script_utxos = indexer.script_utxos(node)?;
     let member = get_group_member(script_type, payload)?;
+    let member = match member {
+        GroupMember::Member(script) => GroupMember::Member(script.into_owned()),
+        GroupMember::MemberHash(sha256) => GroupMember::MemberHash(sha256),
+    };
     let script = script_utxos.script(member, indexer.decompress_script_fn)?;
-    let utxos = script_utxos.utxos(&script)?;
+    let utxos = script_utxos.utxos(Cow::Borrowed(&script))?;
     Ok(proto::ScriptUtxos {
         script: script.bytecode().to_vec(),
         utxos,
@@ -263,9 +267,13 @@ pub fn handle_script_utxos_batch(
     for script_req in scripts {
         let payload_hex = hex::encode(&script_req.payload);
         let member = get_group_member(&script_req.script_type, &payload_hex)?;
+        let member = match member {
+            GroupMember::Member(script) => GroupMember::Member(script.into_owned()),
+            GroupMember::MemberHash(sha256) => GroupMember::MemberHash(sha256),
+        };
         let script =
             script_utxos.script(member, indexer.decompress_script_fn)?;
-        let utxos = script_utxos.utxos(&script)?;
+        let utxos = script_utxos.utxos(Cow::Borrowed(&script))?;
         rows.push(proto::ScriptBatchUtxosRow {
             script: Some(proto::ScriptRef {
                 script_type: script_req.script_type,

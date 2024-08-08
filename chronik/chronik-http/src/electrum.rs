@@ -5,6 +5,7 @@
 //! Module for [`ChronikElectrumServer`].
 
 use std::{
+    borrow::Cow,
     cmp,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     sync::Arc,
@@ -944,7 +945,7 @@ async fn get_scripthash_history(
         // ordered as they appear in the block
         let history = script_history
             .confirmed_txs_no_spent_by(
-                GroupMember::MemberHash(script_hash).as_ref(),
+                GroupMember::MemberHash(script_hash),
                 page as usize,
                 MAX_HISTORY_PAGE_SIZE,
             )
@@ -972,7 +973,7 @@ async fn get_scripthash_history(
 
     // Note that there is currently no pagination for the mempool.
     let mut history = script_history
-        .unconfirmed_txs(GroupMember::MemberHash(script_hash).as_ref())
+        .unconfirmed_txs(GroupMember::MemberHash(script_hash))
         .map_err(|_| RPCError::InternalError)?;
 
     if history.num_txs + (tx_history.len() as u32) > max_history {
@@ -2232,7 +2233,10 @@ impl ChronikElectrumRPCBlockchainEndpoint {
             Ok(script) => script,
             Err(_) => return Ok(json!([])),
         };
-        let utxos = script_utxos.utxos(&script).ok().unwrap_or_default();
+        let utxos = script_utxos
+            .utxos(Cow::Borrowed(&script))
+            .ok()
+            .unwrap_or_default();
 
         let mut json_utxos: Vec<Value> = vec![];
         for utxo in utxos.iter() {
@@ -2293,7 +2297,7 @@ impl ChronikElectrumRPCBlockchainEndpoint {
 
         let history = script_history
             .confirmed_txs(
-                GroupMember::MemberHash(script_hash).as_ref(),
+                GroupMember::MemberHash(script_hash),
                 /* request_page_num= */ 0,
                 /* request_page_size= */ 1,
             )
@@ -2323,7 +2327,7 @@ impl ChronikElectrumRPCBlockchainEndpoint {
 
         // Note that there is currently no pagination for the mempool.
         let mut history = script_history
-            .unconfirmed_txs(GroupMember::MemberHash(script_hash).as_ref())
+            .unconfirmed_txs(GroupMember::MemberHash(script_hash))
             .map_err(|_| RPCError::InternalError)?;
 
         // Sort by txid
@@ -2382,7 +2386,7 @@ impl ChronikElectrumRPCBlockchainEndpoint {
 
         // Note that there is currently no pagination for the mempool.
         let mut history = script_history
-            .unconfirmed_txs(GroupMember::MemberHash(script_hash).as_ref())
+            .unconfirmed_txs(GroupMember::MemberHash(script_hash))
             .map_err(|_| RPCError::InternalError)?;
 
         for tx in history.txs.iter_mut() {
