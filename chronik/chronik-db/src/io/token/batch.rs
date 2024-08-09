@@ -212,13 +212,18 @@ impl<'tx> BatchProcessor<'tx> {
         }
 
         // Add new tokens from GENESIS txs
-        if let Some(entry) = valid_tx.entries.first() {
+        for entry in &valid_tx.entries {
             // Skip invalid GENESIS txs
             if !entry.is_invalid {
                 if let Some(info) = &entry.genesis_info {
-                    db_data.token_metas.insert(tx_num, entry.meta);
+                    // Use pregenesis tx_num for CashTokens; else this tx_num
+                    let genesis_tx_num = match info.pregenesis_input_idx {
+                        Some(input_idx) => prepared_tx.tx.input_nums[input_idx],
+                        None => tx_num,
+                    };
+                    db_data.token_metas.insert(genesis_tx_num, entry.meta);
                     processed_batch.new_tokens.push((
-                        tx_num,
+                        genesis_tx_num,
                         entry.meta,
                         info.clone(),
                     ));

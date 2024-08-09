@@ -195,6 +195,7 @@ fn parse_genesis(
                 data: Some(data),
                 auth_pubkey: Some(auth_pubkey),
                 decimals,
+                pregenesis_input_idx: None,
             },
             mint_data,
         }),

@@ -199,6 +199,7 @@ fn test_tx_to_py() -> Result<()> {
                         data: None,
                         auth_pubkey: None,
                         decimals: 4,
+                        pregenesis_input_idx: None,
                     },
                     SlpTokenType::Fungible,
                     Some(2),
@@ -228,6 +229,7 @@ fn test_tx_to_py() -> Result<()> {
                         data: None,
                         auth_pubkey: None,
                         decimals: 4,
+                        pregenesis_input_idx: None,
                     },
                     SlpTokenType::MintVault,
                     None,
@@ -353,6 +355,7 @@ fn test_tx_to_py() -> Result<()> {
                             data: Some(b"ALP DATA".as_ref().into()),
                             auth_pubkey: Some(b"ALP PubKey".as_ref().into()),
                             decimals: 2,
+                            pregenesis_input_idx: None,
                         },
                         &ParsedMintData {
                             amounts: vec![0, 0, 10, 0, 0],

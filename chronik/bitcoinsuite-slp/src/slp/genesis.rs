@@ -102,6 +102,7 @@ pub(crate) fn parse_genesis_data(
                 data: None,
                 auth_pubkey: None,
                 decimals,
+                pregenesis_input_idx: None,
             },
             mint_data: ParsedMintData {
                 amounts,

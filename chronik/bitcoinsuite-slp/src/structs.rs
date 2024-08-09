@@ -126,6 +126,8 @@ pub struct GenesisInfo {
     /// as `base_amount * 10^-decimals`. E.g. a base amount of 12345 and
     /// decimals of 4 should be displayed as "1.2345".
     pub decimals: u8,
+    /// For CashTokens: Which input is the pre-genesis (defining the token ID)
+    pub pregenesis_input_idx: Option<usize>,
 }
 
 impl TokenVariant {
@@ -197,6 +199,7 @@ impl GenesisInfo {
             data: None,
             auth_pubkey: None,
             decimals: 0,
+            pregenesis_input_idx: None,
         }
     }
 
@@ -211,6 +214,7 @@ impl GenesisInfo {
             data: Some(Bytes::new()),
             auth_pubkey: Some(Bytes::new()),
             decimals: 0,
+            pregenesis_input_idx: None,
         }
     }
 }

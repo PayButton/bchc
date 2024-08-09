@@ -36,6 +36,7 @@ fn test_batch_genesis_slp_fungible() -> Result<()> {
         data: None,
         auth_pubkey: None,
         decimals: 4,
+        pregenesis_input_idx: None,
     };
     mock_db.connect(&[
         make_tx(0, [(0xff, 0)], 4, Script::EMPTY),
@@ -84,6 +85,7 @@ fn test_batch_genesis_alp() -> Result<()> {
         data: Some(b"data".as_ref().into()),
         auth_pubkey: Some(b"auth_pubkey".as_ref().into()),
         decimals: 4,
+        pregenesis_input_idx: None,
     };
     let processed = mock_db.connect(&[
         make_tx(0, [(0xff, 0)], 4, Script::EMPTY),
