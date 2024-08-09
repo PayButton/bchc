@@ -1018,6 +1018,13 @@ function convertToTokenType(tokenType: proto.TokenType): TokenType {
             number: tokenType.slp,
         };
     }
+    if (typeof tokenType.cashTokens !== 'undefined') {
+        return {
+            protocol: 'CashTokens',
+            type: 'CashTokens',
+            number: 0,
+        };
+    }
     // Should never happen
     throw new Error('chronik did not return a token protocol for this token');
 }
@@ -1372,7 +1379,7 @@ interface TokenEntry {
 /**
  * SLP/ALP token type
  */
-export type TokenType = SlpTokenType_InNode | AlpTokenType;
+export type TokenType = SlpTokenType_InNode | AlpTokenType | CashTokensTokenType;
 
 export interface SlpTokenType_InNode {
     protocol: 'SLP';
@@ -1384,6 +1391,12 @@ export interface AlpTokenType {
     protocol: 'ALP';
     type: AlpTokenType_Type;
     number: number;
+}
+
+export interface CashTokensTokenType {
+    protocol: 'CashTokens';
+    type: 'CashTokens';
+    number: 0;
 }
 
 /** Possible ALP token types returned by chronik */
