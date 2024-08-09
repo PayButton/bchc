@@ -349,6 +349,7 @@ fn test_parse_valid_genesis() {
                         data: None,
                         auth_pubkey: None,
                         decimals,
+                        pregenesis_input_idx: None,
                     },
                     mint_data: match token_type {
                         SlpTokenType::MintVault | SlpTokenType::Nft1Child =>

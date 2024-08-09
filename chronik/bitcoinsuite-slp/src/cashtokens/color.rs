@@ -25,7 +25,7 @@ pub fn color(colored_tx: &mut ColoredTx, tx: &Tx) {
                 continue;
             }
         };
-        let is_genesis = tx.inputs.iter().any(|input| {
+        let pregenesis_input_idx = tx.inputs.iter().position(|input| {
             input.prev_out.txid == *parsed.token_id.txid()
                 && input.prev_out.out_idx == 0
         });
@@ -45,14 +45,19 @@ pub fn color(colored_tx: &mut ColoredTx, tx: &Tx) {
                 let token_idx = colored_tx.sections.len();
                 colored_tx.sections.push(ColoredTxSection {
                     meta,
-                    tx_type: if is_genesis {
+                    tx_type: if pregenesis_input_idx.is_some() {
                         TxType::GENESIS
                     } else {
                         TxType::SEND
                     },
                     required_input_sum: 0,
                     has_colored_out_of_range: false,
-                    genesis_info: Some(GenesisInfo::default()),
+                    genesis_info: pregenesis_input_idx.map(
+                        |pregenesis_input_idx| GenesisInfo {
+                            pregenesis_input_idx: Some(pregenesis_input_idx),
+                            ..Default::default()
+                        },
+                    ),
                 });
                 token_idx
             }

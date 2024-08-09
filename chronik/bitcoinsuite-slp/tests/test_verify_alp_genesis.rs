@@ -26,6 +26,7 @@ fn test_verify_alp_genesis() {
         data: Some(b"ALP Data".as_ref().into()),
         auth_pubkey: Some(b"ALP Pubkey".as_ref().into()),
         decimals: 4,
+        pregenesis_input_idx: None,
     };
     assert_eq!(
         verify::<5>(

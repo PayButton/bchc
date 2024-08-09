@@ -128,6 +128,7 @@ fn test_batch_topological_sort() -> Result<()> {
         data: None,
         auth_pubkey: None,
         decimals: 4,
+        pregenesis_input_idx: None,
     };
     // Valid: GENESIS SLP token and use it in the same batch; but txs aren't
     // ordered topologically.
