@@ -765,6 +765,9 @@ bool MemPoolAccept::PreChecks(ATMPArgs &args, Workspace &ws) {
 }
 
 bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs &args, Workspace &ws) {
+    // ABCH: Skip all script checks
+    return true;
+
     AssertLockHeld(cs_main);
     AssertLockHeld(m_pool.cs);
     const CTransaction &tx = *ws.m_ptx;
