@@ -8,6 +8,18 @@ software project.
 
 A [BCHN](https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node) bridge node is required to properly connect to the Bitcoin Cash (BCH) network.
 
+Build Documentation
+----------------
+
+To build, follow the same process as would be done on Bitcoin ABC or BCHN, but using `-DBUILD_BITCOIN_CHRONIK=on`.
+
+Then, ensure `chronik=1` is set in the node's config for startup.
+
+Indexer Documentation
+----------------
+
+BCHC uses the Chronik indexer. Documentation can be found [here](https://docs.chronik.xyz/).
+
 License
 -------
 
