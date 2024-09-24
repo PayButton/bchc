@@ -11,7 +11,7 @@ A [BCHN](https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node) bridge node is 
 Build Documentation
 ----------------
 
-To build, follow the same process as would be done on Bitcoin ABC or BCHN, but using `-DBUILD_BITCOIN_CHRONIK=on`.
+To build, follow the same process as would be done on Bitcoin ABC or BCHN, but using `-DBUILD_BITCOIN_CHRONIK=on`. Use `-DBUILD_BITCOIN_CHRONIK_PLUGINS=on` to build with support for plugins.
 
 Then, ensure `chronik=1` is set in the node's config for startup.
 
