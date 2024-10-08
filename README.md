@@ -8,6 +8,11 @@ software project.
 
 A [BCHN](https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node) bridge node is required to properly connect to the Bitcoin Cash (BCH) network.
 
+Public Instance
+--------------------
+
+A public BCHC instance is available for use at `https://bch.paybutton.org`. 
+
 Build Documentation
 ----------------
 
