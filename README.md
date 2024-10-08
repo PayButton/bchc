@@ -11,7 +11,7 @@ A [BCHN](https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node) bridge node is 
 Public Instance
 --------------------
 
-A public BCHC instance is available for use at `https://bch.paybutton.org`. 
+A public BCHC instance is available for use at `https://bch.paybutton.org`.
 
 Build Documentation
 ----------------
@@ -23,7 +23,7 @@ Then, ensure `chronik=1` is set in the node's config for startup.
 Indexer Documentation
 ----------------
 
-BCHC uses the Chronik indexer. Documentation can be found [here](https://docs.chronik.xyz/).
+BCHC uses the Chronik indexer. Documentation can be found [here](https://chronik.e.cash/).
 
 License
 -------
