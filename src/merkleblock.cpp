@@ -1,5 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,19 +8,20 @@
 
 #include <consensus/consensus.h>
 #include <hash.h>
+#include <util/strencodings.h>
 
-std::vector<uint8_t> BitsToBytes(const std::vector<bool> &bits) {
-    std::vector<uint8_t> ret((bits.size() + 7) / 8);
+std::vector<unsigned char> BitsToBytes(const std::vector<bool> &bits) {
+    std::vector<unsigned char> ret((bits.size() + 7) / 8);
     for (unsigned int p = 0; p < bits.size(); p++) {
-        ret[p / 8] |= bits[p] << (p % 8);
+        ret[p / 8] |= unsigned(bits[p]) << (p % 8);
     }
     return ret;
 }
 
-std::vector<bool> BytesToBits(const std::vector<uint8_t> &bytes) {
+std::vector<bool> BytesToBits(const std::vector<unsigned char> &bytes) {
     std::vector<bool> ret(bytes.size() * 8);
     for (unsigned int p = 0; p < ret.size(); p++) {
-        ret[p] = (bytes[p / 8] & (1 << (p % 8))) != 0;
+        ret[p] = (bytes[p / 8] & (1U << (p % 8))) != 0;
     }
     return ret;
 }

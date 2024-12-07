@@ -1,14 +1,13 @@
 // Copyright (c) 2014-2015 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CHAINPARAMSBASE_H
-#define BITCOIN_CHAINPARAMSBASE_H
+#pragma once
 
 #include <memory>
 #include <string>
-
-class ArgsManager;
+#include <vector>
 
 /**
  * CBaseChainParams defines the base parameters
@@ -20,13 +19,14 @@ public:
     /** BIP70 chain name strings (main, test or regtest) */
     static const std::string MAIN;
     static const std::string TESTNET;
+    static const std::string TESTNET4;
+    static const std::string SCALENET;
+    static const std::string CHIPNET;
     static const std::string REGTEST;
 
     const std::string &DataDir() const { return strDataDir; }
     uint16_t RPCPort() const { return m_rpc_port; }
-    uint16_t OnionServiceTargetPort() const {
-        return m_onion_service_target_port;
-    }
+    uint16_t OnionServiceTargetPort() const { return m_onion_service_target_port; }
     uint16_t ChronikPort() const { return m_chronik_port; }
 
     CBaseChainParams() = delete;
@@ -54,7 +54,7 @@ CreateBaseChainParams(const std::string &chain);
 /**
  * Set the arguments for chainparams.
  */
-void SetupChainParamsBaseOptions(ArgsManager &argsman);
+void SetupChainParamsBaseOptions();
 
 /**
  * Return the currently selected parameters. This won't change after app
@@ -64,5 +64,3 @@ const CBaseChainParams &BaseParams();
 
 /** Sets the params returned by Params() to those for the given network. */
 void SelectBaseParams(const std::string &chain);
-
-#endif // BITCOIN_CHAINPARAMSBASE_H

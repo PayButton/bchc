@@ -1,4 +1,6 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2022 The Bitcoin Cash Node developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -10,18 +12,20 @@
 
 #include <cashaddrenc.h>
 #include <chain.h>
-#include <common/args.h>
 #include <consensus/consensus.h>
 #include <interfaces/node.h>
-#include <interfaces/wallet.h>
 #include <key_io.h>
 #include <policy/policy.h>
 #include <qt/bitcoinunits.h>
 #include <qt/guiutil.h>
 #include <qt/paymentserver.h>
 #include <qt/transactionrecord.h>
+#include <script/script.h>
+#include <timedata.h>
+#include <util/system.h>
 #include <validation.h>
-#include <wallet/ismine.h>
+#include <wallet/db.h>
+#include <wallet/wallet.h>
 
 #include <cstdint>
 #include <string>
@@ -30,53 +34,31 @@ QString
 TransactionDesc::FormatTxStatus(const interfaces::WalletTx &wtx,
                                 const interfaces::WalletTxStatus &status,
                                 bool inMempool, int numBlocks) {
-    int nDepth = status.depth_in_main_chain;
-    if (nDepth < 0) {
-        return tr("conflicted with a transaction with %1 confirmations")
-            .arg(-nDepth);
-    } else if (nDepth == 0) {
-        return tr("0/unconfirmed, %1")
-                   .arg((inMempool ? tr("in memory pool")
-                                   : tr("not in memory pool"))) +
-               (status.is_abandoned ? ", " + tr("abandoned") : "");
-    } else if (nDepth < 6) {
-        return tr("%1/unconfirmed").arg(nDepth);
+    if (!status.is_final) {
+        if (wtx.tx->nLockTime < LOCKTIME_THRESHOLD) {
+            return tr("Open for %n more block(s)", "",
+                      wtx.tx->nLockTime - numBlocks);
+        } else {
+            return tr("Open until %1")
+                .arg(GUIUtil::dateTimeStr(wtx.tx->nLockTime));
+        }
     } else {
-        return tr("%1 confirmations").arg(nDepth);
-    }
-}
-
-#ifndef ENABLE_BIP70
-// Takes an encoded PaymentRequest as a string and tries to find the Common Name
-// of the X.509 certificate used to sign the PaymentRequest.
-bool GetPaymentRequestMerchant(const std::string &pr, QString &merchant) {
-    // Search for the supported pki type strings
-    if (pr.find(std::string({0x12, 0x0b}) + "x509+sha256") !=
-            std::string::npos ||
-        pr.find(std::string({0x12, 0x09}) + "x509+sha1") != std::string::npos) {
-        // We want the common name of the Subject of the cert. This should be
-        // the second occurrence of the bytes 0x0603550403. The first occurrence
-        // of those is the common name of the issuer. After those bytes will be
-        // either 0x13 or 0x0C, then length, then either the ascii or utf8
-        // string with the common name which is the merchant name
-        size_t cn_pos = pr.find({0x06, 0x03, 0x55, 0x04, 0x03});
-        if (cn_pos != std::string::npos) {
-            cn_pos = pr.find({0x06, 0x03, 0x55, 0x04, 0x03}, cn_pos + 5);
-            if (cn_pos != std::string::npos) {
-                cn_pos += 5;
-                if (pr[cn_pos] == 0x13 || pr[cn_pos] == 0x0c) {
-                    cn_pos++; // Consume the type
-                    int str_len = pr[cn_pos];
-                    cn_pos++; // Consume the string length
-                    merchant = QString::fromUtf8(pr.data() + cn_pos, str_len);
-                    return true;
-                }
-            }
+        int nDepth = status.depth_in_main_chain;
+        if (nDepth < 0) {
+            return tr("conflicted with a transaction with %1 confirmations")
+                .arg(-nDepth);
+        } else if (nDepth == 0) {
+            return tr("0/unconfirmed, %1")
+                       .arg((inMempool ? tr("in memory pool")
+                                       : tr("not in memory pool"))) +
+                   (status.is_abandoned ? ", " + tr("abandoned") : "");
+        } else if (nDepth < 6) {
+            return tr("%1/unconfirmed").arg(nDepth);
+        } else {
+            return tr("%1 confirmations").arg(nDepth);
         }
     }
-    return false;
 }
-#endif
 
 QString TransactionDesc::toHTML(interfaces::Node &node,
                                 interfaces::Wallet &wallet,
@@ -97,6 +79,15 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
     Amount nCredit = wtx.credit;
     Amount nDebit = wtx.debit;
     Amount nNet = nCredit - nDebit;
+    DoubleSpendProof dsProof = wtx.dsProof;
+    if (!dsProof.isEmpty()) {
+        strHTML += "<b>" + tr("Double Spend Proof") + ":</b><br>" +
+            tr("Outpoint %1:%2 which is involved in this transaction was attempted to be double spent<br>"
+               "Proof ID: %3<br><br>")
+                .arg(QString::fromStdString(dsProof.prevTxId().ToString()),
+                     QString::number(dsProof.prevOutIndex()),
+                     QString::fromStdString(dsProof.GetId().ToString()));
+    }
 
     strHTML += "<b>" + tr("Status") + ":</b> " +
                FormatTxStatus(wtx, status, inMempool, numBlocks);
@@ -226,7 +217,7 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
                 if (!wtx.value_map.count("to") || wtx.value_map["to"].empty()) {
                     // Offline transaction
                     CTxDestination address;
-                    if (ExtractDestination(txout.scriptPubKey, address)) {
+                    if (ExtractDestination(txout.scriptPubKey, address, 0 /* no p2sh_32 */)) {
                         strHTML += "<b>" + tr("To") + ":</b> ";
                         std::string name;
                         if (wallet.getAddress(address, &name,
@@ -315,6 +306,7 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
         strHTML += "<br><b>" + tr("Comment") + ":</b><br>" +
                    GUIUtil::HtmlEscape(wtx.value_map["comment"], true) + "<br>";
     }
+
     strHTML +=
         "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxID() + "<br>";
     strHTML += "<b>" + tr("Transaction total size") + ":</b> " +
@@ -327,31 +319,6 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
         if (r.first == "Message") {
             strHTML += "<br><b>" + tr("Message") + ":</b><br>" +
                        GUIUtil::HtmlEscape(r.second, true) + "<br>";
-        }
-
-        //
-        // PaymentRequest info:
-        //
-        if (r.first == "PaymentRequest") {
-            QString merchant;
-#ifdef ENABLE_BIP70
-            PaymentRequestPlus req;
-            req.parse(
-                QByteArray::fromRawData(r.second.data(), r.second.size()));
-            if (!req.getMerchant(PaymentServer::getCertStore(), merchant)) {
-                merchant.clear();
-            }
-#else
-            if (!GetPaymentRequestMerchant(r.second, merchant)) {
-                merchant.clear();
-            } else {
-                merchant += tr(" (Certificate was not verified)");
-            }
-#endif
-            if (!merchant.isNull()) {
-                strHTML += "<b>" + tr("Merchant") + ":</b> " +
-                           GUIUtil::HtmlEscape(merchant) + "<br>";
-            }
         }
     }
 
@@ -405,7 +372,7 @@ QString TransactionDesc::toHTML(interfaces::Node &node,
                 strHTML += "<li>";
                 const CTxOut &vout = prev.GetTxOut();
                 CTxDestination address;
-                if (ExtractDestination(vout.scriptPubKey, address)) {
+                if (ExtractDestination(vout.scriptPubKey, address, 0 /* no p2sh_32 */)) {
                     std::string name;
                     if (wallet.getAddress(address, &name,
                                           /* is_mine= */ nullptr,

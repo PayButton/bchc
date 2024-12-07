@@ -1,52 +1,23 @@
 # ThreadSanitizer suppressions
 # ============================
-#
-# https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
 
-
-# race (TODO fix)
-race:WalletBatch::WriteHDChain
-race:CZMQAbstractPublishNotifier::SendMessage
-race:BerkeleyBatch
-race:BerkeleyDatabase
-race:bitcoin-qt
-
-# deadlock (TODO fix)
-deadlock:Chainstate::ConnectTip
-
-# Lock order inversion due to the large cs_main lock from Shutdown, which comes
-# before the cs_proofrequest lock
-deadlock:CConnman::StopNodes
+# WalletBatch (unidentified deadlock)
+deadlock:WalletBatch
 
 # Intentional deadlock in tests
 deadlock:TestPotentialDeadLockDetected
 
 # Wildcard for all gui tests, should be replaced with non-wildcard suppressions
-mutex:src/qt/test/*
 race:src/qt/test/*
 deadlock:src/qt/test/*
 
 # External libraries
 deadlock:libdb
-# Note: Clang-14 doesn't exclude properly the libdb with the deadlock filter, so
-# called_from_lib is used instead. We need to specify db_cxx to avoid name
-# conflicts with other libs (like dbus).
-called_from_lib:libdb_cxx
-thread:src/leveldb/*
-race:epoll_ctl
+race:libzmq
 
-# Race in headers only Boost Test
-race:std::__1::ios_base::flags
-
-# Intermittent issues
-# -------------------
-#
-# Suppressions that follow might only happen intermittently, thus they are not
-# reproducible. Make sure to include a link to a full trace.
-
-# https://github.com/bitcoin/bitcoin/issues/20618
-race:CZMQAbstractPublishNotifier::SendZmqMessage
-
-# Reverselock tests is triggering lock-order-inversion errors when run as part
-# of test_bitcoin.
-deadlock:reverselock_tests::reverselock_errors
+# the thread leak is fixed in leveldb version 1.21
+# https://github.com/google/leveldb/commit/73d5834eceee8efa9a8ccfec77dc096a9e8ba18a
+thread:src/leveldb/util/env_posix.cc
+# the data race is fixed in leveldb version 1.23
+# https://github.com/google/leveldb/commit/60db170a43a373d734c5b9f19693d36c75251c39
+race:src/leveldb/util/env_posix.cc

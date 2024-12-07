@@ -1,13 +1,19 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_HTTPSERVER_H
-#define BITCOIN_HTTPSERVER_H
+#pragma once
 
+#include <span.h>
+
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 static const int DEFAULT_HTTP_THREADS = 4;
 static const int DEFAULT_HTTP_WORKQUEUE = 16;
@@ -72,12 +78,11 @@ struct event_base *EventBase();
  * Thin C++ wrapper around evhttp_request.
  */
 class HTTPRequest {
-private:
     struct evhttp_request *req;
     bool replySent;
 
 public:
-    explicit HTTPRequest(struct evhttp_request *req, bool replySent = false);
+    explicit HTTPRequest(struct evhttp_request *req);
     ~HTTPRequest();
 
     enum RequestMethod { UNKNOWN, GET, POST, HEAD, PUT, OPTIONS };
@@ -92,18 +97,37 @@ public:
     RequestMethod GetRequestMethod() const;
 
     /**
-     * Get the request header specified by hdr, or an empty string.
-     * Return a pair (isPresent,string).
+     * Get the request header specified by hdr.
+     * @return The header's value, if present, or a std::nullopt if the header
+     * was not present.
      */
-    std::pair<bool, std::string> GetHeader(const std::string &hdr) const;
+    std::optional<std::string> GetHeader(const std::string &hdr) const;
+
+    //! A vector of these is returned by GetAll*Headers.
+    using NameValuePair = std::pair<std::string, std::string>;
+
+    /**
+     *  Get the entire header contents for the request. This is all of the
+     *  headers sent to us by the client.
+     */
+    std::vector<NameValuePair> GetAllInputHeaders() const { return GetAllHeaders(true); }
+
+    /**
+     *  Get the entire header contents for the reply. This is all of the
+     *  headers enqueued for sending to the client via previous calls to
+     *  WriteHeader().
+     */
+    std::vector<NameValuePair> GetAllOutputHeaders() const { return GetAllHeaders(false); }
 
     /**
      * Read request body.
      *
-     * @note As this consumes the underlying buffer, call this only once.
-     * Repeated calls will return an empty string.
+     * @param drain - If set to true, consume the underlying buffer.
+     * @note Specifying drain = true will consume the underlying buffer,
+     * so call it this way only once. Repeated calls after a drain = true
+     * call will always return an empty string.
      */
-    std::string ReadBody();
+    std::string ReadBody(bool drain = true);
 
     /**
      * Write output header.
@@ -115,14 +139,18 @@ public:
     /**
      * Write HTTP reply.
      * nStatus is the HTTP status code to send.
-     * strReply is the body of the reply. Keep it empty to send a standard
+     * reply is the body of the reply. Keep it empty to send a standard
      * message.
      *
      * @note Can be called only once. As this will give the request back to the
      * main thread, do not call any other HTTPRequest methods after calling
      * this.
      */
-    void WriteReply(int nStatus, const std::string &strReply = "");
+    void WriteReply(int nStatus, Span<const uint8_t> reply = {});
+    void WriteReply(int nStatus, std::string_view reply) { WriteReply(nStatus, MakeUInt8Span(reply)); }
+
+private:
+    std::vector<NameValuePair> GetAllHeaders(bool input) const;
 };
 
 /** Event handler closure */
@@ -160,5 +188,3 @@ public:
 private:
     struct event *ev;
 };
-
-#endif // BITCOIN_HTTPSERVER_H

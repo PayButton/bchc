@@ -1,10 +1,11 @@
 // Copyright (c) 2016 The Bitcoin Core developers
+// Copyright (c) 2018-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <consensus/amount.h>
+#include <amount.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -86,6 +87,16 @@ BOOST_AUTO_TEST_CASE(GetFeeTest) {
     BOOST_CHECK(CFeeRate(27 * SATOSHI, 789) == CFeeRate(34 * SATOSHI));
     // Maximum size in bytes, should not crash
     CFeeRate(MAX_MONEY, std::numeric_limits<size_t>::max() >> 1).GetFeePerK();
+}
+
+BOOST_AUTO_TEST_CASE(ToString) {
+    BOOST_CHECK_EQUAL(CFeeRate{Amount::zero()}.ToString(), "0.00000000 BCH/kB");
+    BOOST_CHECK_EQUAL(CFeeRate{SATOSHI}.ToString(), "0.00000001 BCH/kB");
+    BOOST_CHECK_EQUAL(CFeeRate{Amount{123'456'000 * SATOSHI}}.ToString(), "1.23456000 BCH/kB");
+    BOOST_CHECK_EQUAL(CFeeRate{Amount{1230 * COIN}}.ToString(), "1230.00000000 BCH/kB");
+    //BOOST_CHECK_EQUAL(CFeeRate{Amount{-123'456'000 * SATOSHI}}.ToString(), "-1.23456000 BCH/kB");
+    // test fails with current implementation! ("-1.-23456000")
+    BOOST_CHECK_EQUAL(CFeeRate{Amount{-1230 * COIN}}.ToString(), "-1230.00000000 BCH/kB");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

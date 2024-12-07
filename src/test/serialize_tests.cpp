@@ -1,22 +1,24 @@
-// Copyright (c) 2012-2019 The Bitcoin Core developers
+// Copyright (c) 2012-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <serialize.h>
 
-#include <avalanche/proof.h>
-#include <avalanche/proofbuilder.h>
-#include <avalanche/test/util.h>
 #include <hash.h>
 #include <streams.h>
 #include <util/strencodings.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 #include <cstdint>
 #include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 BOOST_FIXTURE_TEST_SUITE(serialize_tests, BasicTestingSetup)
 
@@ -27,18 +29,15 @@ protected:
     std::string stringval;
     char charstrval[16];
     CTransactionRef txval;
-    avalanche::ProofRef proofval;
 
 public:
     CSerializeMethodsTestSingle() = default;
     CSerializeMethodsTestSingle(int intvalin, bool boolvalin,
                                 std::string stringvalin,
-                                const uint8_t *charstrvalin,
-                                const CTransactionRef &txvalin,
-                                const avalanche::ProofRef &proofvalin)
+                                const char *charstrvalin,
+                                const CTransactionRef &txvalin)
         : intval(intvalin), boolval(boolvalin),
-          stringval(std::move(stringvalin)), txval(txvalin),
-          proofval(proofvalin) {
+          stringval(std::move(stringvalin)), txval(txvalin) {
         memcpy(charstrval, charstrvalin, sizeof(charstrval));
     }
 
@@ -48,15 +47,12 @@ public:
         READWRITE(obj.stringval);
         READWRITE(obj.charstrval);
         READWRITE(obj.txval);
-        READWRITE(obj.proofval);
     }
 
-    bool operator==(const CSerializeMethodsTestSingle &rhs) {
+    bool operator==(const CSerializeMethodsTestSingle &rhs) const {
         return intval == rhs.intval && boolval == rhs.boolval &&
                stringval == rhs.stringval &&
-               strcmp(charstrval, rhs.charstrval) == 0 &&
-               *txval == *rhs.txval &&
-               proofval->getId() == rhs.proofval->getId();
+               strcmp(charstrval, rhs.charstrval) == 0 && *txval == *rhs.txval;
     }
 };
 
@@ -65,12 +61,12 @@ public:
     using CSerializeMethodsTestSingle::CSerializeMethodsTestSingle;
 
     SERIALIZE_METHODS(CSerializeMethodsTestMany, obj) {
-        READWRITE(obj.intval, obj.boolval, obj.stringval, obj.charstrval,
-                  obj.txval, obj.proofval);
+        READWRITE(obj.intval, obj.boolval, obj.stringval, obj.charstrval, obj.txval);
     }
 };
 
 BOOST_AUTO_TEST_CASE(sizes) {
+    BOOST_CHECK_EQUAL(sizeof(char), GetSerializeSize(char(0)));
     BOOST_CHECK_EQUAL(sizeof(int8_t), GetSerializeSize(int8_t(0)));
     BOOST_CHECK_EQUAL(sizeof(uint8_t), GetSerializeSize(uint8_t(0)));
     BOOST_CHECK_EQUAL(sizeof(int16_t), GetSerializeSize(int16_t(0)));
@@ -81,10 +77,11 @@ BOOST_AUTO_TEST_CASE(sizes) {
     BOOST_CHECK_EQUAL(sizeof(uint64_t), GetSerializeSize(uint64_t(0)));
     BOOST_CHECK_EQUAL(sizeof(float), GetSerializeSize(float(0)));
     BOOST_CHECK_EQUAL(sizeof(double), GetSerializeSize(double(0)));
-    // Bool is serialized as uint8_t
-    BOOST_CHECK_EQUAL(sizeof(uint8_t), GetSerializeSize(bool(0)));
+    // Bool is serialized as char
+    BOOST_CHECK_EQUAL(sizeof(char), GetSerializeSize(bool(0)));
 
     // Sanity-check GetSerializeSize and c++ type matching
+    BOOST_CHECK_EQUAL(GetSerializeSize(char(0)), 1U);
     BOOST_CHECK_EQUAL(GetSerializeSize(int8_t(0)), 1U);
     BOOST_CHECK_EQUAL(GetSerializeSize(uint8_t(0)), 1U);
     BOOST_CHECK_EQUAL(GetSerializeSize(int16_t(0)), 2U);
@@ -139,13 +136,13 @@ BOOST_AUTO_TEST_CASE(doubles_conversion) {
 Python code to generate the below hashes:
 
     def reversed_hex(x):
-        return b''.join(reversed(x)).hex().encode()
+        return binascii.hexlify(''.join(reversed(x)))
     def dsha256(x):
         return hashlib.sha256(hashlib.sha256(x).digest()).digest()
 
-    reversed_hex(dsha256(b''.join(struct.pack('<f', x) for x in range(0,1000))))
+    reversed_hex(dsha256(''.join(struct.pack('<f', x) for x in range(0,1000))))
 == '8e8b4cf3e4df8b332057e3e23af42ebc663b61e0495d5e7e32d85099d7f3fe0c'
-    reversed_hex(dsha256(b''.join(struct.pack('<d', x) for x in range(0,1000))))
+    reversed_hex(dsha256(''.join(struct.pack('<d', x) for x in range(0,1000))))
 == '43d0c82591953c4eafe114590d392676a01585d25b25d433557f0d7878b23f96'
 */
 BOOST_AUTO_TEST_CASE(floats) {
@@ -154,9 +151,7 @@ BOOST_AUTO_TEST_CASE(floats) {
     for (int i = 0; i < 1000; i++) {
         ss << float(i);
     }
-    BOOST_CHECK(Hash(ss) ==
-                uint256S("8e8b4cf3e4df8b332057e3e23af42ebc663b61e0495d5e7e32d85"
-                         "099d7f3fe0c"));
+    BOOST_CHECK(Hash(ss) == uint256S("8e8b4cf3e4df8b332057e3e23af42ebc663b61e0495d5e7e32d85099d7f3fe0c"));
 
     // decode
     for (int i = 0; i < 1000; i++) {
@@ -172,9 +167,7 @@ BOOST_AUTO_TEST_CASE(doubles) {
     for (int i = 0; i < 1000; i++) {
         ss << double(i);
     }
-    BOOST_CHECK(Hash(ss) ==
-                uint256S("43d0c82591953c4eafe114590d392676a01585d25b25d433557f0"
-                         "d7878b23f96"));
+    BOOST_CHECK(Hash(ss) == uint256S("43d0c82591953c4eafe114590d392676a01585d25b25d433557f0d7878b23f96"));
 
     // decode
     for (int i = 0; i < 1000; i++) {
@@ -322,10 +315,8 @@ static bool isCanonicalException(const std::ios_base::failure &ex) {
 }
 
 BOOST_AUTO_TEST_CASE(vector_bool) {
-    std::vector<uint8_t> vec1{1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1,
-                              1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1};
-    std::vector<bool> vec2{1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1,
-                           1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1};
+    std::vector<uint8_t> vec1{1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1};
+    std::vector<bool> vec2{1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1};
 
     BOOST_CHECK(vec1 == std::vector<uint8_t>(vec2.begin(), vec2.end()));
     BOOST_CHECK(SerializeHash(vec1) == SerializeHash(vec2));
@@ -338,99 +329,99 @@ BOOST_AUTO_TEST_CASE(noncanonical) {
     std::vector<char>::size_type n;
 
     // zero encoded with three bytes:
-    ss.write(MakeByteSpan("\xfd\x00\x00").first(3));
+    ss.write("\xfd\x00\x00", 3);
     BOOST_CHECK_EXCEPTION(ReadCompactSize(ss), std::ios_base::failure,
                           isCanonicalException);
 
     // 0xfc encoded with three bytes:
-    ss.write(MakeByteSpan("\xfd\xfc\x00").first(3));
+    ss.write("\xfd\xfc\x00", 3);
     BOOST_CHECK_EXCEPTION(ReadCompactSize(ss), std::ios_base::failure,
                           isCanonicalException);
 
     // 0xfd encoded with three bytes is OK:
-    ss.write(MakeByteSpan("\xfd\xfd\x00").first(3));
+    ss.write("\xfd\xfd\x00", 3);
     n = ReadCompactSize(ss);
     BOOST_CHECK(n == 0xfd);
 
     // zero encoded with five bytes:
-    ss.write(MakeByteSpan("\xfe\x00\x00\x00\x00").first(5));
+    ss.write("\xfe\x00\x00\x00\x00", 5);
     BOOST_CHECK_EXCEPTION(ReadCompactSize(ss), std::ios_base::failure,
                           isCanonicalException);
 
     // 0xffff encoded with five bytes:
-    ss.write(MakeByteSpan("\xfe\xff\xff\x00\x00").first(5));
+    ss.write("\xfe\xff\xff\x00\x00", 5);
     BOOST_CHECK_EXCEPTION(ReadCompactSize(ss), std::ios_base::failure,
                           isCanonicalException);
 
     // zero encoded with nine bytes:
-    ss.write(MakeByteSpan("\xff\x00\x00\x00\x00\x00\x00\x00\x00").first(9));
+    ss.write("\xff\x00\x00\x00\x00\x00\x00\x00\x00", 9);
     BOOST_CHECK_EXCEPTION(ReadCompactSize(ss), std::ios_base::failure,
                           isCanonicalException);
 
     // 0x01ffffff encoded with nine bytes:
-    ss.write(MakeByteSpan("\xff\xff\xff\xff\x01\x00\x00\x00\x00").first(9));
+    ss.write("\xff\xff\xff\xff\x01\x00\x00\x00\x00", 9);
     BOOST_CHECK_EXCEPTION(ReadCompactSize(ss), std::ios_base::failure,
                           isCanonicalException);
 }
 
 BOOST_AUTO_TEST_CASE(insert_delete) {
-    constexpr auto B2I{[](std::byte b) { return std::to_integer<uint8_t>(b); }};
-
     // Test inserting/deleting bytes.
     CDataStream ss(SER_DISK, 0);
     BOOST_CHECK_EQUAL(ss.size(), 0U);
 
-    ss.write(MakeByteSpan("\x00\x01\x02\xff").first(4));
+    ss.write("\x00\x01\x02\xff", 4);
     BOOST_CHECK_EQUAL(ss.size(), 4U);
 
-    uint8_t c{11};
+    char c = (char)11;
 
     // Inserting at beginning/end/middle:
-    ss.insert(ss.begin(), std::byte{c});
+    ss.insert(ss.begin(), c);
     BOOST_CHECK_EQUAL(ss.size(), 5U);
-    BOOST_CHECK_EQUAL(B2I(ss[0]), c);
-    BOOST_CHECK_EQUAL(B2I(ss[1]), 0);
+    BOOST_CHECK_EQUAL(ss[0], c);
+    BOOST_CHECK_EQUAL(ss[1], 0);
 
-    ss.insert(ss.end(), std::byte{c});
+    ss.insert(ss.end(), c);
     BOOST_CHECK_EQUAL(ss.size(), 6U);
-    BOOST_CHECK_EQUAL(B2I(ss[4]), 0xff);
-    BOOST_CHECK_EQUAL(B2I(ss[5]), c);
+    BOOST_CHECK_EQUAL(ss[4], (char)0xff);
+    BOOST_CHECK_EQUAL(ss[5], c);
 
-    ss.insert(ss.begin() + 2, std::byte{c});
+    ss.insert(ss.begin() + 2, c);
     BOOST_CHECK_EQUAL(ss.size(), 7U);
-    BOOST_CHECK_EQUAL(B2I(ss[2]), c);
+    BOOST_CHECK_EQUAL(ss[2], c);
 
     // Delete at beginning/end/middle
     ss.erase(ss.begin());
     BOOST_CHECK_EQUAL(ss.size(), 6U);
-    BOOST_CHECK_EQUAL(B2I(ss[0]), 0);
+    BOOST_CHECK_EQUAL(ss[0], 0);
 
     ss.erase(ss.begin() + ss.size() - 1);
     BOOST_CHECK_EQUAL(ss.size(), 5U);
-    BOOST_CHECK_EQUAL(B2I(ss[4]), 0xff);
+    BOOST_CHECK_EQUAL(ss[4], (char)0xff);
 
     ss.erase(ss.begin() + 1);
     BOOST_CHECK_EQUAL(ss.size(), 4U);
-    BOOST_CHECK_EQUAL(B2I(ss[0]), 0);
-    BOOST_CHECK_EQUAL(B2I(ss[1]), 1);
-    BOOST_CHECK_EQUAL(B2I(ss[2]), 2);
-    BOOST_CHECK_EQUAL(B2I(ss[3]), 0xff);
+    BOOST_CHECK_EQUAL(ss[0], 0);
+    BOOST_CHECK_EQUAL(ss[1], 1);
+    BOOST_CHECK_EQUAL(ss[2], 2);
+    BOOST_CHECK_EQUAL(ss[3], (char)0xff);
+
+    // Make sure GetAndClear does the right thing:
+    CDataStream::vector_type d;
+    ss.GetAndClear(d);
+    BOOST_CHECK_EQUAL(ss.size(), 0U);
 }
 
 BOOST_AUTO_TEST_CASE(class_methods) {
     int intval(100);
     bool boolval(true);
     std::string stringval("testing");
-    const uint8_t charstrval[16]{"testing charstr"};
+    const char charstrval[16] = "testing charstr";
     CMutableTransaction txval;
     CTransactionRef tx_ref{MakeTransactionRef(txval)};
-    avalanche::ProofBuilder pb(0, 0, CKey::MakeCompressedKey(),
-                               avalanche::UNSPENDABLE_ECREG_PAYOUT_SCRIPT);
-    avalanche::ProofRef proofval = pb.build();
     CSerializeMethodsTestSingle methodtest1(intval, boolval, stringval,
-                                            charstrval, tx_ref, proofval);
+                                            charstrval, tx_ref);
     CSerializeMethodsTestMany methodtest2(intval, boolval, stringval,
-                                          charstrval, tx_ref, proofval);
+                                          charstrval, tx_ref);
     CSerializeMethodsTestSingle methodtest3;
     CSerializeMethodsTestMany methodtest4;
     CDataStream ss(SER_DISK, PROTOCOL_VERSION);
@@ -444,143 +435,80 @@ BOOST_AUTO_TEST_CASE(class_methods) {
     BOOST_CHECK(methodtest3 == methodtest4);
 
     CDataStream ss2(SER_DISK, PROTOCOL_VERSION, intval, boolval, stringval,
-                    charstrval, txval, proofval);
+                    charstrval, txval);
     ss2 >> methodtest3;
     BOOST_CHECK(methodtest3 == methodtest4);
 }
 
-namespace {
-struct DifferentialIndexedItem {
-    uint32_t index;
-    std::string text;
+BOOST_AUTO_TEST_CASE(optional) {
+    const int intval(424242);
+    const bool boolval(true);
+    const std::string stringval("testing testing 123");
+    const char charstrval[16] = "testing charstr";
+    const auto txhex = "010000000175ecb0496f9152b9598a5cfeccfaa9f20c0cd4cb540558ea5e61fb2421ee98f10000000064417c2f08dff"
+                       "94a18e4f2394e023aa1bd08d0f75392d753d628a3c59225cd0a9ef52b80fe4447c44ba2dc61e0ad4336800745ea3f34"
+                       "5827e1d7e907ab33ccfee1a74121024eeb7a4eee3d31ae61208cb3e6a742e4dbf65ea39b2759844f076052bc1766f9f"
+                       "effffff0196939800000000001976a9142d2c8cf85c532e09a3ad0d16dd45d0fdff66025088ac76300200";
+    CMutableTransaction txval;
+    VectorReader(SER_DISK, PROTOCOL_VERSION, ParseHex(txhex), 0) >> txval;
+    CTransactionRef tx_ref{MakeTransactionRef(txval)};
+    const CSerializeMethodsTestSingle obj(intval, boolval, stringval, charstrval, tx_ref);
+    std::optional<CSerializeMethodsTestSingle> optObj, optObj2;
 
-    template <typename Stream> void SerData(Stream &s) { s << text; }
-    template <typename Stream> void UnserData(Stream &s) { s >> text; }
+    // Check ser/deser round-trip of an optional that has a value
+    optObj = obj;
+    BOOST_CHECK(optObj.has_value());
+    BOOST_CHECK(!optObj2.has_value());
+    (CDataStream(SER_DISK, PROTOCOL_VERSION) << optObj) >> optObj2;
+    BOOST_CHECK(optObj == optObj2);
+    BOOST_CHECK(optObj.has_value());
+    BOOST_CHECK(optObj2.has_value());
+    BOOST_CHECK(*optObj2 == obj);
 
-    bool operator==(const DifferentialIndexedItem &other) const {
-        return index == other.index && text == other.text;
-    }
-    bool operator!=(const DifferentialIndexedItem &other) const {
-        return !(*this == other);
-    }
+    // Check ser/deser round-trip of an optional without a value
+    optObj.reset();
+    BOOST_CHECK(!optObj.has_value());
+    BOOST_CHECK(optObj2.has_value());
+    (CDataStream(SER_DISK, PROTOCOL_VERSION) << optObj) >> optObj2;
+    BOOST_CHECK(optObj == optObj2);
+    BOOST_CHECK(!optObj.has_value());
+    BOOST_CHECK(!optObj2.has_value());
 
-    // Make boost happy
-    friend std::ostream &operator<<(std::ostream &os,
-                                    const DifferentialIndexedItem &item) {
-        os << "index: " << item.index << ", text: " << item.text;
-        return os;
-    }
+    // Manually build the buffer, format is: 1/0 char to indicate has_value, then the embedded object
+    std::vector<uint8_t> buf;
 
-    DifferentialIndexedItem() {}
-    DifferentialIndexedItem(uint32_t indexIn)
-        : index(indexIn), text(ToString(index)) {}
-};
+    CVectorWriter(SER_DISK, PROTOCOL_VERSION, buf, 0) << uint8_t(1) << obj;
+    BOOST_CHECK(!buf.empty());
+    BOOST_CHECK(!optObj.has_value());
+    VectorReader(SER_DISK, PROTOCOL_VERSION, buf, 0) >> optObj;
+    BOOST_CHECK(optObj.has_value());
+    BOOST_CHECK(*optObj == obj);
 
-template <typename Formatter, typename T>
-static void checkDifferentialEncodingRoundtrip() {
-    Formatter formatter;
+    // Do out-of-spec non-zero >1 at beginning of buffer -- should throw
+    buf[0] = 2u;
+    optObj.reset();
+    auto isExpectedMessage = [](const auto &ex) {
+        return std::string_view{ex.what()}.find("optional encoding") != std::string_view::npos;
+    };
+    BOOST_CHECK_EXCEPTION((VectorReader(SER_DISK, PROTOCOL_VERSION, buf, 0) >> optObj),
+                          std::ios_base::failure, isExpectedMessage);
+    // On this failure mode, optObj should remain unchanged
+    BOOST_CHECK(!optObj.has_value());
+    // Do it again and verify optObj2 still has its original value even after we got the non-canonical exception
+    optObj2 = obj;
+    BOOST_CHECK_EXCEPTION((VectorReader(SER_DISK, PROTOCOL_VERSION, buf, 0) >> optObj2),
+                          std::ios_base::failure, isExpectedMessage);
+    BOOST_CHECK(optObj2.has_value());
+    BOOST_CHECK(*optObj2 == obj);
 
-    const std::vector<T> indicesIn{0, 1, 2, 5, 10, 20, 50, 100};
-    std::vector<T> indicesOut;
-
-    CDataStream ss(SER_DISK, PROTOCOL_VERSION);
-    formatter.Ser(ss, indicesIn);
-    formatter.Unser(ss, indicesOut);
-    BOOST_CHECK_EQUAL_COLLECTIONS(indicesIn.begin(), indicesIn.end(),
-                                  indicesOut.begin(), indicesOut.end());
-}
-
-template <typename Formatter, typename T>
-static void checkDifferentialEncodingOverflow() {
-    Formatter formatter;
-
-    {
-        const std::vector<T> indicesIn{1, 0};
-
-        CDataStream ss(SER_DISK, PROTOCOL_VERSION);
-        BOOST_CHECK_EXCEPTION(formatter.Ser(ss, indicesIn),
-                              std::ios_base::failure,
-                              HasReason("differential value overflow"));
-    }
-}
-} // namespace
-
-BOOST_AUTO_TEST_CASE(difference_formatter) {
-    {
-        // Roundtrip with internals check
-        VectorFormatter<DifferenceFormatter> formatter;
-
-        std::vector<uint32_t> indicesIn{0, 1, 2, 5, 10, 20, 50, 100};
-        std::vector<uint32_t> indicesOut;
-
-        CDataStream ss(SER_DISK, PROTOCOL_VERSION);
-        formatter.Ser(ss, indicesIn);
-
-        // Check the stream is differentially encoded. Don't care about the
-        // prefixes and vector length here (assumed to be < 253).
-        const std::string streamStr = ss.str();
-        const std::string differences =
-            HexStr(streamStr.substr(streamStr.size() - indicesIn.size()));
-        BOOST_CHECK_EQUAL(differences, "0000000204091d31");
-
-        formatter.Unser(ss, indicesOut);
-        BOOST_CHECK_EQUAL_COLLECTIONS(indicesIn.begin(), indicesIn.end(),
-                                      indicesOut.begin(), indicesOut.end());
-    }
-
-    checkDifferentialEncodingRoundtrip<VectorFormatter<DifferenceFormatter>,
-                                       uint32_t>();
-    checkDifferentialEncodingRoundtrip<
-        VectorFormatter<DifferentialIndexedItemFormatter>,
-        DifferentialIndexedItem>();
-
-    {
-        // Checking 32 bits overflow requires to manually create the serialized
-        // stream, so only do it with uint32_t
-        std::vector<uint32_t> indicesOut;
-
-        // Compute the number of MAX_SIZE increment we need to cause an overflow
-        const uint64_t overflow =
-            uint64_t(std::numeric_limits<uint32_t>::max()) + 1;
-        // Due to differential encoding, a value of MAX_SIZE bumps the index by
-        // MAX_SIZE + 1
-        BOOST_CHECK_GE(overflow, MAX_SIZE + 1);
-        const uint64_t overflowIter = overflow / (MAX_SIZE + 1);
-
-        // Make sure the iteration fits in an uint32_t and is <= MAX_SIZE
-        BOOST_CHECK_LE(overflowIter, std::numeric_limits<uint32_t>::max());
-        BOOST_CHECK_LE(overflowIter, MAX_SIZE);
-        uint32_t remainder =
-            uint32_t(overflow - ((MAX_SIZE + 1) * overflowIter));
-
-        auto buildStream = [&](uint32_t lastItemDifference) {
-            CDataStream ss(SER_DISK, PROTOCOL_VERSION);
-            WriteCompactSize(ss, overflowIter + 1);
-            for (uint32_t i = 0; i < overflowIter; i++) {
-                WriteCompactSize(ss, MAX_SIZE);
-            }
-            // This will cause an overflow if lastItemDifference >= remainder
-            WriteCompactSize(ss, lastItemDifference);
-
-            return ss;
-        };
-
-        VectorFormatter<DifferenceFormatter> formatter;
-
-        auto noThrowStream = buildStream(remainder - 1);
-        BOOST_CHECK_NO_THROW(formatter.Unser(noThrowStream, indicesOut));
-
-        auto overflowStream = buildStream(remainder);
-        BOOST_CHECK_EXCEPTION(formatter.Unser(overflowStream, indicesOut),
-                              std::ios_base::failure,
-                              HasReason("differential value overflow"));
-    }
-
-    checkDifferentialEncodingOverflow<VectorFormatter<DifferenceFormatter>,
-                                      uint32_t>();
-    checkDifferentialEncodingOverflow<
-        VectorFormatter<DifferentialIndexedItemFormatter>,
-        DifferentialIndexedItem>();
+    // Test that 0 at beginning of buffer yields an empty optional
+    optObj = obj;
+    BOOST_CHECK(optObj.has_value());
+    buf[0] = 0u;
+    VectorReader vr(SER_DISK, PROTOCOL_VERSION, buf, 0);
+    vr >> optObj;
+    BOOST_CHECK(!optObj.has_value());
+    BOOST_CHECK(!vr.empty()); // has bytes leftover after reading leading 0
 }
 
 BOOST_AUTO_TEST_SUITE_END()

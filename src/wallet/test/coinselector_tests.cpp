@@ -1,18 +1,17 @@
 // Copyright (c) 2017 The Bitcoin Core developers
+// Copyright (c) 2019-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <amount.h>
 #include <chainparams.h> // For Params
-#include <consensus/amount.h>
-#include <node/context.h>
 #include <primitives/transaction.h>
 #include <random.h>
 #include <wallet/coincontrol.h>
 #include <wallet/coinselection.h>
-#include <wallet/spend.h>
 #include <wallet/wallet.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 #include <wallet/test/wallet_test_fixture.h>
 
 #include <boost/test/unit_test.hpp>
@@ -31,17 +30,18 @@ BOOST_FIXTURE_TEST_SUITE(coinselector_tests, WalletTestingSetup)
 // the test fail
 #define RANDOM_REPEATS 5
 
+std::vector<std::unique_ptr<CWalletTx>> wtxn;
+
 typedef std::set<CInputCoin> CoinSet;
 
 static std::vector<COutput> vCoins;
-static node::NodeContext testNode;
 static Amount balance = Amount::zero();
 
 CoinEligibilityFilter filter_standard(1, 6);
 CoinEligibilityFilter filter_confirmed(1, 1);
 CoinEligibilityFilter filter_standard_extra(6, 6);
 CoinSelectionParams coin_selection_params(false, 0, 0, CFeeRate(Amount::zero()),
-                                          0, false);
+                                          0);
 
 static void add_coin(const Amount nValue, int nInput,
                      std::vector<CInputCoin> &set) {
@@ -59,8 +59,7 @@ static void add_coin(const Amount nValue, int nInput, CoinSet &set) {
 }
 
 static void add_coin(CWallet &wallet, const Amount nValue, int nAge = 6 * 24,
-                     bool fIsFromMe = false, int nInput = 0,
-                     bool spendable = false) {
+                     bool fIsFromMe = false, int nInput = 0) {
     balance += nValue;
     static int nextLockTime = 0;
     CMutableTransaction tx;
@@ -68,31 +67,28 @@ static void add_coin(CWallet &wallet, const Amount nValue, int nAge = 6 * 24,
     tx.nLockTime = nextLockTime++;
     tx.vout.resize(nInput + 1);
     tx.vout[nInput].nValue = nValue;
-    if (spendable) {
-        CTxDestination dest;
-        std::string error;
-        assert(wallet.GetNewDestination(OutputType::LEGACY, "", dest, error));
-        tx.vout[nInput].scriptPubKey = GetScriptForDestination(dest);
-    }
     if (fIsFromMe) {
         // IsFromMe() returns (GetDebit() > 0), and GetDebit() is 0 if
         // vin.empty(), so stop vin being empty, and cache a non-zero Debit to
         // fake out IsFromMe()
         tx.vin.resize(1);
     }
-    CWalletTx *wtx = wallet.AddToWallet(MakeTransactionRef(std::move(tx)),
-                                        /* confirm= */ {});
+    auto wtx =
+        std::make_unique<CWalletTx>(&wallet, MakeTransactionRef(std::move(tx)));
     if (fIsFromMe) {
-        wtx->m_amounts[CWalletTx::DEBIT].Set(ISMINE_SPENDABLE, SATOSHI);
-        wtx->m_is_cache_empty = false;
+        wtx->fDebitCached = true;
+        wtx->nDebitCached = SATOSHI;
     }
-    COutput output(wallet, *wtx, nInput, nAge, true /* spendable */,
+    COutput output(wtx.get(), nInput, nAge, true /* spendable */,
                    true /* solvable */, true /* safe */);
     vCoins.push_back(output);
+    wallet.AddToWallet(*wtx.get());
+    wtxn.emplace_back(std::move(wtx));
 }
 
 static void empty_wallet() {
     vCoins.clear();
+    wtxn.clear();
     balance = Amount::zero();
 }
 
@@ -120,8 +116,7 @@ GroupCoins(const std::vector<CInputCoin> &coins) {
     static std::vector<OutputGroup> static_groups;
     static_groups.clear();
     for (auto &coin : coins) {
-        static_groups.emplace_back();
-        static_groups.back().Insert(coin, 0, true, false);
+        static_groups.emplace_back(coin, 0, true);
     }
     return static_groups;
 }
@@ -133,12 +128,8 @@ inline std::vector<OutputGroup> &GroupCoins(const std::vector<COutput> &coins) {
         // HACK: we can't figure out the is_me flag so we use the conditions
         // defined below; perhaps set safe to false for !fIsFromMe in add_coin()
         const bool is_me =
-            coin.tx->m_amounts[CWalletTx::DEBIT].m_cached[ISMINE_SPENDABLE] &&
-            coin.tx->m_amounts[CWalletTx::DEBIT].m_value[ISMINE_SPENDABLE] ==
-                SATOSHI;
-        static_groups.emplace_back();
-        static_groups.back().Insert(coin.GetInputCoin(), coin.nDepth, is_me,
-                                    false);
+            coin.tx->fDebitCached && coin.tx->nDebitCached == SATOSHI;
+        static_groups.emplace_back(coin.GetInputCoin(), coin.nDepth, is_me);
     }
     return static_groups;
 }
@@ -146,7 +137,6 @@ inline std::vector<OutputGroup> &GroupCoins(const std::vector<COutput> &coins) {
 // Branch and bound coin selection tests
 BOOST_AUTO_TEST_CASE(bnb_search_test) {
     LOCK(m_wallet.cs_wallet);
-    m_wallet.SetupLegacyScriptPubKeyMan();
 
     // Setup
     std::vector<CInputCoin> utxo_pool;
@@ -189,8 +179,8 @@ BOOST_AUTO_TEST_CASE(bnb_search_test) {
     selection.clear();
 
     // Select 5 Cent
-    add_coin(4 * CENT, 4, actual_selection);
-    add_coin(1 * CENT, 1, actual_selection);
+    add_coin(3 * CENT, 3, actual_selection);
+    add_coin(2 * CENT, 2, actual_selection);
     BOOST_CHECK(SelectCoinsBnB(GroupCoins(utxo_pool), 5 * CENT, CENT / 2,
                                selection, value_ret, not_input_fees));
     BOOST_CHECK(equal_sets(selection, actual_selection));
@@ -204,29 +194,11 @@ BOOST_AUTO_TEST_CASE(bnb_search_test) {
     actual_selection.clear();
     selection.clear();
 
-    // Cost of change is greater than the difference between target value and
-    // utxo sum
-    add_coin(1 * CENT, 1, actual_selection);
-    BOOST_CHECK(SelectCoinsBnB(GroupCoins(utxo_pool), 9 * CENT / 10,
-                               5 * CENT / 10, selection, value_ret,
-                               not_input_fees));
-    BOOST_CHECK_EQUAL(value_ret, 1 * CENT);
-    BOOST_CHECK(equal_sets(selection, actual_selection));
-    actual_selection.clear();
-    selection.clear();
-
-    // Cost of change is less than the difference between target value and utxo
-    // sum
-    BOOST_CHECK(!SelectCoinsBnB(GroupCoins(utxo_pool), 9 * CENT / 10,
-                                Amount::zero(), selection, value_ret,
-                                not_input_fees));
-    actual_selection.clear();
-    selection.clear();
-
     // Select 10 Cent
     add_coin(5 * CENT, 5, utxo_pool);
-    add_coin(5 * CENT, 5, actual_selection);
     add_coin(4 * CENT, 4, actual_selection);
+    add_coin(3 * CENT, 3, actual_selection);
+    add_coin(2 * CENT, 2, actual_selection);
     add_coin(1 * CENT, 1, actual_selection);
     BOOST_CHECK(SelectCoinsBnB(GroupCoins(utxo_pool), 10 * CENT, CENT / 2,
                                selection, value_ret, not_input_fees));
@@ -298,8 +270,8 @@ BOOST_AUTO_TEST_CASE(bnb_search_test) {
 
     // Make sure that effective value is working in SelectCoinsMinConf when BnB
     // is used
-    CoinSelectionParams coin_selection_params_bnb(
-        true, 0, 0, CFeeRate(3000 * SATOSHI), 0, false);
+    CoinSelectionParams coin_selection_params_bnb(true, 0, 0,
+                                                  CFeeRate(3000 * SATOSHI), 0);
     CoinSet setCoinsRet;
     Amount nValueRet;
     bool bnb_used;
@@ -308,93 +280,70 @@ BOOST_AUTO_TEST_CASE(bnb_search_test) {
     // Make sure that it has a negative effective value. The next check should
     // assert if this somehow got through. Otherwise it will fail
     vCoins.at(0).nInputBytes = 40;
-    BOOST_CHECK(!SelectCoinsMinConf(m_wallet, 1 * CENT, filter_standard, vCoins,
-                                    setCoinsRet, nValueRet,
-                                    coin_selection_params_bnb, bnb_used));
+    BOOST_CHECK(!m_wallet.SelectCoinsMinConf(
+        1 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet, nValueRet,
+        coin_selection_params_bnb, bnb_used));
 
-    // Test fees subtracted from output:
+    // Make sure that we aren't using BnB when there are preset inputs
     empty_wallet();
-    add_coin(m_wallet, 1 * CENT);
-    vCoins.at(0).nInputBytes = 40;
-    BOOST_CHECK(!SelectCoinsMinConf(m_wallet, 1 * CENT, filter_standard, vCoins,
-                                    setCoinsRet, nValueRet,
-                                    coin_selection_params_bnb, bnb_used));
-    coin_selection_params_bnb.m_subtract_fee_outputs = true;
-    BOOST_CHECK(SelectCoinsMinConf(m_wallet, 1 * CENT, filter_standard, vCoins,
-                                   setCoinsRet, nValueRet,
-                                   coin_selection_params_bnb, bnb_used));
-    BOOST_CHECK_EQUAL(nValueRet, 1 * CENT);
-
-    // Make sure that can use BnB when there are preset inputs
-    empty_wallet();
-    {
-        auto wallet = std::make_unique<CWallet>(m_node.chain.get(), "",
-                                                CreateMockWalletDatabase());
-        bool firstRun;
-        wallet->LoadWallet(firstRun);
-        LOCK(wallet->cs_wallet);
-        wallet->SetupLegacyScriptPubKeyMan();
-        add_coin(*wallet, 5 * CENT, 6 * 24, false, 0, true);
-        add_coin(*wallet, 3 * CENT, 6 * 24, false, 0, true);
-        add_coin(*wallet, 2 * CENT, 6 * 24, false, 0, true);
-        CCoinControl coin_control;
-        coin_control.fAllowOtherInputs = true;
-        coin_control.Select(
-            COutPoint(vCoins.at(0).tx->GetId(), vCoins.at(0).i));
-        coin_selection_params_bnb.effective_fee = CFeeRate(Amount::zero());
-        BOOST_CHECK(SelectCoins(*wallet, vCoins, 10 * CENT, setCoinsRet,
-                                nValueRet, coin_control,
-                                coin_selection_params_bnb, bnb_used));
-        BOOST_CHECK(bnb_used);
-        BOOST_CHECK(coin_selection_params_bnb.use_bnb);
-    }
+    add_coin(m_wallet, 5 * CENT);
+    add_coin(m_wallet, 3 * CENT);
+    add_coin(m_wallet, 2 * CENT);
+    CCoinControl coin_control;
+    coin_control.fAllowOtherInputs = true;
+    coin_control.Select(COutPoint(vCoins.at(0).tx->GetId(), vCoins.at(0).i));
+    BOOST_CHECK(m_wallet.SelectCoins(vCoins, 10 * CENT, setCoinsRet, nValueRet,
+                                     coin_control, coin_selection_params_bnb,
+                                     bnb_used));
+    BOOST_CHECK(!bnb_used);
+    BOOST_CHECK(!coin_selection_params_bnb.use_bnb);
 }
 
 BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
-    auto testChain = interfaces::MakeChain(testNode, Params());
-    CWallet testWallet(testChain.get(), "", CreateDummyWalletDatabase());
+    auto testChain = interfaces::MakeChain();
+    CWallet testWallet(Params(), *testChain, WalletLocation(),
+                       WalletDatabase::CreateDummy());
 
     CoinSet setCoinsRet, setCoinsRet2;
     Amount nValueRet;
     bool bnb_used;
 
     LOCK(testWallet.cs_wallet);
-    testWallet.SetupLegacyScriptPubKeyMan();
 
     // test multiple times to allow for differences in the shuffle order
     for (int i = 0; i < RUN_TESTS; i++) {
         empty_wallet();
 
         // with an empty wallet we can't even pay one cent
-        BOOST_CHECK(!SelectCoinsMinConf(testWallet, 1 * CENT, filter_standard,
-                                        vCoins, setCoinsRet, nValueRet,
-                                        coin_selection_params, bnb_used));
+        BOOST_CHECK(!testWallet.SelectCoinsMinConf(
+            1 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
 
         // add a new 1 cent coin
         add_coin(testWallet, 1 * CENT, 4);
 
         // with a new 1 cent coin, we still can't find a mature 1 cent
-        BOOST_CHECK(!SelectCoinsMinConf(testWallet, 1 * CENT, filter_standard,
-                                        vCoins, setCoinsRet, nValueRet,
-                                        coin_selection_params, bnb_used));
+        BOOST_CHECK(!testWallet.SelectCoinsMinConf(
+            1 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
 
         // but we can find a new 1 cent
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 1 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            1 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 1 * CENT);
         // add a mature 2 cent coin
         add_coin(testWallet, 2 * CENT);
 
         // we can't make 3 cents of mature coins
-        BOOST_CHECK(!SelectCoinsMinConf(testWallet, 3 * CENT, filter_standard,
-                                        vCoins, setCoinsRet, nValueRet,
-                                        coin_selection_params, bnb_used));
+        BOOST_CHECK(!testWallet.SelectCoinsMinConf(
+            3 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
 
         // we can make 3 cents of new coins
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 3 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            3 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 3 * CENT);
 
         // add a mature 5 cent coin,
@@ -408,29 +357,29 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         // 2+5+20=27.  total = 38
 
         // we can't make 38 cents only if we disallow new coins:
-        BOOST_CHECK(!SelectCoinsMinConf(testWallet, 38 * CENT, filter_standard,
-                                        vCoins, setCoinsRet, nValueRet,
-                                        coin_selection_params, bnb_used));
+        BOOST_CHECK(!testWallet.SelectCoinsMinConf(
+            38 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         // we can't even make 37 cents if we don't allow new coins even if
         // they're from us
-        BOOST_CHECK(!SelectCoinsMinConf(
-            testWallet, 38 * CENT, filter_standard_extra, vCoins, setCoinsRet,
+        BOOST_CHECK(!testWallet.SelectCoinsMinConf(
+            38 * CENT, filter_standard_extra, GroupCoins(vCoins), setCoinsRet,
             nValueRet, coin_selection_params, bnb_used));
         // but we can make 37 cents if we accept new coins from ourself
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 37 * CENT, filter_standard,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            37 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 37 * CENT);
         // and we can make 38 cents if we accept all new coins
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 38 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            38 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 38 * CENT);
 
         // try making 34 cents from 1,2,5,10,20 - we can't do it exactly
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 34 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            34 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         // but 35 cents is closest
         BOOST_CHECK_EQUAL(nValueRet, 35 * CENT);
         // the best should be 20+10+5.  it's incredibly unlikely the 1 or 2 got
@@ -439,25 +388,25 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
 
         // when we try making 7 cents, the smaller coins (1,2,5) are enough.  We
         // should see just 2+5
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 7 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            7 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 7 * CENT);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 2U);
 
         // when we try making 8 cents, the smaller coins (1,2,5) are exactly
         // enough.
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 8 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            8 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK(nValueRet == 8 * CENT);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 3U);
 
         // when we try making 9 cents, no subset of smaller coins is enough, and
         // we get the next bigger coin (10)
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 9 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            9 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 10 * CENT);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 1U);
 
@@ -473,18 +422,18 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         add_coin(testWallet, 30 * CENT);
 
         // check that we have 71 and not 72
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 71 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
-        BOOST_CHECK(!SelectCoinsMinConf(testWallet, 72 * CENT, filter_confirmed,
-                                        vCoins, setCoinsRet, nValueRet,
-                                        coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            71 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
+        BOOST_CHECK(!testWallet.SelectCoinsMinConf(
+            72 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
 
         // now try making 16 cents.  the best smaller coins can do is 6+7+8 =
         // 21; not as good at the next biggest coin, 20
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 16 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            16 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         // we should get 20 in one coin
         BOOST_CHECK_EQUAL(nValueRet, 20 * CENT);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 1U);
@@ -494,9 +443,9 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
 
         // now if we try making 16 cents again, the smaller coins can make 5+6+7
         // = 18 cents, better than the next biggest coin, 20
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 16 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            16 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         // we should get 18 in 3 coins
         BOOST_CHECK_EQUAL(nValueRet, 18 * CENT);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 3U);
@@ -506,18 +455,18 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
 
         // and now if we try making 16 cents again, the smaller coins can make
         // 5+6+7 = 18 cents, the same as the next biggest coin, 18
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 16 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            16 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         // we should get 18 in 1 coin
         BOOST_CHECK_EQUAL(nValueRet, 18 * CENT);
         // because in the event of a tie, the biggest coin wins
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 1U);
 
         // now try making 11 cents.  we should get 5+6
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 11 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            11 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 11 * CENT);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 2U);
 
@@ -527,17 +476,17 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         add_coin(testWallet, 3 * COIN);
         // now we have 5+6+7+8+18+20+30+100+200+300+400 = 1094 cents
         add_coin(testWallet, 4 * COIN);
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 95 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
-        // we should get 1,000,000 XEC in 1 coin
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            95 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
+        // we should get 1 BCH in 1 coin
         BOOST_CHECK_EQUAL(nValueRet, 1 * COIN);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 1U);
 
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, 195 * CENT, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
-        // we should get 2,000,000 XEC in 1 coin
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            195 * CENT, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
+        // we should get 2 BCH in 1 coin
         BOOST_CHECK_EQUAL(nValueRet, 2 * COIN);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 1U);
 
@@ -554,17 +503,17 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         // try making 1 * MIN_CHANGE from the 1.5 * MIN_CHANGE
         // we'll get change smaller than MIN_CHANGE whatever happens, so can
         // expect MIN_CHANGE exactly
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, MIN_CHANGE, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            MIN_CHANGE, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, MIN_CHANGE);
 
         // but if we add a bigger coin, small change is avoided
         add_coin(testWallet, 1111 * MIN_CHANGE);
 
         // try making 1 from 0.1 + 0.2 + 0.3 + 0.4 + 0.5 + 1111 = 1112.5
-        BOOST_CHECK(SelectCoinsMinConf(
-            testWallet, 1 * MIN_CHANGE, filter_confirmed, vCoins, setCoinsRet,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            1 * MIN_CHANGE, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
             nValueRet, coin_selection_params, bnb_used));
         // we should get the exact amount
         BOOST_CHECK_EQUAL(nValueRet, 1 * MIN_CHANGE);
@@ -574,8 +523,8 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         add_coin(testWallet, 7 * MIN_CHANGE / 10);
 
         // and try again to make 1.0 * MIN_CHANGE
-        BOOST_CHECK(SelectCoinsMinConf(
-            testWallet, 1 * MIN_CHANGE, filter_confirmed, vCoins, setCoinsRet,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            1 * MIN_CHANGE, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
             nValueRet, coin_selection_params, bnb_used));
         // we should get the exact amount
         BOOST_CHECK_EQUAL(nValueRet, 1 * MIN_CHANGE);
@@ -589,8 +538,8 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
             add_coin(testWallet, 50000 * COIN);
         }
 
-        BOOST_CHECK(SelectCoinsMinConf(
-            testWallet, 500000 * COIN, filter_confirmed, vCoins, setCoinsRet,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            500000 * COIN, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
             nValueRet, coin_selection_params, bnb_used));
         // we should get the exact amount
         BOOST_CHECK_EQUAL(nValueRet, 500000 * COIN);
@@ -607,8 +556,8 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         add_coin(testWallet, 6 * MIN_CHANGE / 10);
         add_coin(testWallet, 7 * MIN_CHANGE / 10);
         add_coin(testWallet, 1111 * MIN_CHANGE);
-        BOOST_CHECK(SelectCoinsMinConf(
-            testWallet, 1 * MIN_CHANGE, filter_confirmed, vCoins, setCoinsRet,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            1 * MIN_CHANGE, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
             nValueRet, coin_selection_params, bnb_used));
         // we get the bigger coin
         BOOST_CHECK_EQUAL(nValueRet, 1111 * MIN_CHANGE);
@@ -621,9 +570,9 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         add_coin(testWallet, 6 * MIN_CHANGE / 10);
         add_coin(testWallet, 8 * MIN_CHANGE / 10);
         add_coin(testWallet, 1111 * MIN_CHANGE);
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, MIN_CHANGE, filter_confirmed,
-                                       vCoins, setCoinsRet, nValueRet,
-                                       coin_selection_params, bnb_used));
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            MIN_CHANGE, filter_confirmed, GroupCoins(vCoins), setCoinsRet,
+            nValueRet, coin_selection_params, bnb_used));
         // we should get the exact amount
         BOOST_CHECK_EQUAL(nValueRet, MIN_CHANGE);
         // in two coins 0.4+0.6
@@ -636,8 +585,8 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         add_coin(testWallet, 100 * MIN_CHANGE);
 
         // trying to make 100.01 from these three coins
-        BOOST_CHECK(SelectCoinsMinConf(
-            testWallet, 10001 * MIN_CHANGE / 100, filter_confirmed, vCoins,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            10001 * MIN_CHANGE / 100, filter_confirmed, GroupCoins(vCoins),
             setCoinsRet, nValueRet, coin_selection_params, bnb_used));
         // we should get all coins
         BOOST_CHECK_EQUAL(nValueRet, 10105 * MIN_CHANGE / 100);
@@ -645,8 +594,8 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
 
         // but if we try to make 99.9, we should take the bigger of the two
         // small coins to avoid small change
-        BOOST_CHECK(SelectCoinsMinConf(
-            testWallet, 9990 * MIN_CHANGE / 100, filter_confirmed, vCoins,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+            9990 * MIN_CHANGE / 100, filter_confirmed, GroupCoins(vCoins),
             setCoinsRet, nValueRet, coin_selection_params, bnb_used));
         BOOST_CHECK_EQUAL(nValueRet, 101 * MIN_CHANGE);
         BOOST_CHECK_EQUAL(setCoinsRet.size(), 2U);
@@ -664,8 +613,8 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         // We only create the wallet once to save time, but we still run the
         // coin selection RUN_TESTS times.
         for (int i = 0; i < RUN_TESTS; i++) {
-            BOOST_CHECK(SelectCoinsMinConf(
-                testWallet, 2000 * SATOSHI, filter_confirmed, vCoins,
+            BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                2000 * SATOSHI, filter_confirmed, GroupCoins(vCoins),
                 setCoinsRet, nValueRet, coin_selection_params, bnb_used));
 
             if (amt - 2000 * SATOSHI < MIN_CHANGE) {
@@ -695,11 +644,11 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
         for (int i = 0; i < RUN_TESTS; i++) {
             // picking 50 from 100 coins doesn't depend on the shuffle, but does
             // depend on randomness in the stochastic approximation code
-            BOOST_CHECK(SelectCoinsMinConf(
-                testWallet, 50 * COIN, filter_standard, vCoins, setCoinsRet,
+            BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                50 * COIN, filter_standard, GroupCoins(vCoins), setCoinsRet,
                 nValueRet, coin_selection_params, bnb_used));
-            BOOST_CHECK(SelectCoinsMinConf(
-                testWallet, 50 * COIN, filter_standard, vCoins, setCoinsRet2,
+            BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                50 * COIN, filter_standard, GroupCoins(vCoins), setCoinsRet2,
                 nValueRet, coin_selection_params, bnb_used));
             BOOST_CHECK(!equal_sets(setCoinsRet, setCoinsRet2));
 
@@ -708,11 +657,11 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
                 // selecting 1 from 100 identical coins depends on the shuffle;
                 // this test will fail 1% of the time run the test
                 // RANDOM_REPEATS times and only complain if all of them fail
-                BOOST_CHECK(SelectCoinsMinConf(
-                    testWallet, COIN, filter_standard, vCoins, setCoinsRet,
+                BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                    COIN, filter_standard, GroupCoins(vCoins), setCoinsRet,
                     nValueRet, coin_selection_params, bnb_used));
-                BOOST_CHECK(SelectCoinsMinConf(
-                    testWallet, COIN, filter_standard, vCoins, setCoinsRet2,
+                BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                    COIN, filter_standard, GroupCoins(vCoins), setCoinsRet2,
                     nValueRet, coin_selection_params, bnb_used));
                 if (equal_sets(setCoinsRet, setCoinsRet2)) {
                     fails++;
@@ -736,11 +685,11 @@ BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
                 // selecting 1 from 100 identical coins depends on the shuffle;
                 // this test will fail 1% of the time run the test
                 // RANDOM_REPEATS times and only complain if all of them fail
-                BOOST_CHECK(SelectCoinsMinConf(
-                    testWallet, 90 * CENT, filter_standard, vCoins, setCoinsRet,
+                BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                    90 * CENT, filter_standard, GroupCoins(vCoins), setCoinsRet,
                     nValueRet, coin_selection_params, bnb_used));
-                BOOST_CHECK(SelectCoinsMinConf(
-                    testWallet, 90 * CENT, filter_standard, vCoins,
+                BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                    90 * CENT, filter_standard, GroupCoins(vCoins),
                     setCoinsRet2, nValueRet, coin_selection_params, bnb_used));
                 if (equal_sets(setCoinsRet, setCoinsRet2)) {
                     fails++;
@@ -759,7 +708,6 @@ BOOST_AUTO_TEST_CASE(ApproximateBestSubset) {
     bool bnb_used;
 
     LOCK(m_wallet.cs_wallet);
-    m_wallet.SetupLegacyScriptPubKeyMan();
 
     empty_wallet();
 
@@ -769,9 +717,9 @@ BOOST_AUTO_TEST_CASE(ApproximateBestSubset) {
     }
     add_coin(m_wallet, 3 * COIN);
 
-    BOOST_CHECK(SelectCoinsMinConf(m_wallet, 1003 * COIN, filter_standard,
-                                   vCoins, setCoinsRet, nValueRet,
-                                   coin_selection_params, bnb_used));
+    BOOST_CHECK(m_wallet.SelectCoinsMinConf(
+        1003 * COIN, filter_standard, GroupCoins(vCoins), setCoinsRet,
+        nValueRet, coin_selection_params, bnb_used));
     BOOST_CHECK_EQUAL(nValueRet, 1003 * COIN);
     BOOST_CHECK_EQUAL(setCoinsRet.size(), 2U);
 
@@ -781,9 +729,9 @@ BOOST_AUTO_TEST_CASE(ApproximateBestSubset) {
 // Tests that with the ideal conditions, the coin selector will always be able
 // to find a solution that can pay the target value
 BOOST_AUTO_TEST_CASE(SelectCoins_test) {
-    auto testChain = interfaces::MakeChain(testNode, Params());
-    CWallet testWallet(testChain.get(), "", CreateDummyWalletDatabase());
-    testWallet.SetupLegacyScriptPubKeyMan();
+    auto testChain = interfaces::MakeChain();
+    CWallet testWallet(Params(), *testChain, WalletLocation(),
+                       WalletDatabase::CreateDummy());
 
     // Random generator stuff
     std::default_random_engine generator;
@@ -809,17 +757,17 @@ BOOST_AUTO_TEST_CASE(SelectCoins_test) {
 
         // Perform selection
         CoinSelectionParams coin_selection_params_knapsack(
-            false, 34, 148, CFeeRate(Amount::zero()), 0, false);
+            false, 34, 148, CFeeRate(Amount::zero()), 0);
         CoinSelectionParams coin_selection_params_bnb(
-            true, 34, 148, CFeeRate(Amount::zero()), 0, false);
+            true, 34, 148, CFeeRate(Amount::zero()), 0);
         CoinSet out_set;
         Amount out_value = Amount::zero();
         bool bnb_used = false;
-        BOOST_CHECK(SelectCoinsMinConf(testWallet, target, filter_standard,
-                                       vCoins, out_set, out_value,
-                                       coin_selection_params_bnb, bnb_used) ||
-                    SelectCoinsMinConf(
-                        testWallet, target, filter_standard, vCoins, out_set,
+        BOOST_CHECK(testWallet.SelectCoinsMinConf(
+                        target, filter_standard, GroupCoins(vCoins), out_set,
+                        out_value, coin_selection_params_bnb, bnb_used) ||
+                    testWallet.SelectCoinsMinConf(
+                        target, filter_standard, GroupCoins(vCoins), out_set,
                         out_value, coin_selection_params_knapsack, bnb_used));
         BOOST_CHECK_GE(out_value, target);
     }

@@ -1,19 +1,18 @@
 // Copyright (c) 2018 The Bitcoin Core developers
+// Copyright (c) 2019-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_BLOCKFILTER_H
-#define BITCOIN_BLOCKFILTER_H
+#pragma once
 
 #include <primitives/block.h>
 #include <primitives/blockhash.h>
 #include <serialize.h>
 #include <uint256.h>
 #include <undo.h>
-#include <util/bytevectorhash.h>
+#include <util/saltedhashers.h>
 
 #include <cstdint>
-#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -98,12 +97,6 @@ const std::string &BlockFilterTypeName(BlockFilterType filter_type);
 bool BlockFilterTypeByName(const std::string &name,
                            BlockFilterType &filter_type);
 
-/** Get a list of known filter types. */
-const std::set<BlockFilterType> &AllBlockFilterTypes();
-
-/** Get a comma-separated list of known filter type names. */
-const std::string &ListBlockFilterTypes();
-
 /**
  * Complete block filter struct as defined in BIP 157. Serialization matches
  * payload of "cfilter" messages.
@@ -142,7 +135,7 @@ public:
     uint256 ComputeHeader(const uint256 &prev_header) const;
 
     template <typename Stream> void Serialize(Stream &s) const {
-        s << static_cast<uint8_t>(m_filter_type) << m_block_hash
+        s << m_block_hash << static_cast<uint8_t>(m_filter_type)
           << m_filter.GetEncoded();
     }
 
@@ -150,7 +143,7 @@ public:
         std::vector<uint8_t> encoded_filter;
         uint8_t filter_type;
 
-        s >> filter_type >> m_block_hash >> encoded_filter;
+        s >> m_block_hash >> filter_type >> encoded_filter;
 
         m_filter_type = static_cast<BlockFilterType>(filter_type);
 
@@ -161,5 +154,3 @@ public:
         m_filter = GCSFilter(params, std::move(encoded_filter));
     }
 };
-
-#endif // BITCOIN_BLOCKFILTER_H

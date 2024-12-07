@@ -133,9 +133,17 @@ mod ffi_inner {
         pub data: [u8; 80],
     }
 
+    /// Wrapper struct for a block hash.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct WrappedBlockHash {
+        /// Raw block hash
+        pub data: [u8; 32],
+    }
+
     #[allow(missing_debug_implementations)]
     unsafe extern "C++" {
-        include!("blockindex.h");
+        //include!("blockindex.h");
+        include!("chain.h");
         include!("chronik-cpp/chronik_bridge.h");
         include!("coins.h");
         include!("node/context.h");
@@ -143,8 +151,8 @@ mod ffi_inner {
         include!("primitives/transaction.h");
         include!("undo.h");
 
-        /// node::NodeContext from node/context.h
-        #[namespace = "node"]
+        /// NodeContext from node/context.h
+        #[namespace = ""]
         type NodeContext;
 
         /// ::CBlockIndex from blockindex.h
@@ -219,6 +227,13 @@ mod ffi_inner {
             start: i32,
             end: i32,
         ) -> Result<Vec<RawBlockHeader>>;
+
+        /// Get a range of consecutive block hashes.
+        fn get_block_hashes_by_range(
+            self: &ChronikBridge,
+            start: i32,
+            end: i32,
+        ) -> Result<Vec<WrappedBlockHash>>;
 
         /// Load the CBlock data of this CBlockIndex from the disk
         fn load_block(
@@ -340,6 +355,9 @@ mod ffi_inner {
         /// Calls `InitError` from `node/ui_interface.h` to report an error to
         /// the user and then gracefully shut down the node.
         fn init_error(msg: &str) -> bool;
+
+        /// Calls FormatFullVersion from clientversion.cpp
+        fn format_full_version() -> String;
     }
 }
 
@@ -352,6 +370,10 @@ unsafe impl Send for ChronikBridge {}
 /// node::NodeContext &) can be accessed from different threads safely.
 #[allow(unsafe_code)]
 unsafe impl Sync for ChronikBridge {}
+
+/// SAFETY: All functions that take CBlockIndex are acquiring required C++ locks
+#[allow(unsafe_code)]
+unsafe impl Sync for CBlockIndex {}
 
 impl std::fmt::Debug for ChronikBridge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

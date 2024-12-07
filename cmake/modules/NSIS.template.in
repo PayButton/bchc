@@ -2,8 +2,6 @@ Name "@CPACK_NSIS_DISPLAY_NAME@"
 
 RequestExecutionLevel highest
 SetCompressor @CPACK_NSIS_COMPRESSOR@
-SetDateSave off
-Unicode true
 
 # General Symbol Definitions
 !define REGKEY "SOFTWARE\$(^Name)"
@@ -53,9 +51,9 @@ Var StartMenuGroup
 # Installer attributes
 OutFile "@CPACK_TOPLEVEL_DIRECTORY@/@CPACK_OUTPUT_FILE_NAME@"
 !if "@CPACK_SYSTEM_NAME@" == "x86_64-w64-mingw32"
-InstallDir $PROGRAMFILES64\Bitcoin-abc
+InstallDir $PROGRAMFILES64\Bitcoin-Cash-Node
 !else
-InstallDir $PROGRAMFILES\Bitcoin-abc
+InstallDir $PROGRAMFILES\Bitcoin-Cash-Node
 !endif
 CRCCheck on
 XPStyle on
@@ -83,8 +81,8 @@ Section -Main SEC0000
     File "@CPACK_TEMPORARY_INSTALL_DIRECTORY@/@CPACK_NSIS_EXECUTABLES_DIRECTORY@/bitcoind.exe"
     File "@CPACK_TEMPORARY_INSTALL_DIRECTORY@/@CPACK_NSIS_EXECUTABLES_DIRECTORY@/bitcoin-cli.exe"
     SetOutPath $INSTDIR\doc
-    File /r "@CPACK_TEMPORARY_INSTALL_DIRECTORY@/doc\*.md"
-    File /r /x /nonfatal bitcoin_logo_doxygen.png "@CPACK_TEMPORARY_INSTALL_DIRECTORY@/doc\*.png"
+    File /r /x gitian-building* "@CPACK_TEMPORARY_INSTALL_DIRECTORY@/doc\*.md"
+    File /r /x bitcoin_logo_doxygen.png "@CPACK_TEMPORARY_INSTALL_DIRECTORY@/doc\*.png"
     SetOutPath $INSTDIR
     WriteRegStr HKCU "${REGKEY}\Components" Main 1
 SectionEnd
@@ -97,6 +95,9 @@ Section -post SEC0001
     CreateDirectory $SMPROGRAMS\$StartMenuGroup
     CreateShortcut "$SMPROGRAMS\$StartMenuGroup\$(^Name).lnk" $INSTDIR\${BITCOIN_GUI_NAME}
     CreateShortcut "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (testnet).lnk" "$INSTDIR\${BITCOIN_GUI_NAME}" "-testnet" "$INSTDIR\${BITCOIN_GUI_NAME}" 1
+    CreateShortcut "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (testnet4).lnk" "$INSTDIR\${BITCOIN_GUI_NAME}" "-testnet4" "$INSTDIR\${BITCOIN_GUI_NAME}" 1
+    CreateShortcut "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (scalenet).lnk" "$INSTDIR\${BITCOIN_GUI_NAME}" "-scalenet" "$INSTDIR\${BITCOIN_GUI_NAME}" 1
+    CreateShortcut "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (chipnet).lnk" "$INSTDIR\${BITCOIN_GUI_NAME}" "-chipnet" "$INSTDIR\${BITCOIN_GUI_NAME}" 1
     CreateShortcut "$SMPROGRAMS\$StartMenuGroup\Uninstall $(^Name).lnk" $INSTDIR\uninstall.exe
     !insertmacro MUI_STARTMENU_WRITE_END
     WriteRegStr HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" DisplayName "$(^Name)"
@@ -108,7 +109,7 @@ Section -post SEC0001
     WriteRegDWORD HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" NoModify 1
     WriteRegDWORD HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" NoRepair 1
     WriteRegStr HKCR "@CPACK_PACKAGE_NAME@" "URL Protocol" ""
-    WriteRegStr HKCR "@CPACK_PACKAGE_NAME@" "" "URL:Bitcoin-abc"
+    WriteRegStr HKCR "@CPACK_PACKAGE_NAME@" "" "URL:Bitcoin-Cash-Node"
     WriteRegStr HKCR "@CPACK_PACKAGE_NAME@\DefaultIcon" "" "$INSTDIR\${BITCOIN_GUI_NAME}"
     WriteRegStr HKCR "@CPACK_PACKAGE_NAME@\shell\open\command" "" '"$INSTDIR\${BITCOIN_GUI_NAME}" "%1"'
 SectionEnd
@@ -141,7 +142,15 @@ Section -un.post UNSEC0001
     Delete /REBOOTOK "$SMPROGRAMS\$StartMenuGroup\Uninstall $(^Name).lnk"
     Delete /REBOOTOK "$SMPROGRAMS\$StartMenuGroup\$(^Name).lnk"
     Delete /REBOOTOK "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (testnet).lnk"
-    Delete /REBOOTOK "$SMSTARTUP\Bitcoin-abc.lnk"
+    Delete /REBOOTOK "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (testnet4).lnk"
+    Delete /REBOOTOK "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (scalenet).lnk"
+    Delete /REBOOTOK "$SMPROGRAMS\$StartMenuGroup\@CPACK_NSIS_DISPLAY_NAME@ (chipnet).lnk"
+    Delete /REBOOTOK "$SMSTARTUP\Bitcoin Cash Node.lnk"
+    Delete /REBOOTOK "$SMSTARTUP\Bitcoin Cash Node (testnet).lnk"
+    Delete /REBOOTOK "$SMSTARTUP\Bitcoin Cash Node (testnet4).lnk"
+    Delete /REBOOTOK "$SMSTARTUP\Bitcoin Cash Node (scalenet).lnk"
+    Delete /REBOOTOK "$SMSTARTUP\Bitcoin Cash Node (chipnet).lnk"
+    Delete /REBOOTOK "$SMSTARTUP\Bitcoin Cash Node (regtest).lnk"
     Delete /REBOOTOK "$INSTDIR\uninstall.exe"
     Delete /REBOOTOK "$INSTDIR\debug.log"
     Delete /REBOOTOK "$INSTDIR\db.log"

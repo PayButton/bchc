@@ -1,11 +1,11 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_COINCONTROLDIALOG_H
-#define BITCOIN_QT_COINCONTROLDIALOG_H
+#pragma once
 
-#include <consensus/amount.h>
+#include <amount.h>
 
 #include <QAbstractButton>
 #include <QAction>
@@ -32,6 +32,7 @@ class CCoinControlWidgetItem : public QTreeWidgetItem {
 public:
     explicit CCoinControlWidgetItem(QTreeWidget *parent, int type = Type)
         : QTreeWidgetItem(parent, type) {}
+    explicit CCoinControlWidgetItem(int type = Type) : QTreeWidgetItem(type) {}
     explicit CCoinControlWidgetItem(QTreeWidgetItem *parent, int type = Type)
         : QTreeWidgetItem(parent, type) {}
 
@@ -42,21 +43,21 @@ class CoinControlDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit CoinControlDialog(CCoinControl &coin_control, WalletModel *model,
-                               const PlatformStyle *platformStyle,
+    explicit CoinControlDialog(const PlatformStyle *platformStyle,
                                QWidget *parent = nullptr);
     ~CoinControlDialog();
 
+    void setModel(WalletModel *model);
+
     // static because also called from sendcoinsdialog
-    static void updateLabels(CCoinControl &m_coin_control, WalletModel *,
-                             QDialog *);
+    static void updateLabels(WalletModel *, QDialog *);
 
     static QList<Amount> payAmounts;
+    static CCoinControl *coinControl();
     static bool fSubtractFeeFromAmount;
 
 private:
     Ui::CoinControlDialog *ui;
-    CCoinControl &m_coin_control;
     WalletModel *model;
     int sortColumn;
     Qt::SortOrder sortOrder;
@@ -79,10 +80,9 @@ private:
         COLUMN_ADDRESS,
         COLUMN_DATE,
         COLUMN_CONFIRMATIONS,
+        COLUMN_TXID,
+        COLUMN_VOUT_INDEX,
     };
-
-    enum { TxIdRole = Qt::UserRole, VOutRole };
-
     friend class CCoinControlWidgetItem;
 
     static COutPoint buildOutPoint(const QTreeWidgetItem *item);
@@ -110,5 +110,3 @@ private Q_SLOTS:
     void buttonSelectAllClicked();
     void updateLabelLocked();
 };
-
-#endif // BITCOIN_QT_COINCONTROLDIALOG_H

@@ -1,13 +1,11 @@
-// Copyright (c) 2019-2021 The Bitcoin developers
+// Copyright (c) 2019-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
 #include <rpc/blockchain.h>
 
 #include <chain.h>
-#include <util/string.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -32,9 +30,9 @@ static CBlockIndex *CreateBlockIndexWithNbits(uint32_t nbits) {
 static void RejectDifficultyMismatch(double difficulty,
                                      double expected_difficulty) {
     BOOST_CHECK_MESSAGE(DoubleEquals(difficulty, expected_difficulty, 0.00001),
-                        "Difficulty was " + ToString(difficulty) +
+                        "Difficulty was " + std::to_string(difficulty) +
                             " but was expected to be " +
-                            ToString(expected_difficulty));
+                            std::to_string(expected_difficulty));
 }
 
 /**

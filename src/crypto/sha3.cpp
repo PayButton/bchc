@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array> // For std::begin and std::end.
+#include <cassert>
 #include <cstdint>
 
 // Internal implementation code.
@@ -22,14 +23,11 @@ uint64_t Rotl(uint64_t x, int n) {
 
 void KeccakF(uint64_t (&st)[25]) {
     static constexpr uint64_t RNDC[24] = {
-        0x0000000000000001, 0x0000000000008082, 0x800000000000808a,
-        0x8000000080008000, 0x000000000000808b, 0x0000000080000001,
-        0x8000000080008081, 0x8000000000008009, 0x000000000000008a,
-        0x0000000000000088, 0x0000000080008009, 0x000000008000000a,
-        0x000000008000808b, 0x800000000000008b, 0x8000000000008089,
-        0x8000000000008003, 0x8000000000008002, 0x8000000000000080,
-        0x000000000000800a, 0x800000008000000a, 0x8000000080008081,
-        0x8000000000008080, 0x0000000080000001, 0x8000000080008008};
+        0x0000000000000001, 0x0000000000008082, 0x800000000000808a, 0x8000000080008000, 0x000000000000808b,
+        0x0000000080000001, 0x8000000080008081, 0x8000000000008009, 0x000000000000008a, 0x0000000000000088,
+        0x0000000080008009, 0x000000008000000a, 0x000000008000808b, 0x800000000000008b, 0x8000000000008089,
+        0x8000000000008003, 0x8000000000008002, 0x8000000000000080, 0x000000000000800a, 0x800000008000000a,
+        0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008};
     static constexpr int ROUNDS = 24;
 
     for (int round = 0; round < ROUNDS; ++round) {
@@ -202,8 +200,7 @@ void KeccakF(uint64_t (&st)[25]) {
 SHA3_256 &SHA3_256::Write(Span<const uint8_t> data) {
     if (m_bufsize && m_bufsize + data.size() >= sizeof(m_buffer)) {
         // Fill the buffer and process it.
-        std::copy(data.begin(), data.begin() + sizeof(m_buffer) - m_bufsize,
-                  m_buffer + m_bufsize);
+        std::copy(data.begin(), data.begin() + sizeof(m_buffer) - m_bufsize, m_buffer + m_bufsize);
         data = data.subspan(sizeof(m_buffer) - m_bufsize);
         m_state[m_pos++] ^= ReadLE64(m_buffer);
         m_bufsize = 0;

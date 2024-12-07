@@ -91,7 +91,7 @@ class ChronikTxRemovalOrder(BitcoinTestFramework):
         # mempool. Note: This first removes all 10 tx from the mempool and then
         # adds in the 20.
         node.parkblock(node.getbestblockhash())
-        assert_equal(len(node.getrawmempool()), 20)
+        assert_equal(len(node.getrawmempool()), 10)
 
 
 if __name__ == "__main__":

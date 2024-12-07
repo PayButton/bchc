@@ -1,9 +1,9 @@
 // Copyright (c) 2011-2019 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_WALLETFRAME_H
-#define BITCOIN_QT_WALLETFRAME_H
+#pragma once
 
 #include <QFrame>
 #include <QMap>
@@ -37,15 +37,13 @@ public:
     void setClientModel(ClientModel *clientModel);
 
     bool addWallet(WalletModel *walletModel);
-    void setCurrentWallet(WalletModel *wallet_model);
-    void removeWallet(WalletModel *wallet_model);
+    bool setCurrentWallet(WalletModel *wallet_model);
+    bool removeWallet(WalletModel *wallet_model);
     void removeAllWallets();
 
     bool handlePaymentRequest(const SendCoinsRecipient &recipient);
 
     void showOutOfSyncWarning(bool fShow);
-
-    QSize sizeHint() const override { return m_size_hint; }
 
 Q_SIGNALS:
     /** Notify that the user has requested more information about the
@@ -61,8 +59,6 @@ private:
     bool bOutOfSync;
 
     const PlatformStyle *platformStyle;
-
-    const QSize m_size_hint;
 
 public:
     WalletView *currentWalletView() const;
@@ -83,11 +79,8 @@ public Q_SLOTS:
     /** Show Sign/Verify Message dialog and switch to verify message tab */
     void gotoVerifyMessageTab(QString addr = "");
 
-    /** Load Partially Signed Bitcoin Transaction */
-    void gotoLoadPSBT();
-
     /** Encrypt the wallet */
-    void encryptWallet();
+    void encryptWallet(bool status);
     /** Backup the wallet */
     void backupWallet();
     /** Change encrypted wallet passphrase */
@@ -102,5 +95,3 @@ public Q_SLOTS:
     /** Pass on signal over requested out-of-sync-warning information */
     void outOfSyncWarningClicked();
 };
-
-#endif // BITCOIN_QT_WALLETFRAME_H

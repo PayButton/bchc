@@ -1,4 +1,5 @@
-// Copyright (c) 2017 The Bitcoin developers
+// Copyright (c) 2017 The Bitcoin Developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,15 +7,12 @@
 #include <qt/test/bitcoinaddressvalidatortests.h>
 
 #include <chainparams.h>
-#include <common/args.h>
 
 #include <QValidator>
 
 void BitcoinAddressValidatorTests::inputTests() {
-    const auto params =
-        CreateChainParams(ArgsManager{}, CBaseChainParams::MAIN);
-    const std::string prefix = params->CashAddrPrefix();
-    BitcoinAddressEntryValidator v(prefix, nullptr);
+    const auto params = CreateChainParams(CBaseChainParams::MAIN);
+    BitcoinAddressEntryValidator v(nullptr);
 
     int unused = 0;
     QString in;
@@ -25,31 +23,31 @@ void BitcoinAddressValidatorTests::inputTests() {
 
     // invalid base58 because of I, invalid cashaddr, currently considered valid
     // anyway.
-    in = "ICASH";
+    in = "BIIC";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // invalid base58, invalid cashaddr, currently considered valid anyway.
-    in = "EOASH";
+    in = "BITCOINCASHH";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // invalid base58 because of I, but could be a cashaddr prefix
-    in = "ECASI";
+    in = "BITC";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // invalid base58, valid cashaddr
-    in = "ECASH:OP";
+    in = "BITCOINCASH:QP";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // invalid base58, valid cashaddr, lower case
-    in = "ecash:op";
+    in = "bitcoincash:qp";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // invalid base58, valid cashaddr, mixed case
-    in = "eCash:Op";
+    in = "bItCoInCaSh:Qp";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // valid base58, invalid cash
-    in = "EEEEEEEEEEEEEE";
+    in = "BBBBBBBBBBBBBB";
     QVERIFY(v.validate(in, unused) == QValidator::Acceptable);
 
     // Only alphanumeric chars are accepted.

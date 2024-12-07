@@ -1,13 +1,12 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
-#ifndef BITCOIN_POLICY_FEES_H
-#define BITCOIN_POLICY_FEES_H
+#pragma once
 
-#include <consensus/amount.h>
+#include <amount.h>
 #include <random.h>
-#include <sync.h>
 #include <uint256.h>
 
 #include <map>
@@ -18,7 +17,7 @@ class CFeeRate;
 
 // Minimum and Maximum values for tracking feerates
 static constexpr Amount MIN_FEERATE(10 * SATOSHI);
-static const Amount MAX_FEERATE(int64_t(1e7) * SATOSHI);
+static constexpr Amount MAX_FEERATE(int64_t(1e7) * SATOSHI);
 
 // We have to lump transactions into buckets based on feerate, but we want to be
 // able to give accurate estimates over a large range of potential feerates.
@@ -29,19 +28,12 @@ static const double FEE_SPACING = 1.1;
 class FeeFilterRounder {
 public:
     /** Create new FeeFilterRounder */
-    explicit FeeFilterRounder(const CFeeRate &min_incremental_fee,
-                              FastRandomContext &rng);
+    explicit FeeFilterRounder(const CFeeRate &minIncrementalFee);
 
-    /**
-     * Quantize a minimum fee for privacy purpose before broadcast.
-     **/
-    Amount round(const Amount currentMinFee)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_insecure_rand_mutex);
+    /** Quantize a minimum fee for privacy purpose before broadcast **/
+    Amount round(const Amount currentMinFee);
 
 private:
-    const std::set<Amount> m_fee_set;
-    Mutex m_insecure_rand_mutex;
-    FastRandomContext &insecure_rand GUARDED_BY(m_insecure_rand_mutex);
+    std::set<Amount> feeset;
+    FastRandomContext insecure_rand;
 };
-
-#endif // BITCOIN_POLICY_FEES_H

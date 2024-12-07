@@ -1,14 +1,17 @@
-// Copyright (c) 2017-2020 The Bitcoin developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/interpreter.h>
 
 #include <test/scriptflags.h>
+#include <util/string.h>
 
-#include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/split.hpp>
+#ifndef NO_BOOST
 #include <boost/test/unit_test.hpp>
+#else
+#include <cassert>
+#endif
 
 #include <map>
 #include <vector>
@@ -28,26 +31,36 @@ static std::map<std::string, uint32_t> mapFlagNames = {
     {"CHECKLOCKTIMEVERIFY", SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY},
     {"CHECKSEQUENCEVERIFY", SCRIPT_VERIFY_CHECKSEQUENCEVERIFY},
     {"SIGHASH_FORKID", SCRIPT_ENABLE_SIGHASH_FORKID},
-    {"REPLAY_PROTECTION", SCRIPT_ENABLE_REPLAY_PROTECTION},
     {"DISALLOW_SEGWIT_RECOVERY", SCRIPT_DISALLOW_SEGWIT_RECOVERY},
     {"SCHNORR_MULTISIG", SCRIPT_ENABLE_SCHNORR_MULTISIG},
     {"INPUT_SIGCHECKS", SCRIPT_VERIFY_INPUT_SIGCHECKS},
+    {"64_BIT_INTEGERS", SCRIPT_64_BIT_INTEGERS},
+    {"NATIVE_INTROSPECTION", SCRIPT_NATIVE_INTROSPECTION},
+    {"ENABLE_TOKENS", SCRIPT_ENABLE_TOKENS},
+    {"P2SH_32", SCRIPT_ENABLE_P2SH_32},
+    {"ENABLE_MAY2025", SCRIPT_ENABLE_MAY2025},
+    {"VM_LIMITS_STANDARD", SCRIPT_VM_LIMITS_STANDARD},
 };
 
-uint32_t ParseScriptFlags(std::string strFlags) {
+uint32_t ParseScriptFlags(const std::string &strFlags) {
     if (strFlags.empty()) {
         return 0;
     }
 
     uint32_t flags = 0;
     std::vector<std::string> words;
-    boost::algorithm::split(words, strFlags, boost::algorithm::is_any_of(","));
+    Split(words, strFlags, ",");
 
-    for (std::string &word : words) {
-        if (!mapFlagNames.count(word)) {
+    for (const std::string &word : words) {
+        const auto it = mapFlagNames.find(word);
+        if (it == mapFlagNames.end()) {
+#ifndef NO_BOOST
             BOOST_ERROR("Bad test: unknown verification flag '" << word << "'");
+#else
+            assert(!"Bad test: unknown verification flag");
+#endif
         }
-        flags |= mapFlagNames[word];
+        flags |= it->second;
     }
 
     return flags;

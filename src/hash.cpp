@@ -1,28 +1,31 @@
 // Copyright (c) 2013-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <hash.h>
 
+#include <crypto/common.h>
 #include <crypto/hmac_sha512.h>
-#include <span.h>
 
 inline uint32_t ROTL32(uint32_t x, int8_t r) {
     return (x << r) | (x >> (32 - r));
 }
 
-uint32_t MurmurHash3(uint32_t nHashSeed, Span<const uint8_t> vDataToHash) {
+uint32_t MurmurHash3(uint32_t nHashSeed,
+                     const uint8_t *pDataToHash, size_t nDataLen) {
+
     // The following is MurmurHash3 (x86_32), see
     // http://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp
     uint32_t h1 = nHashSeed;
     const uint32_t c1 = 0xcc9e2d51;
     const uint32_t c2 = 0x1b873593;
 
-    const int nblocks = vDataToHash.size() / 4;
+    const int nblocks = nDataLen / 4;
 
     //----------
     // body
-    const uint8_t *blocks = vDataToHash.data();
+    const uint8_t *const blocks = pDataToHash;
 
     for (int i = 0; i < nblocks; ++i) {
         uint32_t k1 = ReadLE32(blocks + i * 4);
@@ -38,17 +41,17 @@ uint32_t MurmurHash3(uint32_t nHashSeed, Span<const uint8_t> vDataToHash) {
 
     //----------
     // tail
-    const uint8_t *tail = vDataToHash.data() + nblocks * 4;
+    const uint8_t *tail = blocks + nblocks * 4;
 
     uint32_t k1 = 0;
 
-    switch (vDataToHash.size() & 3) {
+    switch (nDataLen & 3) {
         case 3:
             k1 ^= tail[2] << 16;
-        // FALLTHROUGH
+            [[fallthrough]];
         case 2:
             k1 ^= tail[1] << 8;
-        // FALLTHROUGH
+            [[fallthrough]];
         case 1:
             k1 ^= tail[0];
             k1 *= c1;
@@ -59,7 +62,7 @@ uint32_t MurmurHash3(uint32_t nHashSeed, Span<const uint8_t> vDataToHash) {
 
     //----------
     // finalization
-    h1 ^= vDataToHash.size();
+    h1 ^= nDataLen;
     h1 ^= h1 >> 16;
     h1 *= 0x85ebca6b;
     h1 ^= h1 >> 13;

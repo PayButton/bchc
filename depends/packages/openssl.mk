@@ -1,8 +1,8 @@
 package=openssl
-$(package)_version=1.1.1t
+$(package)_version=1.1.1n
 $(package)_download_path=https://www.openssl.org/source
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
-$(package)_sha256_hash=8dee9b24bdb1dcbf0c3d1e9b02fb8f6bf22165e807f45adeb7c9677536859d3b
+$(package)_sha256_hash=40dceb51a4f6a5275bde0e6bf20ef4b91bfc32ed57c0552e2e8e15463372b17a
 
 define $(package)_set_vars
 $(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)"
@@ -38,12 +38,11 @@ $(package)_config_opts+=no-whirlpool
 $(package)_config_opts+=no-zlib
 $(package)_config_opts+=no-zlib-dynamic
 $(package)_config_opts+=$($(package)_cflags) $($(package)_cppflags)
-$(package)_config_opts_linux=-fPIC -Wa,--noexecstack
+$(package)_config_opts_linux=-fPIC -Wa,--noexecstack --with-rand-seed=devrandom
 $(package)_config_opts_x86_64_linux=linux-x86_64
 $(package)_config_opts_i686_linux=linux-generic32
 $(package)_config_opts_arm_linux=linux-generic32
 $(package)_config_opts_aarch64_linux=linux-generic64
-$(package)_config_opts_aarch64_darwin=darwin64-arm64-cc
 $(package)_config_opts_mipsel_linux=linux-generic32
 $(package)_config_opts_mips_linux=linux-generic32
 $(package)_config_opts_powerpc_linux=linux-generic32
@@ -61,12 +60,12 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  $(MAKE) -j$(JOBS) build_libs
+  $(MAKE) -j1 build_libs libcrypto.pc libssl.pc openssl.pc
 endef
 
 define $(package)_stage_cmds
   sed -i.old "s/^INSTALLTOP=/INSTALLTOP?=/g" Makefile && \
-  $($(package)_stage_env) $(MAKE) INSTALLTOP=$($(package)_staging_dir)/$(host_prefix) install_sw
+  $($(package)_stage_env) $(MAKE) -j1 INSTALLTOP=$($(package)_staging_dir)/$(host_prefix) install_sw
 endef
 
 define $(package)_postprocess_cmds

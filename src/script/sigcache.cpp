@@ -1,22 +1,20 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/sigcache.h>
 
-#include <common/system.h>
 #include <cuckoocache.h>
-#include <logging.h>
+#include <memusage.h>
 #include <pubkey.h>
 #include <random.h>
 #include <uint256.h>
+#include <util/system.h>
 
-#include <algorithm>
 #include <mutex>
-#include <optional>
 #include <shared_mutex>
-#include <vector>
 
 namespace {
 
@@ -26,46 +24,50 @@ namespace {
  * again when accepted into the block chain)
  */
 class CSignatureCache {
-private:
     //! Entries are SHA256(nonce || signature hash || public key || signature):
-    CSHA256 m_salted_hasher;
-    typedef CuckooCache::cache<CuckooCache::KeyOnly<uint256>,
-                               SignatureCacheHasher>
-        map_type;
+    uint256 nonce;
+    using map_type = CuckooCache::cache<CuckooCache::KeyOnly<uint256>, SignatureCacheHasher>;
     map_type setValid;
     std::shared_mutex cs_sigcache;
 
-public:
-    CSignatureCache() {
-        uint256 nonce = GetRandHash();
-        // We want the nonce to be 64 bytes long to force the hasher to process
-        // this chunk, which makes later hash computations more efficient. We
-        // just write our 32-byte entropy twice to fill the 64 bytes.
-        m_salted_hasher.Write(nonce.begin(), 32);
-        m_salted_hasher.Write(nonce.begin(), 32);
+    bool ready = false;
+
+    void Reset() {
+        setValid.~map_type(); // manually destroy the cache
+        new (&setValid) map_type(); // replace cache with placement new
+        ready = false;
     }
+
+public:
+    CSignatureCache() { GetRandBytes(nonce.begin(), 32); }
 
     void ComputeEntry(uint256 &entry, const uint256 &hash,
                       const std::vector<uint8_t> &vchSig,
                       const CPubKey &pubkey) {
-        CSHA256 hasher = m_salted_hasher;
-        hasher.Write(hash.begin(), 32)
-            .Write(pubkey.data(), pubkey.size())
-            .Write(vchSig.data(), vchSig.size())
+        CSHA256()
+            .Write(nonce.begin(), 32)
+            .Write(hash.begin(), 32)
+            .Write(&pubkey[0], pubkey.size())
+            .Write(&vchSig[0], vchSig.size())
             .Finalize(entry.begin());
     }
 
     bool Get(const uint256 &entry, const bool erase) {
-        std::shared_lock<std::shared_mutex> lock(cs_sigcache);
+        assert(ready);
+        std::shared_lock lock(cs_sigcache);
         return setValid.contains(entry, erase);
     }
 
-    void Set(const uint256 &entry) {
-        std::unique_lock<std::shared_mutex> lock(cs_sigcache);
+    void Set(uint256 &entry) {
+        assert(ready);
+        std::unique_lock lock(cs_sigcache);
         setValid.insert(entry);
     }
-    std::optional<std::pair<uint32_t, size_t>> setup_bytes(size_t n) {
-        return setValid.setup_bytes(n);
+    uint32_t setup_bytes(size_t n) {
+        Reset();
+        const uint32_t ret = setValid.setup_bytes(n);
+        ready = true;
+        return ret;
     }
 };
 
@@ -79,20 +81,16 @@ public:
 static CSignatureCache signatureCache;
 } // namespace
 
-// To be called once in AppInitMain/BasicTestingSetup to initialize the
-// signatureCache.
-
-bool InitSignatureCache(size_t max_size_bytes) {
-    auto setup_results = signatureCache.setup_bytes(max_size_bytes);
-    if (!setup_results) {
-        return false;
-    }
-
-    const auto [num_elems, approx_size_bytes] = *setup_results;
-    LogPrintf("Using %zu MiB out of %zu MiB requested for signature cache, "
-              "able to store %zu elements\n",
-              approx_size_bytes >> 20, max_size_bytes >> 20, num_elems);
-    return true;
+void InitSignatureCache() {
+    // nMaxCacheSize is unsigned. If -maxsigcachesize is set to zero,
+    // setup_bytes creates the minimum possible cache (2 elements).
+    size_t nMaxCacheSize = std::clamp(gArgs.GetArg("-maxsigcachesize", DEFAULT_MAX_SIG_CACHE_SIZE),
+                                      int64_t{0},
+                                      MAX_MAX_SIG_CACHE_SIZE) * (size_t{1} << 20);
+    size_t nElems = signatureCache.setup_bytes(nMaxCacheSize);
+    LogPrintf("Using %zu MiB out of %zu requested for signature cache, able to "
+              "store %zu elements\n",
+              (nElems * sizeof(uint256)) >> 20, nMaxCacheSize >> 20, nElems);
 }
 
 template <typename F>

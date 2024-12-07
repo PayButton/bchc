@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2015-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -9,10 +10,11 @@ testing.
 
 import os
 
-REFERENCE_FILENAME = "rpc_interface.txt"
+
+REFERENCE_FILENAME = 'rpc_interface.txt'
 
 
-class AuthServiceProxyWrapper:
+class AuthServiceProxyWrapper():
     """
     An object that wraps AuthServiceProxy to record specific RPC calls.
 
@@ -51,13 +53,12 @@ class AuthServiceProxyWrapper:
         rpc_method = self.auth_service_proxy_instance._service_name
 
         if self.coverage_logfile:
-            with open(self.coverage_logfile, "a+", encoding="utf8") as f:
-                f.write(f"{rpc_method}\n")
+            with open(self.coverage_logfile, 'a+', encoding='utf8') as f:
+                f.write("{}\n".format(rpc_method))
 
     def __truediv__(self, relative_uri):
-        return AuthServiceProxyWrapper(
-            self.auth_service_proxy_instance / relative_uri, self.coverage_logfile
-        )
+        return AuthServiceProxyWrapper(self.auth_service_proxy_instance / relative_uri,
+                                       self.coverage_logfile)
 
     def get_request(self, *args, **kwargs):
         self._log_call()
@@ -71,7 +72,8 @@ def get_filename(dirname, n_node):
     This file will contain a list of RPC commands covered.
     """
     pid = str(os.getpid())
-    return os.path.join(dirname, f"coverage.pid{pid}.node{str(n_node)}.txt")
+    return os.path.join(
+        dirname, "coverage.pid{}.node{}.txt".format(pid, str(n_node)))
 
 
 def write_all_rpc_commands(dirname, node):
@@ -93,17 +95,17 @@ def write_all_rpc_commands(dirname, node):
     if os.path.isfile(filename):
         return False
 
-    help_output = node.help().split("\n")
+    help_output = node.help().split('\n')
     commands = set()
 
     for line in help_output:
         line = line.strip()
 
         # Ignore blanks and headers
-        if line and not line.startswith("="):
-            commands.add(f"{line.split()[0]}\n")
+        if line and not line.startswith('='):
+            commands.add("{}\n".format(line.split()[0]))
 
-    with open(filename, "w", encoding="utf8") as f:
+    with open(filename, 'w', encoding='utf8') as f:
         f.writelines(list(commands))
 
     return True

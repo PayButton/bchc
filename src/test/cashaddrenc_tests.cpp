@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2020 The Bitcoin developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,23 +7,33 @@
 #include <cashaddr.h>
 #include <chainparams.h>
 #include <random.h>
+#include <script/standard.h>
+#include <tinyformat.h>
 #include <uint256.h>
 #include <util/strencodings.h>
 
-#include <key_io.h>
-
-#include <test/util/random.h>
-#include <test/util/setup_common.h>
+#include <test/data/cashaddr_token_types.json.h>
+#include <test/jsonutil.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
-#include <variant>
+#include <array>
+#include <stdexcept>
 
 namespace {
 
 std::vector<std::string> GetNetworks() {
-    return {CBaseChainParams::MAIN, CBaseChainParams::TESTNET,
-            CBaseChainParams::REGTEST};
+    return {CBaseChainParams::MAIN, CBaseChainParams::TESTNET, CBaseChainParams::TESTNET4, CBaseChainParams::SCALENET,
+            CBaseChainParams::CHIPNET, CBaseChainParams::REGTEST};
+}
+
+uint160 insecure_GetRandUInt160(FastRandomContext &rand) {
+    uint160 n;
+    for (uint8_t *c = n.begin(); c != n.end(); ++c) {
+        *c = static_cast<uint8_t>(rand.rand32());
+    }
+    return n;
 }
 
 std::vector<uint8_t> insecure_GetRandomByteArray(FastRandomContext &rand,
@@ -37,21 +47,21 @@ std::vector<uint8_t> insecure_GetRandomByteArray(FastRandomContext &rand,
     return out;
 }
 
-class DstTypeChecker {
+class DstTypeChecker : public boost::static_visitor<void> {
 public:
-    void operator()(const PKHash &id) { isKey = true; }
-    void operator()(const ScriptHash &id) { isScript = true; }
+    void operator()(const CKeyID &id) { isKey = true; }
+    void operator()(const ScriptID &id) { isScript = true; }
     void operator()(const CNoDestination &) {}
 
     static bool IsScriptDst(const CTxDestination &d) {
         DstTypeChecker checker;
-        std::visit(checker, d);
+        boost::apply_visitor(checker, d);
         return checker.isScript;
     }
 
     static bool IsKeyDst(const CTxDestination &d) {
         DstTypeChecker checker;
-        std::visit(checker, d);
+        boost::apply_visitor(checker, d);
         return checker.isKey;
     }
 
@@ -72,7 +82,7 @@ BOOST_FIXTURE_TEST_SUITE(cashaddrenc_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(encode_decode_all_sizes) {
     FastRandomContext rand(true);
-    const std::string CASHADDR_PREFIX = "ecash";
+    const std::string prefix = "bitcoincash";
 
     for (auto ps : valid_sizes) {
         std::vector<uint8_t> data =
@@ -82,11 +92,10 @@ BOOST_AUTO_TEST_CASE(encode_decode_all_sizes) {
 
         // Check that the packed size is correct
         BOOST_CHECK_EQUAL(packed_data[1] >> 2, ps.first);
-        std::string address = cashaddr::Encode(CASHADDR_PREFIX, packed_data);
+        std::string address = cashaddr::Encode(prefix, packed_data);
 
         // Check that the address decodes properly
-        CashAddrContent decoded =
-            DecodeCashAddrContent(address, CASHADDR_PREFIX);
+        CashAddrContent decoded = DecodeCashAddrContent(address, prefix);
         BOOST_CHECK_EQUAL_COLLECTIONS(
             std::begin(content.hash), std::end(content.hash),
             std::begin(decoded.hash), std::end(decoded.hash));
@@ -106,65 +115,84 @@ BOOST_AUTO_TEST_CASE(check_packaddr_throws) {
 
 BOOST_AUTO_TEST_CASE(encode_decode) {
     std::vector<CTxDestination> toTest = {CNoDestination{},
-                                          PKHash(uint160S("badf00d")),
-                                          ScriptHash(uint160S("f00dbad"))};
+                                          CKeyID(uint160S("badf00d")),
+                                          ScriptID(uint160S("f00dbad"))};
 
     for (auto dst : toTest) {
         for (auto net : GetNetworks()) {
-            const auto netParams = CreateChainParams(*m_node.args, net);
-            std::string encoded = EncodeCashAddr(dst, *netParams);
-            CTxDestination decoded = DecodeCashAddr(encoded, *netParams);
-            BOOST_CHECK(dst == decoded);
+            const auto netParams = CreateChainParams(net);
+            for (const bool tokenAware : {false, true}) {
+                std::string encoded = EncodeCashAddr(dst, *netParams, tokenAware);
+                bool decodedTokenAware{};
+                CTxDestination decoded = DecodeCashAddr(encoded, *netParams, &decodedTokenAware);
+                BOOST_CHECK(dst == decoded);
+                if (IsValidDestination(decoded)) {
+                    BOOST_CHECK_EQUAL(tokenAware, decodedTokenAware);
+                }
+            }
         }
     }
 }
 
 // Check that an encoded cash address is not valid on another network.
 BOOST_AUTO_TEST_CASE(invalid_on_wrong_network) {
-    const CTxDestination dst = PKHash(uint160S("c0ffee"));
+    const CTxDestination dst = CKeyID(uint160S("c0ffee"));
     const CTxDestination invalidDst = CNoDestination{};
 
     for (auto net : GetNetworks()) {
         for (auto otherNet : GetNetworks()) {
-            if (net == otherNet) {
+            const auto netParams = CreateChainParams(net);
+            const auto otherNetParams = CreateChainParams(otherNet);
+
+            if (netParams->CashAddrPrefix() == otherNetParams->CashAddrPrefix()) {
+                // networks such as scalenet, testnet4, testnet3, and chipnet all have the same prefix, so skip
                 continue;
             }
 
-            const auto netParams = CreateChainParams(*m_node.args, net);
-            std::string encoded = EncodeCashAddr(dst, *netParams);
+            for (const bool tokenAware : {false, true}) {
+                std::string encoded = EncodeCashAddr(dst, *netParams, tokenAware);
+                CTxDestination decoded = DecodeCashAddr(encoded, *otherNetParams);
 
-            const auto otherNetParams =
-                CreateChainParams(*m_node.args, otherNet);
-            CTxDestination decoded = DecodeCashAddr(encoded, *otherNetParams);
-            BOOST_CHECK(!std::holds_alternative<PKHash>(decoded));
-            BOOST_CHECK(decoded == invalidDst);
+                BOOST_CHECK(decoded != dst);
+                BOOST_CHECK_MESSAGE(decoded == invalidDst,
+                                    strprintf("Checking that addresses for net \"%s\" are invalid for net \"%s\", "
+                                              "token-aware: %i",
+                                              net, otherNet, int(tokenAware)));
+            }
         }
     }
 }
 
 BOOST_AUTO_TEST_CASE(random_dst) {
+    FastRandomContext rand(true);
+
     const size_t NUM_TESTS = 5000;
-    const auto params = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto params = CreateChainParams(CBaseChainParams::MAIN);
 
     for (size_t i = 0; i < NUM_TESTS; ++i) {
-        uint160 hash = InsecureRand160();
-        const CTxDestination dst_key = PKHash(hash);
-        const CTxDestination dst_scr = ScriptHash(hash);
+        uint160 hash = insecure_GetRandUInt160(rand);
+        const CTxDestination dst_key = CKeyID(hash);
+        const CTxDestination dst_scr = ScriptID(hash);
 
-        const std::string encoded_key = EncodeCashAddr(dst_key, *params);
-        const CTxDestination decoded_key = DecodeCashAddr(encoded_key, *params);
+        for (const bool tokenAware : {false, true}) {
+            const std::string encoded_key = EncodeCashAddr(dst_key, *params, tokenAware);
+            bool decodedTokenAware{};
+            const CTxDestination decoded_key = DecodeCashAddr(encoded_key, *params, &decodedTokenAware);
+            BOOST_CHECK_EQUAL(tokenAware, decodedTokenAware);
 
-        const std::string encoded_scr = EncodeCashAddr(dst_scr, *params);
-        const CTxDestination decoded_scr = DecodeCashAddr(encoded_scr, *params);
+            const std::string encoded_scr = EncodeCashAddr(dst_scr, *params, tokenAware);
+            const CTxDestination decoded_scr = DecodeCashAddr(encoded_scr, *params, &decodedTokenAware);
+            BOOST_CHECK_EQUAL(tokenAware, decodedTokenAware);
 
-        std::string err("cashaddr failed for hash: ");
-        err += hash.ToString();
+            std::string err("cashaddr failed for hash: ");
+            err += hash.ToString();
 
-        BOOST_CHECK_MESSAGE(dst_key == decoded_key, err);
-        BOOST_CHECK_MESSAGE(dst_scr == decoded_scr, err);
+            BOOST_CHECK_MESSAGE(dst_key == decoded_key, err);
+            BOOST_CHECK_MESSAGE(dst_scr == decoded_scr, err);
 
-        BOOST_CHECK_MESSAGE(DstTypeChecker::IsKeyDst(decoded_key), err);
-        BOOST_CHECK_MESSAGE(DstTypeChecker::IsScriptDst(decoded_scr), err);
+            BOOST_CHECK_MESSAGE(DstTypeChecker::IsKeyDst(decoded_key), err);
+            BOOST_CHECK_MESSAGE(DstTypeChecker::IsScriptDst(decoded_scr), err);
+        }
     }
 }
 
@@ -183,7 +211,7 @@ BOOST_AUTO_TEST_CASE(check_padding) {
     BOOST_CHECK_EQUAL(data.size(), 34UL);
 
     const CTxDestination nodst = CNoDestination{};
-    const auto params = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto params = CreateChainParams(CBaseChainParams::MAIN);
 
     for (uint8_t i = 0; i < 32; i++) {
         data[data.size() - 1] = i;
@@ -195,7 +223,7 @@ BOOST_AUTO_TEST_CASE(check_padding) {
         if (i & 0x03) {
             BOOST_CHECK(dst == nodst);
         } else {
-            BOOST_CHECK(!std::holds_alternative<CNoDestination>(dst));
+            BOOST_CHECK(dst != nodst);
         }
     }
 }
@@ -229,19 +257,20 @@ BOOST_AUTO_TEST_CASE(check_type) {
  * We ensure size is extracted and checked properly.
  */
 BOOST_AUTO_TEST_CASE(check_size) {
-    const std::string prefix = "ecash";
+    const CTxDestination nodst = CNoDestination{};
+    const std::string prefix = "bitcoincash";
 
     std::vector<uint8_t> data;
 
     for (auto ps : valid_sizes) {
-        // Number of bytes required for a 5-bit packed version of a hash,
-        // with version byte.  Add half a byte(4) so integer math provides
-        // the next multiple-of-5 that would fit all the data.
+        // Number of bytes required for a 5-bit packed version of a hash, with
+        // version byte.  Add half a byte(4) so integer math provides the next
+        // multiple-of-5 that would fit all the data.
         size_t expectedSize = (8 * (1 + ps.second) + 4) / 5;
         data.resize(expectedSize);
         std::fill(begin(data), end(data), 0);
-        // After conversion from 8 bit packing to 5 bit packing, the size
-        // will be in the second 5-bit group, shifted left twice.
+        // After conversion from 8 bit packing to 5 bit packing, the size will
+        // be in the second 5-bit group, shifted left twice.
         data[1] = ps.first << 2;
 
         auto content =
@@ -249,12 +278,14 @@ BOOST_AUTO_TEST_CASE(check_size) {
 
         BOOST_CHECK_EQUAL(content.type, 0);
         BOOST_CHECK_EQUAL(content.hash.size(), ps.second);
+        BOOST_CHECK(!content.IsNull());
 
         data.push_back(0);
         content = DecodeCashAddrContent(cashaddr::Encode(prefix, data), prefix);
 
         BOOST_CHECK_EQUAL(content.type, 0);
         BOOST_CHECK_EQUAL(content.hash.size(), 0UL);
+        BOOST_CHECK(content.IsNull());
 
         data.pop_back();
         data.pop_back();
@@ -262,11 +293,12 @@ BOOST_AUTO_TEST_CASE(check_size) {
 
         BOOST_CHECK_EQUAL(content.type, 0);
         BOOST_CHECK_EQUAL(content.hash.size(), 0UL);
+        BOOST_CHECK(content.IsNull());
     }
 }
 
 BOOST_AUTO_TEST_CASE(test_encode_address) {
-    const auto params = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto params = CreateChainParams(CBaseChainParams::MAIN);
 
     std::vector<std::vector<uint8_t>> hash{
         {118, 160, 64,  83, 189, 160, 168, 139, 218, 81,
@@ -277,26 +309,44 @@ BOOST_AUTO_TEST_CASE(test_encode_address) {
          213, 62, 197, 251, 195, 180, 45, 248, 237, 16}};
 
     std::vector<std::string> pubkey = {
-        "ecash:qpm2qsznhks23z7629mms6s4cwef74vcwva87rkuu2",
-        "ecash:qr95sy3j9xwd2ap32xkykttr4cvcu7as4ykdcjcn6n",
-        "ecash:qqq3728yw0y47sqn6l2na30mcw6zm78dzq653y7pv5"};
+        "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+        "bitcoincash:qr95sy3j9xwd2ap32xkykttr4cvcu7as4y0qverfuy",
+        "bitcoincash:qqq3728yw0y47sqn6l2na30mcw6zm78dzqre909m2r"};
+    std::vector<std::string> token_pubkey = {
+        "bitcoincash:zpm2qsznhks23z7629mms6s4cwef74vcwvrqekrq9w",
+        "bitcoincash:zr95sy3j9xwd2ap32xkykttr4cvcu7as4yg2l8d0rh",
+        "bitcoincash:zqq3728yw0y47sqn6l2na30mcw6zm78dzqynk3ta4s"};
     std::vector<std::string> script = {
-        "ecash:ppm2qsznhks23z7629mms6s4cwef74vcwv2zrv3l8h",
-        "ecash:pr95sy3j9xwd2ap32xkykttr4cvcu7as4ypg9alspw",
-        "ecash:pqq3728yw0y47sqn6l2na30mcw6zm78dzqd3vtezhf"};
+        "bitcoincash:ppm2qsznhks23z7629mms6s4cwef74vcwvn0h829pq",
+        "bitcoincash:pr95sy3j9xwd2ap32xkykttr4cvcu7as4yc93ky28e",
+        "bitcoincash:pqq3728yw0y47sqn6l2na30mcw6zm78dzq5ucqzc37"};
+    std::vector<std::string> token_script = {
+        "bitcoincash:rpm2qsznhks23z7629mms6s4cwef74vcwv59yeyr7n",
+        "bitcoincash:rr95sy3j9xwd2ap32xkykttr4cvcu7as4yl0zg2vc2",
+        "bitcoincash:rqq3728yw0y47sqn6l2na30mcw6zm78dzqnkt7v7wd"};
 
     for (size_t i = 0; i < hash.size(); ++i) {
-        const CTxDestination dstKey = PKHash(uint160(hash[i]));
+        const CTxDestination dstKey = CKeyID(uint160(hash[i]));
         BOOST_CHECK_EQUAL(pubkey[i], EncodeCashAddr(dstKey, *params));
 
         CashAddrContent keyContent{PUBKEY_TYPE, hash[i]};
-        BOOST_CHECK_EQUAL(pubkey[i], EncodeCashAddr("ecash", keyContent));
+        BOOST_CHECK_EQUAL(pubkey[i], EncodeCashAddr("bitcoincash", keyContent));
+        BOOST_CHECK(!keyContent.IsTokenAwareType());
 
-        const CTxDestination dstScript = ScriptHash(uint160(hash[i]));
+        CashAddrContent tokenKeyContent{TOKEN_PUBKEY_TYPE, hash[i]};
+        BOOST_CHECK_EQUAL(token_pubkey[i], EncodeCashAddr("bitcoincash", tokenKeyContent));
+        BOOST_CHECK(tokenKeyContent.IsTokenAwareType());
+
+        const CTxDestination dstScript = ScriptID(uint160(hash[i]));
         BOOST_CHECK_EQUAL(script[i], EncodeCashAddr(dstScript, *params));
 
         CashAddrContent scriptContent{SCRIPT_TYPE, hash[i]};
-        BOOST_CHECK_EQUAL(script[i], EncodeCashAddr("ecash", scriptContent));
+        BOOST_CHECK_EQUAL(script[i], EncodeCashAddr("bitcoincash", scriptContent));
+        BOOST_CHECK(!scriptContent.IsTokenAwareType());
+
+        CashAddrContent tokenScriptContent{TOKEN_SCRIPT_TYPE, hash[i]};
+        BOOST_CHECK_EQUAL(token_script[i], EncodeCashAddr("bitcoincash", tokenScriptContent));
+        BOOST_CHECK(tokenScriptContent.IsTokenAwareType());
     }
 }
 
@@ -313,25 +363,43 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
         {"bitcoincash", PUBKEY_TYPE,
          ParseHex("F5BF48B397DAE70BE82B3CCA4793F8EB2B6CDAC9"),
          "bitcoincash:qr6m7j9njldwwzlg9v7v53unlr4jkmx6eylep8ekg2"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("F5BF48B397DAE70BE82B3CCA4793F8EB2B6CDAC9"),
+         "bitcoincash:zr6m7j9njldwwzlg9v7v53unlr4jkmx6eycnjehshe"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("F5BF48B397DAE70BE82B3CCA4793F8EB2B6CDAC9"),
          "bchtest:pr6m7j9njldwwzlg9v7v53unlr4jkmx6eyvwc0uz5t"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("F5BF48B397DAE70BE82B3CCA4793F8EB2B6CDAC9"),
+         "bchtest:rr6m7j9njldwwzlg9v7v53unlr4jkmx6eytyt3jytc"},
         {"prefix", CashAddrType(15),
          ParseHex("F5BF48B397DAE70BE82B3CCA4793F8EB2B6CDAC9"),
          "prefix:0r6m7j9njldwwzlg9v7v53unlr4jkmx6ey3qnjwsrf"},
         {"bchreg", PUBKEY_TYPE,
          ParseHex("d85c2b71d0060b09c9886aeb815e50991dda124d"),
          "bchreg:qrv9c2m36qrqkzwf3p4whq272zv3mksjf5ln6v9le5"},
+        {"bchreg", TOKEN_PUBKEY_TYPE,
+         ParseHex("d85c2b71d0060b09c9886aeb815e50991dda124d"),
+         "bchreg:zrv9c2m36qrqkzwf3p4whq272zv3mksjf5cefjtex8"},
         {"bchreg", PUBKEY_TYPE,
          ParseHex("00aea9a2e5f0f876a588df5546e8742d1d87008f"),
          "bchreg:qqq2a2dzuhc0sa493r0423hgwsk3mpcq3upac4z3wr"},
+        {"bchreg", TOKEN_PUBKEY_TYPE,
+         ParseHex("00aea9a2e5f0f876a588df5546e8742d1d87008f"),
+         "bchreg:zqq2a2dzuhc0sa493r0423hgwsk3mpcq3uxhttvh3s"},
         // 24 bytes
         {"bitcoincash", PUBKEY_TYPE,
          ParseHex("7ADBF6C17084BC86C1706827B41A56F5CA32865925E946EA"),
          "bitcoincash:q9adhakpwzztepkpwp5z0dq62m6u5v5xtyj7j3h2ws4mr9g0"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("7ADBF6C17084BC86C1706827B41A56F5CA32865925E946EA"),
+         "bitcoincash:z9adhakpwzztepkpwp5z0dq62m6u5v5xtyj7j3h2upmv9v72"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("7ADBF6C17084BC86C1706827B41A56F5CA32865925E946EA"),
          "bchtest:p9adhakpwzztepkpwp5z0dq62m6u5v5xtyj7j3h2u94tsynr"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("7ADBF6C17084BC86C1706827B41A56F5CA32865925E946EA"),
+         "bchtest:r9adhakpwzztepkpwp5z0dq62m6u5v5xtyj7j3h2w5mukd9x"},
         {"prefix", CashAddrType(15),
          ParseHex("7ADBF6C17084BC86C1706827B41A56F5CA32865925E946EA"),
          "prefix:09adhakpwzztepkpwp5z0dq62m6u5v5xtyj7j3h2p29kc2lp"},
@@ -339,9 +407,15 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
         {"bitcoincash", PUBKEY_TYPE,
          ParseHex("3A84F9CF51AAE98A3BB3A78BF16A6183790B18719126325BFC0C075B"),
          "bitcoincash:qgagf7w02x4wnz3mkwnchut2vxphjzccwxgjvvjmlsxqwkcw59jxxuz"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("3A84F9CF51AAE98A3BB3A78BF16A6183790B18719126325BFC0C075B"),
+         "bitcoincash:zgagf7w02x4wnz3mkwnchut2vxphjzccwxgjvvjmlsxqwkc8c9wvd0v"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("3A84F9CF51AAE98A3BB3A78BF16A6183790B18719126325BFC0C075B"),
          "bchtest:pgagf7w02x4wnz3mkwnchut2vxphjzccwxgjvvjmlsxqwkcvs7md7wt"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("3A84F9CF51AAE98A3BB3A78BF16A6183790B18719126325BFC0C075B"),
+         "bchtest:rgagf7w02x4wnz3mkwnchut2vxphjzccwxgjvvjmlsxqwkc9u7884a9"},
         {"prefix", CashAddrType(15),
          ParseHex("3A84F9CF51AAE98A3BB3A78BF16A6183790B18719126325BFC0C075B"),
          "prefix:0gagf7w02x4wnz3mkwnchut2vxphjzccwxgjvvjmlsxqwkc5djw8s9g"},
@@ -351,11 +425,21 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
                   "C060"),
          "bitcoincash:"
          "qvch8mmxy0rtfrlarg7ucrxxfzds5pamg73h7370aa87d80gyhqxq5nlegake"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("3173EF6623C6B48FFD1A3DCC0CC6489B0A07BB47A37F47CFEF4FE69DE825"
+                  "C060"),
+         "bitcoincash:"
+         "zvch8mmxy0rtfrlarg7ucrxxfzds5pamg73h7370aa87d80gyhqxqxqrc3u0j"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("3173EF6623C6B48FFD1A3DCC0CC6489B0A07BB47A37F47CFEF4FE69DE825"
                   "C060"),
          "bchtest:"
          "pvch8mmxy0rtfrlarg7ucrxxfzds5pamg73h7370aa87d80gyhqxq7fqng6m6"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("3173EF6623C6B48FFD1A3DCC0CC6489B0A07BB47A37F47CFEF4FE69DE825"
+                  "C060"),
+         "bchtest:"
+         "rvch8mmxy0rtfrlarg7ucrxxfzds5pamg73h7370aa87d80gyhqxqv6uj3mz3"},
         {"prefix", CashAddrType(15),
          ParseHex("3173EF6623C6B48FFD1A3DCC0CC6489B0A07BB47A37F47CFEF4FE69DE825"
                   "C060"),
@@ -368,12 +452,24 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
          "bitcoincash:"
          "qnq8zwpj8cq05n7pytfmskuk9r4gzzel8qtsvwz79zdskftrzxtar994cgutavfklv39g"
          "r3uvz"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("C07138323E00FA4FC122D3B85B9628EA810B3F381706385E289B0B256311"
+                  "97D194B5C238BEB136FB"),
+         "bitcoincash:"
+         "znq8zwpj8cq05n7pytfmskuk9r4gzzel8qtsvwz79zdskftrzxtar994cgutavfklvyjy"
+         "sntx8"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("C07138323E00FA4FC122D3B85B9628EA810B3F381706385E289B0B256311"
                   "97D194B5C238BEB136FB"),
          "bchtest:"
          "pnq8zwpj8cq05n7pytfmskuk9r4gzzel8qtsvwz79zdskftrzxtar994cgutavfklvmgm"
          "6ynej"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("C07138323E00FA4FC122D3B85B9628EA810B3F381706385E289B0B256311"
+                  "97D194B5C238BEB136FB"),
+         "bchtest:"
+         "rnq8zwpj8cq05n7pytfmskuk9r4gzzel8qtsvwz79zdskftrzxtar994cgutavfklvwlh"
+         "fxynh"},
         {"prefix", CashAddrType(15),
          ParseHex("C07138323E00FA4FC122D3B85B9628EA810B3F381706385E289B0B256311"
                   "97D194B5C238BEB136FB"),
@@ -387,12 +483,24 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
          "bitcoincash:"
          "qh3krj5607v3qlqh5c3wq3lrw3wnuxw0sp8dv0zugrrt5a3kj6ucysfz8kxwv2k53krr7"
          "n933jfsunqex2w82sl"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("E361CA9A7F99107C17A622E047E3745D3E19CF804ED63C5C40C6BA763696"
+                  "B98241223D8CE62AD48D863F4CB18C930E4C"),
+         "bitcoincash:"
+         "zh3krj5607v3qlqh5c3wq3lrw3wnuxw0sp8dv0zugrrt5a3kj6ucysfz8kxwv2k53krr7"
+         "n933jfsunq4e575wfw"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("E361CA9A7F99107C17A622E047E3745D3E19CF804ED63C5C40C6BA763696"
                   "B98241223D8CE62AD48D863F4CB18C930E4C"),
          "bchtest:"
          "ph3krj5607v3qlqh5c3wq3lrw3wnuxw0sp8dv0zugrrt5a3kj6ucysfz8kxwv2k53krr7"
          "n933jfsunqnzf7mt6x"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("E361CA9A7F99107C17A622E047E3745D3E19CF804ED63C5C40C6BA763696"
+                  "B98241223D8CE62AD48D863F4CB18C930E4C"),
+         "bchtest:"
+         "rh3krj5607v3qlqh5c3wq3lrw3wnuxw0sp8dv0zugrrt5a3kj6ucysfz8kxwv2k53krr7"
+         "n933jfsunqlahwg0rh"},
         {"prefix", CashAddrType(15),
          ParseHex("E361CA9A7F99107C17A622E047E3745D3E19CF804ED63C5C40C6BA763696"
                   "B98241223D8CE62AD48D863F4CB18C930E4C"),
@@ -406,12 +514,24 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
          "bitcoincash:"
          "qmvl5lzvdm6km38lgga64ek5jhdl7e3aqd9895wu04fvhlnare5937w4ywkq57juxsrhv"
          "w8ym5d8qx7sz7zz0zvcypqscw8jd03f"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("D9FA7C4C6EF56DC4FF423BAAE6D495DBFF663D034A72D1DC7D52CBFE7D1E"
+                  "6858F9D523AC0A7A5C34077638E4DD1A701BD017842789982041"),
+         "bitcoincash:"
+         "zmvl5lzvdm6km38lgga64ek5jhdl7e3aqd9895wu04fvhlnare5937w4ywkq57juxsrhv"
+         "w8ym5d8qx7sz7zz0zvcypqswr8epnvt"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("D9FA7C4C6EF56DC4FF423BAAE6D495DBFF663D034A72D1DC7D52CBFE7D1E"
                   "6858F9D523AC0A7A5C34077638E4DD1A701BD017842789982041"),
          "bchtest:"
          "pmvl5lzvdm6km38lgga64ek5jhdl7e3aqd9895wu04fvhlnare5937w4ywkq57juxsrhv"
          "w8ym5d8qx7sz7zz0zvcypqs6kgdsg2g"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("D9FA7C4C6EF56DC4FF423BAAE6D495DBFF663D034A72D1DC7D52CBFE7D1E"
+                  "6858F9D523AC0A7A5C34077638E4DD1A701BD017842789982041"),
+         "bchtest:"
+         "rmvl5lzvdm6km38lgga64ek5jhdl7e3aqd9895wu04fvhlnare5937w4ywkq57juxsrhv"
+         "w8ym5d8qx7sz7zz0zvcypqsvmgxu5h2"},
         {"prefix", CashAddrType(15),
          ParseHex("D9FA7C4C6EF56DC4FF423BAAE6D495DBFF663D034A72D1DC7D52CBFE7D1E"
                   "6858F9D523AC0A7A5C34077638E4DD1A701BD017842789982041"),
@@ -426,6 +546,13 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
          "bitcoincash:"
          "qlg0x333p4238k0qrc5ej7rzfw5g8e4a4r6vvzyrcy8j3s5k0en7calvclhw46hudk5fl"
          "ttj6ydvjc0pv3nchp52amk97tqa5zygg96mtky5sv5w"},
+        {"bitcoincash", TOKEN_PUBKEY_TYPE,
+         ParseHex("D0F346310D5513D9E01E299978624BA883E6BDA8F4C60883C10F28C2967E"
+                  "67EC77ECC7EEEAEAFC6DA89FAD72D11AC961E164678B868AEEEC5F2C1DA0"
+                  "8884175B"),
+         "bitcoincash:"
+         "zlg0x333p4238k0qrc5ej7rzfw5g8e4a4r6vvzyrcy8j3s5k0en7calvclhw46hudk5fl"
+         "ttj6ydvjc0pv3nchp52amk97tqa5zygg96m4zqdd0qv"},
         {"bchtest", SCRIPT_TYPE,
          ParseHex("D0F346310D5513D9E01E299978624BA883E6BDA8F4C60883C10F28C2967E"
                   "67EC77ECC7EEEAEAFC6DA89FAD72D11AC961E164678B868AEEEC5F2C1DA0"
@@ -433,6 +560,13 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
          "bchtest:"
          "plg0x333p4238k0qrc5ej7rzfw5g8e4a4r6vvzyrcy8j3s5k0en7calvclhw46hudk5fl"
          "ttj6ydvjc0pv3nchp52amk97tqa5zygg96mc773cwez"},
+        {"bchtest", TOKEN_SCRIPT_TYPE,
+         ParseHex("D0F346310D5513D9E01E299978624BA883E6BDA8F4C60883C10F28C2967E"
+                  "67EC77ECC7EEEAEAFC6DA89FAD72D11AC961E164678B868AEEEC5F2C1DA0"
+                  "8884175B"),
+         "bchtest:"
+         "rlg0x333p4238k0qrc5ej7rzfw5g8e4a4r6vvzyrcy8j3s5k0en7calvclhw46hudk5fl"
+         "ttj6ydvjc0pv3nchp52amk97tqa5zygg96mx26g9ddq"},
         {"prefix", CashAddrType(15),
          ParseHex("D0F346310D5513D9E01E299978624BA883E6BDA8F4C60883C10F28C2967E"
                   "67EC77ECC7EEEAEAFC6DA89FAD72D11AC961E164678B868AEEEC5F2C1DA0"
@@ -452,6 +586,35 @@ BOOST_AUTO_TEST_CASE(test_vectors) {
         content = DecodeCashAddrContent(t.addr, t.prefix);
         BOOST_CHECK_EQUAL(t.type, content.type);
         BOOST_CHECK_MESSAGE(t.hash == content.hash, err);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(token_json_test_vectors) {
+    static_assert(sizeof(json_tests::cashaddr_token_types[0]) == 1);
+    const UniValue::Array vecs = read_json({reinterpret_cast<const char *>(&json_tests::cashaddr_token_types[0]),
+                                           std::size(json_tests::cashaddr_token_types)});
+    BOOST_CHECK( ! vecs.empty());
+    for (size_t i = 0; i < vecs.size(); ++i) {
+        BOOST_TEST_MESSAGE(strprintf("Running token JSON test %i ...", i));
+        const UniValue::Object &o = vecs[i].get_obj();
+        BOOST_CHECK( ! o.empty());
+        struct TestVector {
+            size_t payloadSize;
+            uint8_t type;
+            std::string cashaddr;
+            std::vector<uint8_t> payload;
+        } const tv {size_t(o["payloadSize"].get_int()), uint8_t(o["type"].get_int()), o["cashaddr"].get_str(),
+                    ParseHex(o["payload"].get_str())};
+        auto GetPrefix = [](const std::string &ca) -> std::string {
+            const auto pos = ca.find_first_of(':');
+            if (pos == ca.npos) throw std::runtime_error(strprintf("Cannot parse prefix from: %s", ca));
+            return ca.substr(0, pos);
+        };
+        const CashAddrContent content = DecodeCashAddrContent(tv.cashaddr, GetPrefix(tv.cashaddr));
+        BOOST_CHECK( ! content.IsNull());
+        BOOST_CHECK_EQUAL(uint8_t(content.type), tv.type);
+        BOOST_CHECK_EQUAL(content.hash.size(), tv.payloadSize);
+        BOOST_CHECK_EQUAL(HexStr(content.hash), HexStr(tv.payload));
     }
 }
 

@@ -1,8 +1,8 @@
-/***********************************************************************
- * Copyright (c) 2013-2015 Pieter Wuille                               *
- * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
- ***********************************************************************/
+/**********************************************************************
+ * Copyright (c) 2013-2015 Pieter Wuille                              *
+ * Distributed under the MIT software license, see the accompanying   *
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
+ **********************************************************************/
 
 
 #ifndef SECP256K1_ECDSA_IMPL_H
@@ -280,7 +280,6 @@ static int secp256k1_ecdsa_sig_sign(const secp256k1_ecmult_gen_context *ctx, sec
     secp256k1_ge r;
     secp256k1_scalar n;
     int overflow = 0;
-    int high;
 
     secp256k1_ecmult_gen(ctx, &rp, nonce);
     secp256k1_ge_set_gej(&r, &rp);
@@ -288,11 +287,15 @@ static int secp256k1_ecdsa_sig_sign(const secp256k1_ecmult_gen_context *ctx, sec
     secp256k1_fe_normalize(&r.y);
     secp256k1_fe_get_b32(b, &r.x);
     secp256k1_scalar_set_b32(sigr, b, &overflow);
+    /* These two conditions should be checked before calling */
+    VERIFY_CHECK(!secp256k1_scalar_is_zero(sigr));
+    VERIFY_CHECK(overflow == 0);
+
     if (recid) {
         /* The overflow condition is cryptographically unreachable as hitting it requires finding the discrete log
          * of some P where P.x >= order, and only 1 in about 2^127 points meet this criteria.
          */
-        *recid = (overflow << 1) | secp256k1_fe_is_odd(&r.y);
+        *recid = (overflow ? 2 : 0) | (secp256k1_fe_is_odd(&r.y) ? 1 : 0);
     }
     secp256k1_scalar_mul(&n, sigr, seckey);
     secp256k1_scalar_add(&n, &n, message);
@@ -301,15 +304,16 @@ static int secp256k1_ecdsa_sig_sign(const secp256k1_ecmult_gen_context *ctx, sec
     secp256k1_scalar_clear(&n);
     secp256k1_gej_clear(&rp);
     secp256k1_ge_clear(&r);
-    high = secp256k1_scalar_is_high(sigs);
-    secp256k1_scalar_cond_negate(sigs, high);
-    if (recid) {
-        *recid ^= high;
+    if (secp256k1_scalar_is_zero(sigs)) {
+        return 0;
     }
-    /* P.x = order is on the curve, so technically sig->r could end up being zero, which would be an invalid signature.
-     * This is cryptographically unreachable as hitting it requires finding the discrete log of P.x = N.
-     */
-    return (int)(!secp256k1_scalar_is_zero(sigr)) & (int)(!secp256k1_scalar_is_zero(sigs));
+    if (secp256k1_scalar_is_high(sigs)) {
+        secp256k1_scalar_negate(sigs, sigs);
+        if (recid) {
+            *recid ^= 1;
+        }
+    }
+    return 1;
 }
 
 #endif /* SECP256K1_ECDSA_IMPL_H */

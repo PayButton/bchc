@@ -8,7 +8,7 @@ export LC_ALL=C.UTF-8
 set -euxo pipefail
 
 TOPLEVEL=$(git rev-parse --show-toplevel)
-CURRENT_DIR=$(dirname $(readlink -f "$0"))
+CURRENT_DIR=$(dirname "$(readlink -f "$0")")
 TEST_PATCH="${CURRENT_DIR}/test-commit.patch"
 : "${REMOTE:=origin}"
 : "${MASTER_BRANCH:=master}"
@@ -24,7 +24,7 @@ test_autopatch() {
   export EDITOR="${CURRENT_DIR}/test-commit-message.sh"
   # Note: Do not use `-o ${REMOTE}` here because REMOTE may be on the local filesystem.
   EXIT_CODE=0
-  "${CURRENT_DIR}/../autopatch.sh" -o testorigin -b "${MASTER_BRANCH}" --patch-args "${PATCH_ARGS}" > /dev/null || EXIT_CODE=$?
+  "${CURRENT_DIR}/../autopatch.sh" -o testorigin -b "${MASTER_BRANCH}" --patch-args "${PATCH_ARGS}" || EXIT_CODE=$?
   if [ "${EXIT_CODE}" -ne "${EXPECTED_EXIT_CODE}" ]; then
     echo "Error: autopatch exited with '${EXIT_CODE}' when '${EXPECTED_EXIT_CODE}' was expected."
     exit 1
@@ -81,9 +81,11 @@ git remote add testorigin "${TOPLEVEL}"
 git pull testorigin "${REMOTE_AND_BRANCH}"
 
 test_cleanup() {
-  git reset --hard HEAD
-  git clean -xffd || true
+  # Cleanup current branch so that arcanist doesn't run out of branch names
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
   git checkout "${MASTER_BRANCH}"
+  git reset --hard HEAD
+  git branch -D "${CURRENT_BRANCH}" || true
 }
 
 (

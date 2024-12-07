@@ -1,12 +1,12 @@
 // Copyright (c) 2015 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 /**
  * Functionality for communicating with Tor.
  */
-#ifndef BITCOIN_TORCONTROL_H
-#define BITCOIN_TORCONTROL_H
+#pragma once
 
 #include <string>
 
@@ -20,5 +20,3 @@ void InterruptTorControl();
 void StopTorControl();
 
 CService DefaultOnionServiceTarget();
-
-#endif // BITCOIN_TORCONTROL_H

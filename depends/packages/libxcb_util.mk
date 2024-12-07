@@ -8,6 +8,7 @@ $(package)_dependencies=libxcb
 define $(package)_set_vars
 $(package)_config_opts = --disable-shared --disable-devel-docs --without-doxygen
 $(package)_config_opts += --disable-dependency-tracking --enable-option-checking
+$(package)_config_opts += --with-pic
 endef
 
 define $(package)_preprocess_cmds
@@ -19,7 +20,7 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  $(MAKE) -j$(JOBS)
+  $(MAKE)
 endef
 
 define $(package)_stage_cmds

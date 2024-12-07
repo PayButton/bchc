@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -12,11 +13,10 @@
 #include <interfaces/node.h>
 #include <netbase.h>
 #include <qt/bitcoinunits.h>
-#include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 #include <txdb.h>       // for -dbcache defaults
-#include <validation.h> // for DEFAULT_SCRIPTCHECK_THREADS and MAX_SCRIPTCHECK_THREADS
+#include <validation.h> // for MIN_DISK_SPACE_FOR_BLOCK_FILES
 
 #include <QDataWidgetMapper>
 #include <QDir>
@@ -33,10 +33,17 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
     ui->setupUi(this);
 
     /* Main elements init */
-    ui->databaseCache->setMinimum(MIN_DB_CACHE_MB);
-    ui->databaseCache->setMaximum(MAX_DB_CACHE_MB);
+    ui->databaseCache->setMinimum(nMinDbCache);
+    ui->databaseCache->setMaximum(nMaxDbCache);
+    static const uint64_t GiB = 1024 * 1024 * 1024;
+    static const uint64_t nMinDiskSpace =
+        MIN_DISK_SPACE_FOR_BLOCK_FILES / GiB +
+                (MIN_DISK_SPACE_FOR_BLOCK_FILES % GiB)
+            ? 1
+            : 0;
+    ui->pruneSize->setMinimum(nMinDiskSpace);
     ui->threadsScriptVerif->setMinimum(-GetNumCores());
-    ui->threadsScriptVerif->setMaximum(MAX_SCRIPTCHECK_THREADS);
+    ui->threadsScriptVerif->setMaximum(GetNumCores());
     ui->pruneWarning->setVisible(false);
     ui->pruneWarning->setStyleSheet("QLabel { color: red; }");
 
@@ -53,8 +60,7 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
 #endif
     connect(this, &QDialog::accepted, [this]() {
         QSettings settings;
-        model->node().mapPort(settings.value("fUseUPnP").toBool(),
-                              settings.value("fUseNatpmp").toBool());
+        model->node().mapPort(settings.value("fUseUPnP").toBool(), settings.value("fUseNatpmp").toBool());
     });
 
     ui->proxyIp->setEnabled(false);
@@ -83,17 +89,11 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
 #ifdef Q_OS_MAC
     /* remove Window tab on Mac */
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->tabWindow));
-    /* hide launch at startup option on macOS */
-    ui->bitcoinAtStartup->setVisible(false);
-    ui->verticalLayout_Main->removeWidget(ui->bitcoinAtStartup);
-    ui->verticalLayout_Main->removeItem(ui->horizontalSpacer_0_Main);
 #endif
 
-    /* remove Wallet tab and 3rd party-URL textbox in case of -disablewallet */
+    /* remove Wallet tab in case of -disablewallet */
     if (!enableWallet) {
         ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->tabWallet));
-        ui->thirdPartyTxUrlsLabel->setVisible(false);
-        ui->thirdPartyTxUrls->setVisible(false);
     }
 
     /* Display elements init */
@@ -129,6 +129,8 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
                               QVariant(langStr));
         }
     }
+    ui->thirdPartyTxUrls->setPlaceholderText("https://example.com/tx/%s");
+
     ui->unit->setModel(new BitcoinUnits(this));
 
     /* Widget-to-option mapper */
@@ -153,20 +155,12 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
     connect(ui->proxyPortTor, &QLineEdit::textChanged, this,
             &OptionsDialog::updateProxyValidationState);
 
-    /* setup/change UI elements when third party tx URLs are invalid/valid */
-    ui->thirdPartyTxUrls->setCheckValidator(
-        new ThirdPartyTxUrlsValidator(parent));
-    connect(ui->thirdPartyTxUrls, &QValidatedLineEdit::validationDidChange,
-            this, &OptionsDialog::updateThirdPartyTxUrlsState);
-
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         ui->hideTrayIcon->setChecked(true);
         ui->hideTrayIcon->setEnabled(false);
         ui->minimizeToTray->setChecked(false);
         ui->minimizeToTray->setEnabled(false);
     }
-
-    GUIUtil::handleCloseWindowShortcut(this);
 }
 
 OptionsDialog::~OptionsDialog() {
@@ -181,14 +175,6 @@ void OptionsDialog::setModel(OptionsModel *_model) {
         if (_model->isRestartRequired()) {
             showRestartWarning(true);
         }
-
-        // Prune values are in GB to be consistent with intro.cpp
-        static constexpr uint64_t nMinDiskSpace =
-            (MIN_DISK_SPACE_FOR_BLOCK_FILES / GB_BYTES) +
-                    (MIN_DISK_SPACE_FOR_BLOCK_FILES % GB_BYTES)
-                ? 1
-                : 0;
-        ui->pruneSize->setRange(nMinDiskSpace, std::numeric_limits<int>::max());
 
         QString strLabel = _model->getOverriddenByCommandLine();
         if (strLabel.isEmpty()) {
@@ -236,7 +222,7 @@ void OptionsDialog::setModel(OptionsModel *_model) {
         static_cast<void (QValueComboBox::*)()>(&QValueComboBox::valueChanged),
         [this] { showRestartWarning(); });
     connect(ui->thirdPartyTxUrls, &QLineEdit::textChanged,
-            [this] { showRestartWarning(); });
+            [this] { thirdPartyTxWarning(); });
 }
 
 void OptionsDialog::setCurrentTab(OptionsDialog::Tab tab) {
@@ -266,6 +252,8 @@ void OptionsDialog::setMapper() {
                        OptionsModel::SpendZeroConfChange);
     mapper->addMapping(ui->coinControlFeatures,
                        OptionsModel::CoinControlFeatures);
+    mapper->addMapping(ui->allowLegacyP2PKH,
+                       OptionsModel::AllowLegacyP2PKH);
 
     /* Network */
     mapper->addMapping(ui->mapPortUpnp, OptionsModel::MapPortUPnP);
@@ -373,6 +361,18 @@ void OptionsDialog::showRestartWarning(bool fPersistent) {
     }
 }
 
+void OptionsDialog::thirdPartyTxWarning(bool fPersistent)
+{
+    QString str = ui->thirdPartyTxUrls->displayText();
+
+    if (!OptionsModel::isValidThirdPartyTxUrlString(str)) {
+        ui->statusLabel->setStyleSheet("QLabel { color: red; }");
+        ui->statusLabel->setText(tr("Not a valid HTTP or HTTPS URL."));
+    } else { // It is a valid URL
+        showRestartWarning(fPersistent);
+    }
+}
+
 void OptionsDialog::clearStatusLabel() {
     ui->statusLabel->clear();
     if (model && model->isRestartRequired()) {
@@ -435,35 +435,6 @@ QValidator::State ProxyAddressValidator::validate(QString &input,
     CService serv(LookupNumeric(input.toStdString(), DEFAULT_GUI_PROXY_PORT));
     proxyType addrProxy = proxyType(serv, true);
     if (addrProxy.IsValid()) {
-        return QValidator::Acceptable;
-    }
-
-    return QValidator::Invalid;
-}
-
-void OptionsDialog::updateThirdPartyTxUrlsState() {
-    QValidatedLineEdit *thirdPartyTxUrls = ui->thirdPartyTxUrls;
-    if (thirdPartyTxUrls->isValid()) {
-        // Only enable OK button if the third party tx URLS pattern is valid
-        setOkButtonState(true);
-        clearStatusLabel();
-    } else {
-        setOkButtonState(false);
-        ui->statusLabel->setStyleSheet("QLabel { color: red; }");
-        ui->statusLabel->setText(
-            tr("The third party transaction URLs should start with https://."));
-    }
-}
-
-ThirdPartyTxUrlsValidator::ThirdPartyTxUrlsValidator(QObject *parent)
-    : QValidator(parent) {}
-
-QValidator::State ThirdPartyTxUrlsValidator::validate(QString &input,
-                                                      int &pos) const {
-    Q_UNUSED(pos);
-    // Check the URL starts with https. All other schemes are rejected for
-    // security reasons.
-    if (input.isEmpty() || input.startsWith("https://")) {
         return QValidator::Acceptable;
     }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,7 +6,7 @@
 #include <chain.h>
 #include <uint256.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -28,7 +28,7 @@ BOOST_AUTO_TEST_CASE(get_block_header) {
     header.nBits = expectedDifficultyBits;
     header.nNonce = expectedNonce;
 
-    CBlockIndex index = CBlockIndex(header);
+    const CBlockIndex index(header);
 
     CBlockHeader checkHeader = index.GetBlockHeader();
     BOOST_CHECK(checkHeader.nVersion == expectedVersion);
@@ -41,10 +41,9 @@ BOOST_AUTO_TEST_CASE(get_block_header) {
 BOOST_AUTO_TEST_CASE(get_disk_positions) {
     // Test against all validity values
     std::set<BlockValidity> validityValues{
-        BlockValidity::UNKNOWN, BlockValidity::RESERVED,
+        BlockValidity::UNKNOWN, BlockValidity::HEADER,
         BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
         BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
-    LOCK(cs_main);
     for (BlockValidity validity : validityValues) {
         // Test against all combinations of data and undo flags
         for (int flags = 0; flags <= 0x03; flags++) {
@@ -89,7 +88,7 @@ BOOST_AUTO_TEST_CASE(get_disk_positions) {
 }
 
 BOOST_AUTO_TEST_CASE(get_block_hash) {
-    CBlockIndex index = CBlockIndex();
+    CBlockIndex index{};
 
     /* Test with all 0 hash */
     const BlockHash zeroHash = BlockHash();
@@ -115,7 +114,7 @@ BOOST_AUTO_TEST_CASE(received_time) {
     CBlockHeader header;
     header.nTime = uint32_t(expectedBlockTime);
 
-    CBlockIndex index = CBlockIndex(header);
+    CBlockIndex index(header);
 
     // nTimeReceived defaults to 0
     BOOST_CHECK_EQUAL(index.nTimeReceived, 0);
@@ -188,12 +187,12 @@ BOOST_AUTO_TEST_CASE(to_string) {
     CBlockHeader header = CBlockHeader();
     header.hashMerkleRoot = uint256();
 
-    CBlockIndex index = CBlockIndex(header);
+    CBlockIndex index(header);
     const BlockHash hashBlock = BlockHash();
     index.phashBlock = &hashBlock;
     index.nHeight = 123;
 
-    CBlockIndex indexPrev = CBlockIndex();
+    CBlockIndex indexPrev{};
 
     std::string expectedString = "";
     std::string indexString = "";
@@ -265,11 +264,10 @@ BOOST_AUTO_TEST_CASE(index_validity_tests) {
 
     // Test against all validity values
     std::set<BlockValidity> validityValues{
-        BlockValidity::UNKNOWN, BlockValidity::RESERVED,
+        BlockValidity::UNKNOWN, BlockValidity::HEADER,
         BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
         BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
     std::set<bool> boolValues = {false, true};
-    LOCK(::cs_main);
     for (BlockValidity validity : validityValues) {
         for (bool withFailed : boolValues) {
             for (bool withFailedParent : boolValues) {
@@ -319,11 +317,10 @@ BOOST_AUTO_TEST_CASE(index_validity_tests) {
 }
 
 BOOST_AUTO_TEST_CASE(index_ancestors) {
-    std::array<CBlockIndex, 256> indexes;
+    std::array<CBlockIndex, 256> indexes; //! all instances are default constructed here
 
     /* Check the skip pointer don't build when there is no precedence */
     for (size_t i = 0; i < indexes.size(); i++) {
-        indexes[i] = CBlockIndex();
         indexes[i].nHeight = i;
 
         indexes[i].pprev = nullptr;
@@ -422,49 +419,4 @@ BOOST_AUTO_TEST_CASE(index_ancestors) {
     }
 }
 
-BOOST_AUTO_TEST_CASE(index_assumevalid_tests) {
-    CBlockIndex index;
-
-    // Test against all validity values
-    std::set<BlockValidity> validityValues{
-        BlockValidity::UNKNOWN, BlockValidity::RESERVED,
-        BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
-        BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
-    std::set<bool> boolValues = {false, true};
-    for (BlockValidity validityFrom : validityValues) {
-        for (bool withAssumedValid : boolValues) {
-            LOCK(cs_main);
-
-            index.nStatus = BlockStatus()
-                                .withValidity(validityFrom)
-                                .withAssumedValid(withAssumedValid);
-            BOOST_CHECK_EQUAL(index.nStatus.isAssumedValid(),
-                              index.IsAssumedValid());
-            BOOST_CHECK_EQUAL(index.IsAssumedValid(), withAssumedValid);
-
-            for (BlockValidity validityUpTo : validityValues) {
-                // Test RaiseValidity()
-                bool raisedValidity = index.RaiseValidity(validityUpTo);
-                if (validityFrom < validityUpTo) {
-                    BOOST_CHECK(raisedValidity);
-                    BOOST_CHECK_EQUAL(index.nStatus.getValidity(),
-                                      validityUpTo);
-                    if (validityUpTo < BlockValidity::SCRIPTS) {
-                        BOOST_CHECK_EQUAL(index.IsAssumedValid(),
-                                          withAssumedValid);
-                    } else {
-                        // If a block had been marked assumed-valid and
-                        // we're raising its validity to a certain point,
-                        // there is no longer an assumption.
-                        BOOST_CHECK(!index.IsAssumedValid());
-                    }
-                } else {
-                    // Validity not raised, so no change to assumed-validity
-                    BOOST_CHECK(!raisedValidity);
-                    BOOST_CHECK_EQUAL(index.IsAssumedValid(), withAssumedValid);
-                }
-            }
-        }
-    }
-}
 BOOST_AUTO_TEST_SUITE_END()

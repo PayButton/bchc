@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Bitcoin developers
+// Copyright (c) 2020-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,7 +7,7 @@
 #include <script/script.h>
 
 #include <test/lcg.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -16,10 +16,8 @@ typedef std::vector<valtype> stacktype;
 
 BOOST_FIXTURE_TEST_SUITE(op_reversebytes_tests, BasicTestingSetup)
 
-static void CheckErrorWithFlags(const uint32_t flags,
-                                const stacktype &original_stack,
-                                const CScript &script,
-                                const ScriptError expected) {
+static
+void CheckErrorWithFlags(const uint32_t flags, const stacktype &original_stack, const CScript &script, const ScriptError expected) {
     BaseSignatureChecker sigchecker;
     ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
@@ -28,10 +26,8 @@ static void CheckErrorWithFlags(const uint32_t flags,
     BOOST_CHECK(err == expected);
 }
 
-static void CheckPassWithFlags(const uint32_t flags,
-                               const stacktype &original_stack,
-                               const CScript &script,
-                               const stacktype &expected) {
+static
+void CheckPassWithFlags(const uint32_t flags, const stacktype &original_stack, const CScript &script, const stacktype &expected) {
     BaseSignatureChecker sigchecker;
     ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
@@ -111,7 +107,7 @@ BOOST_AUTO_TEST_CASE(op_reversebytes_random_and_palindrome) {
     }
 
     // Test every possible stack item size.
-    for (uint32_t datasize = 0; datasize < MAX_SCRIPT_ELEMENT_SIZE;
+    for (uint32_t datasize = 0; datasize < MAX_SCRIPT_ELEMENT_SIZE_LEGACY;
          ++datasize) {
         // Generate random data.
         valtype random_data;

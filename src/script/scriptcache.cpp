@@ -4,13 +4,13 @@
 
 #include <script/scriptcache.h>
 
-#include <common/system.h>
 #include <crypto/sha256.h>
 #include <cuckoocache.h>
 #include <primitives/transaction.h>
 #include <random.h>
 #include <script/sigcache.h>
 #include <sync.h>
+#include <util/system.h>
 #include <validation.h>
 
 /**
@@ -70,34 +70,32 @@ public:
 };
 
 static CuckooCache::cache<ScriptCacheElement, ScriptCacheHasher>
-    g_scriptExecutionCache;
-static CSHA256 g_scriptExecutionCacheHasher;
+    scriptExecutionCache;
+static uint256 scriptExecutionCacheNonce(GetRandHash());
 
-bool InitScriptExecutionCache(size_t max_size_bytes) {
-    // Setup the salted hasher
-    uint256 nonce = GetRandHash();
-    // We want the nonce to be 64 bytes long to force the hasher to process
-    // this chunk, which makes later hash computations more efficient. We
-    // just write our 32-byte entropy twice to fill the 64 bytes.
-    g_scriptExecutionCacheHasher.Write(nonce.begin(), 32);
-    g_scriptExecutionCacheHasher.Write(nonce.begin(), 32);
-
-    auto setup_results = g_scriptExecutionCache.setup_bytes(max_size_bytes);
-    if (!setup_results) {
-        return false;
-    }
-
-    const auto [num_elems, approx_size_bytes] = *setup_results;
-    LogPrintf("Using %zu MiB out of %zu MiB requested for script execution "
-              "cache, able to store %zu elements\n",
-              approx_size_bytes >> 20, max_size_bytes >> 20, num_elems);
-    return true;
+void InitScriptExecutionCache() {
+    // nMaxCacheSize is unsigned. If -maxscriptcachesize is set to zero,
+    // setup_bytes creates the minimum possible cache (2 elements).
+    size_t nMaxCacheSize =
+        std::min(std::max(int64_t(0),
+                          gArgs.GetArg("-maxscriptcachesize", DEFAULT_MAX_SCRIPT_CACHE_SIZE)),
+                 MAX_MAX_SCRIPT_CACHE_SIZE) *
+        (size_t(1) << 20);
+    size_t nElems = scriptExecutionCache.setup_bytes(nMaxCacheSize);
+    LogPrintf("Using %zu MiB out of %zu requested for script execution cache, "
+              "able to store %zu elements\n",
+              (nElems * sizeof(uint256)) >> 20, nMaxCacheSize >> 20, nElems);
 }
 
 ScriptCacheKey::ScriptCacheKey(const CTransaction &tx, uint32_t flags) {
     std::array<uint8_t, 32> hash;
-    CSHA256 hasher = g_scriptExecutionCacheHasher;
-    hasher.Write(tx.GetHash().begin(), 32)
+    // We only use the first 19 bytes of nonce to avoid a second SHA round -
+    // giving us 19 + 32 + 4 = 55 bytes (+ 8 + 1 = 64)
+    static_assert(55 - sizeof(flags) - 32 >= 128 / 8,
+                  "Want at least 128 bits of nonce for script execution cache");
+    CSHA256()
+        .Write(scriptExecutionCacheNonce.begin(), 55 - sizeof(flags) - 32)
+        .Write(tx.GetHash().begin(), 32)
         .Write((uint8_t *)&flags, sizeof(flags))
         .Finalize(hash.begin());
 
@@ -111,7 +109,7 @@ bool IsKeyInScriptCache(ScriptCacheKey key, bool erase, int &nSigChecksOut) {
     AssertLockHeld(cs_main);
 
     ScriptCacheElement elem(key, 0);
-    bool ret = g_scriptExecutionCache.get(elem, erase);
+    bool ret = scriptExecutionCache.get(elem, erase);
     nSigChecksOut = elem.nSigChecks;
     return ret;
 }
@@ -122,5 +120,5 @@ void AddKeyInScriptCache(ScriptCacheKey key, int nSigChecks) {
     AssertLockHeld(cs_main);
 
     ScriptCacheElement elem(key, nSigChecks);
-    g_scriptExecutionCache.insert(elem);
+    scriptExecutionCache.insert(elem);
 }

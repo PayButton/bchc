@@ -2,22 +2,24 @@
 
 The [/test/](/test/) directory contains integration tests that test bitcoind
 and its utilities in their entirety. It does not contain unit tests, which
-can be found in [/src/test](/src/test), [/src/wallet/test](/src/wallet/test),
-etc.
+can be found in [/src/test](/src/test), [/src/wallet/test](/src/wallet/test), etc.
 
-There are currently two sets of tests in the [/test/](/test/) directory:
+There are currently three sets of tests in the [/test/](/test/) directory:
 
 - [functional](/test/functional) which test the functionality of
-bitcoind and bitcoin-qt by interacting with them through the RPC and P2P
-interfaces.
+  bitcoind and bitcoin-qt by interacting with them through the RPC and P2P
+  interfaces.
+- [ui](/test/functional/ui*) which test the UI functionality of
+  bitcoin-qt by instructing the user to follow a test plan to
+  reproduce the state of bitcoin-qt graphical user interface.
 - [util](/test/util) which tests the bitcoin utilities, currently only
-bitcoin-tx.
+  bitcoin-tx.
 
 The util tests are run as part of `make check` target. The functional
 tests are run by the Teamcity continuous build process whenever a diff is
 created or updated on Phabricator. Both sets of tests can also be run locally.
 
-# Running functional tests locally
+## Running functional tests locally
 
 Build for your system first. Be sure to enable wallet, utils and daemon when
 you configure. Tests will not run otherwise.
@@ -26,10 +28,11 @@ you configure. Tests will not run otherwise.
 
 #### Dependencies
 
-The ZMQ functional test requires a python ZMQ library. To install it:
+The ZMQ functional test requires a python ZMQ library and the TX broadcast
+interval test requires the scipy library. To install them:
 
-- On Unix, run `sudo apt-get install python3-zmq`
-- On mac OS, run `pip3 install pyzmq`
+- On Unix, run `sudo apt-get install python3-zmq python3-scipy`
+- On mac OS, run `pip3 install pyzmq scipy`
 
 #### Running the tests
 
@@ -58,6 +61,7 @@ test/functional/test_runner.py
 ```
 
 Run all possible tests with
+
 ```
 test/functional/test_runner.py --extended
 ```
@@ -66,30 +70,9 @@ By default, up to 4 tests will be run in parallel by test_runner. To specify
 how many jobs to run, append `--jobs=n`
 
 The individual tests and the test_runner harness have many command-line
-options. Run `test/functional/test_runner.py -h` to see them all.
+options. Run `test_runner.py -h` to see them all.
 
 #### Troubleshooting and debugging test failures
-
-##### Debug & iterate faster
-
-Don't wait longer than you need to identify issues. Save yourself time while
-debugging:
-
-**Use --failfast when running many tests**
-
-Stop on first test failure:
-```
-test/functional/test_runner.py --failfast
-```
-
-**Use --timeout-factor when debugging timeouts**
-
-Don't wait for the default timeout (60 seconds) for every failure when
-debugging an issue you know about. Use --timeout-factor while you iterate on a
-solution:
-```
-test/functional/test_runner.py --timeout-factor=0.3 abc_rpc_isfinal
-```
 
 ##### Resource contention
 
@@ -100,7 +83,7 @@ killed all its bitcoind nodes), then there may be a port conflict which will
 cause the test to fail. It is recommended that you run the tests on a system
 where no other bitcoind processes are running.
 
-On linux, the test framework will warn if there is another
+On linux, the test_framework will warn if there is another
 bitcoind process running when the tests are started.
 
 If there are zombie bitcoind processes after test failure, you can kill them
@@ -128,7 +111,7 @@ tests will fail. If this happens, remove the cache directory (and make
 sure bitcoind processes are stopped as above):
 
 ```bash
-rm -rf test/cache
+rm -rf cache
 killall bitcoind
 ```
 
@@ -141,18 +124,9 @@ default:
   `test_framework.log` and no logs are output to the console.
 - When run directly, *all* logs are written to `test_framework.log` and INFO
   level and above are output to the console.
-- When run by our CI, no logs are output to the console. However, if a test
+- When run on Travis, no logs are output to the console. However, if a test
   fails, the `test_framework.log` and bitcoind `debug.log`s will all be dumped
   to the console to help troubleshooting.
-
-These log files can be located under the test data directory (which is always
-printed in the first line of test output):
-  - `<test data directory>/test_framework.log`
-  - `<test data directory>/node<node number>/regtest/debug.log`.
-
-The node number identifies the relevant test node, starting from `node0`, which
-corresponds to its position in the nodes list of the specific test,
-e.g. `self.nodes[0]`.
 
 To change the level of logs output to the console, use the `-l` command line
 argument.
@@ -162,7 +136,7 @@ aggregate log by running the `combine_logs.py` script. The output can be plain
 text, colorized text or html. For example:
 
 ```
-test/functional/combine_logs.py -c <test data directory> | less -r
+combine_logs.py -c <test data directory> | less -r
 ```
 
 will pipe the colorized logs from the test into less.
@@ -189,32 +163,18 @@ call methods that interact with the bitcoind nodes-under-test.
 If further introspection of the bitcoind instances themselves becomes
 necessary, this can be accomplished by first setting a pdb breakpoint
 at an appropriate location, running the test to that point, then using
-`gdb` (or `lldb` on macOS) to attach to the process and debug.
+`gdb` to attach to the process and debug.
 
-For instance, to attach to `self.node[1]` during a run you can get
-the pid of the node within `pdb`.
-
-```
-(pdb) self.node[1].process.pid
-```
-
-Alternatively, you can find the pid by inspecting the temp folder for the specific test
-you are running. The path to that folder is printed at the beginning of every
-test run:
+For instance, to attach to `self.node[1]` during a run:
 
 ```bash
 2017-06-27 14:13:56.686000 TestFramework (INFO): Initializing test directory /tmp/user/1000/testo9vsdjo3
 ```
 
-Use the path to find the pid file in the temp folder:
+use the directory path to get the pid from the pid file:
 
 ```bash
 cat /tmp/user/1000/testo9vsdjo3/node1/regtest/bitcoind.pid
-```
-
-Then you can use the pid to start `gdb`:
-
-```bash
 gdb /home/example/bitcoind <pid>
 ```
 
@@ -223,43 +183,6 @@ Note: gdb attach step may require `sudo`. To get rid of this, you can run:
 ```bash
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 ```
-
-Often while debugging rpc calls from functional tests, the test might reach timeout before
-process can return a response. Use `--timeout-factor=0` to disable all rpc timeouts for that particular
-functional test. Ex: `test/functional/test_runner.py wallet_hd --timeout-factor=0`.
-
-### Benchmarking and profiling with perf
-
-An easy way to profile node performance during functional tests is provided
-for Linux platforms using `perf`.
-
-Perf will sample the running node and will generate profile data in the node's
-datadir. The profile data can then be presented using `perf report` or a graphical
-tool like [hotspot](https://github.com/KDAB/hotspot).
-
-There are two ways of invoking perf: one is to use the `--perf` flag when
-running tests, which will profile each node during the entire test run: perf
-begins to profile when the node starts and ends when it shuts down. The other
-way is the use the `profile_with_perf` context manager, e.g.
-
-```python
-with node.profile_with_perf("send-big-msgs"):
-    # Perform activity on the node you're interested in profiling, e.g.:
-    for _ in range(10000):
-        node.p2p.send_message(some_large_message)
-```
-
-To see useful textual output, run
-
-```sh
-perf report -i /path/to/datadir/send-big-msgs.perf.data.xxxx --stdio | c++filt | less
-```
-
-#### See also:
-
-- [Installing perf](https://askubuntu.com/q/50145)
-- [Perf examples](http://www.brendangregg.com/perf.html)
-- [Hotspot](https://github.com/KDAB/hotspot): a GUI for perf output analysis
 
 ##### Prevent using deprecated features
 
@@ -272,76 +195,145 @@ variable `PYTHONWARNINGS` as follow:
 
 The warning message will now be printed to the `sys.stderr` output.
 
+### UI tests
+
+UI tests are a subset of functional tests and can be scripted in a similar way.
+
+They are meant to be a helper during development and a tool to achieve and
+verify a certain state of bitcon-qt GUI.
+
+These tests are not included into CI (continuous integration) suite or tests
+ran when invoking `ninja check-all`.
+
+All UI test file names shall have `ui_` or `ui-` prefixed. For example:
+`ui-example-test.py`
+
+UI framework's `RunTestPlan` function takes test steps and an instance of a test class implementing `BitcoinTestFramework`
+
+It expands the instance and embeds a `testPlan` attribute into it to connect the test plan and the test.
+
+Upon initializaion the `main` method of the test class will be called for the test execution.
+
+Test class shall use `self.testPlan.waitUntilMaxReachedStep` to declare test breakpoints
+and wait for user input to advance the test.
+
+Test plan window will become irresponsive upon test logic execution and user must allow the test steps
+to be finished before advancing to the next step
+
+To implement an example UI test one can start with te following boilerplate code:
+
+```python
+from test_framework.test_framework import BitcoinTestFramework
+from test_framework.ui import RunTestPlan
+
+class UITestFramework(BitcoinTestFramework):
+    def set_test_params(self):
+        self.num_nodes = 1
+        self.extra_args = [["-splash=0", "-ui"]]
+
+    def run_test(self):
+        # self.meaningfulWork()
+        self.testPlan.waitUntilMaxReachedStep(1)
+
+        # self.moreMeaningfulWork()
+        self.testPlan.waitUntilMaxReachedStep(2)
+
+if __name__ == '__main__':
+    steps = [{
+                'description': "Be a good guy"
+            }, {
+                'description': "Have a nice day"
+            }]
+
+    framework = UITestFramework()
+    RunTestPlan(steps, framework)
+```
+
+#### Dependencies
+
+Running UI tests requires pyqt5 package:
+
+- On Unix, run `sudo apt-get install python3-pyqt5`
+- On mac OS, run `brew install pyqt5`
+
+#### Running the tests
+
+UI tests are meant to be executed individually:
+
+```
+test/functional/test_runner.py ui-example-test
+```
+
+#### Troubleshooting and debugging test failures
+
+Same as for function tests.
+
 ### Util tests
 
 Util tests can be run locally by running `test/util/bitcoin-util-test.py`.
 Use the `-v` option for verbose output.
 
-# Writing functional tests
+## Writing functional tests
 
-#### Example test
+### Example test
 
-The file [test/functional/example_test.py](/test/functional/example_test.py) is a heavily commented
-example of a test case that uses both the RPC and P2P interfaces. If you are
-writing your first test, copy that file and modify to fit your needs.
+The [example_test.py](../test/functional/example_test.py) is a heavily commented
+example of a test
+case that uses both the RPC and P2P interfaces. If you are writing your first
+test, copy that file and modify to fit your needs.
 
-#### Coverage
+### Coverage
 
-Running `test/functional/test_runner.py` with the `--coverage` argument tracks which RPCs are
+Running `test_runner.py` with the `--coverage` argument tracks which RPCs are
 called by the tests and prints a report of uncovered RPCs in the summary. This
 can be used (along with the `--extended` argument) to find out which RPCs we
 don't have test cases for.
 
-#### Style guidelines
+### Style guidelines
 
 - Where possible, try to adhere to
   [PEP-8 guidelines](https://www.python.org/dev/peps/pep-0008/)
 - Use a python linter like flake8 before submitting PRs to catch common style
   nits (eg trailing whitespace, unused imports, etc)
-- Use [type hints](https://docs.python.org/3/library/typing.html) in your code to improve code readability
-  and to detect possible bugs earlier.
 - Avoid wildcard imports where possible
 - Use a module-level docstring to describe what the test is testing, and how it
   is testing it.
-- When subclassing the BitcoinTestFramework, place overrides for the
+- When subclassing the BitcoinTestFramwork, place overrides for the
   `set_test_params()`, `add_options()` and `setup_xxxx()` methods at the top of
   the subclass, then locally-defined helper methods, then the `run_test()` method.
+- Use `f'{x}'` for string formatting in preference to `'{}'.format(x)`
+  or `'%s' % x`.
 
-#### Naming guidelines
+### Naming guidelines
 
-- Name the test `<area>_test.py`, where area can be one of the following:
-    - `feature` for tests for full features that aren't wallet/mining/mempool, eg `feature_rbf.py`
+- Name the test `<area>_<subject>.py`, where `<area>` can be one of the following:
+    - `feature` for tests for full features that aren't wallet/mining/mempool,
+      eg `feature_rbf.py`
     - `interface` for tests for other interfaces (REST, ZMQ, etc), eg `interface_rest.py`
     - `mempool` for tests for mempool behaviour, eg `mempool_reorg.py`
     - `mining` for tests for mining features, eg `mining_prioritisetransaction.py`
     - `p2p` for tests that explicitly test the p2p interface, eg `p2p_disconnect_ban.py`
     - `rpc` for tests for individual RPC methods or features, eg `rpc_listtransactions.py`
-    - `tool` for tests for tools, eg `tool_wallet.py`
     - `wallet` for tests for wallet features, eg `wallet_keypool.py`
-- Use an underscore to separate words
-    - exception: for tests for specific RPCs or command line options which don't include underscores, name the test after the exact RPC or argument name, eg `rpc_decodescript.py`, not `rpc_decode_script.py`
+- use an underscore to separate words
+    - exception: for tests for specific RPCs or command line options which don't
+      include underscores, name the test after the exact RPC or argument name, eg
+      `rpc_decodescript.py`, not `rpc_decode_script.py`
 - Don't use the redundant word `test` in the name, eg `interface_zmq.py`, not `interface_zmq_test.py`
 
-#### General test-writing advice
+### General test-writing advice
 
-- Instead of inline comments or no test documentation at all, log the comments
-  to the test log, e.g. `self.log.info('Create enough transactions to fill a block')`.
-  Logs make the test code easier to read and the test logic easier
-  [to debug](#test-logging).
 - Set `self.num_nodes` to the minimum number of nodes necessary for the test.
   Having additional unrequired nodes adds to the execution time of the test as
   well as memory/CPU/disk requirements (which is important when running tests in
-  parallel).
+  parallel or on Travis).
 - Avoid stop-starting the nodes multiple times during the test if possible. A
   stop-start takes several seconds, so doing it several times blows up the
   runtime of the test.
-- Set the `self.setup_clean_chain` variable in `set_test_params()` to `True` to
-  initialize an empty blockchain and start from the Genesis block, rather than
-  load a premined blockchain from cache with the default value of `False`. The
-  cached data directories contain a 200-block pre-mined blockchain with the
-  spendable mining rewards being split between four nodes. Each node has 25
-  mature block subsidies (25x50=1250 BTC) in its wallet. Using them is much more
-  efficient than mining blocks in your test.
+- Set the `self.setup_clean_chain` variable in `set_test_params()` to control
+  whether or not to use the cached data directories. The cached data directories
+  contain a 200-block pre-mined blockchain and wallets for four nodes. Each node
+  has 25 mature blocks (25x50=1250 BTC) in its wallet.
 - When calling RPCs with lots of arguments, consider using named keyword
   arguments instead of positional arguments to make the intent of the call
   clear to readers.
@@ -351,7 +343,7 @@ don't have test cases for.
   from typographical errors or usage of the objects outside of their intended
   purpose.
 
-#### RPC and P2P definitions
+### RPC and P2P definitions
 
 Test writers may find it helpful to refer to the definitions for the RPC and
 P2P messages. These can be found in the following source files:
@@ -360,74 +352,79 @@ P2P messages. These can be found in the following source files:
 - `/src/wallet/rpc*` for wallet RPCs
 - `ProcessMessage()` in `/src/net_processing.cpp` for parsing P2P messages
 
-#### Using the P2P interface
+### Using the P2P interface
 
-- `P2P`s can be used to test specific P2P protocol behavior.
-[p2p.py](/test/functional/test_framework/p2p.py) contains test framework
-p2p objects and [messages.py](/test/functional/test_framework/messages.py)
-contains all the definitions for objects passed over the network (`CBlock`,
-`CTransaction`, etc, along with the network-level wrappers for them,
-`msg_block`, `msg_tx`, etc).
-
+- `messages.py` contains all the definitions for objects that pass
+  over the network (`CBlock`, `CTransaction`, etc, along with the network-level
+  wrappers for them, `msg_block`, `msg_tx`, etc).
 - P2P tests have two threads. One thread handles all network communication
-with the bitcoind(s) being tested in a callback-based event loop; the other
-implements the test logic.
-
+  with the bitcoind(s) being tested in a callback-based event loop; the other
+  implements the test logic.
 - `P2PConnection` is the class used to connect to a bitcoind.  `P2PInterface`
-contains the higher level logic for processing P2P payloads and connecting to
-the Bitcoin Core node application logic. For custom behaviour, subclass the
-P2PInterface object and override the callback methods.
+  contains the higher level logic for processing P2P payloads and connecting to
+  the Bitcoin Core node application logic. For custom behaviour, subclass the
+  P2PInterface object and override the callback methods.
+- Can be used to write tests where specific P2P protocol behavior is tested.
 
-`P2PConnection`s can be used as such:
+Example tests are `p2p-acceptblock.py`, `p2p-compactblocks.py`.
 
-```python
-p2p_conn = node.add_p2p_connection(P2PInterface())
-p2p_conn.send_and_ping(msg)
-```
+### test-framework modules
 
-They can also be referenced by indexing into a `TestNode`'s `p2ps` list, which
-contains the list of test framework `p2p` objects connected to itself
-(it does not include any `TestNode`s):
+#### [test_framework/authproxy.py](../test/functional/test_framework/authproxy.py)
 
-```python
-node.p2ps[0].sync_with_ping()
-```
-
-More examples can be found in [p2p_unrequested_blocks.py](/test/functional/p2p_unrequested_blocks.py),
-[p2p_compactblocks.py](/test/functional/p2p_compactblocks.py).
-
-#### Prototyping tests
-
-The [`TestShell`](test-shell.md) class exposes the BitcoinTestFramework
-functionality to interactive Python3 environments and can be used to prototype
-tests. This may be especially useful in a REPL environment with session logging
-utilities, such as
-[IPython](https://ipython.readthedocs.io/en/stable/interactive/reference.html#session-logging-and-restoring).
-The logs of such interactive sessions can later be adapted into permanent test
-cases.
-
-### Test framework modules
-
-The following are useful modules for test developers. They are located in
-[test/functional/test_framework/](/test/functional/test_framework).
-
-#### [authproxy.py](/test/functional/test_framework/authproxy.py)
 Taken from the [python-bitcoinrpc repository](https://github.com/jgarzik/python-bitcoinrpc).
 
-#### [test_framework.py](/test/functional/test_framework/test_framework.py)
+#### [test_framework/test_framework.py](../test/functional/test_framework/test_framework.py)
+
 Base class for functional tests.
 
-#### [util.py](/test/functional/test_framework/util.py)
+#### [test_framework/util.py](../test/functional/test_framework/util.py)
+
 Generally useful functions.
 
-#### [p2p.py](/test/functional/test_framework/p2p.py)
-Test objects for interacting with a bitcoind node over the p2p interface.
+#### [test_framework/mininode.py](../test/functional/test_framework/mininode.py)
 
-#### [script.py](/test/functional/test_framework/script.py)
+Basic code to support P2P connectivity to a bitcoind.
+
+#### [test_framework/script.py](../test/functional/test_framework/script.py)
+
 Utilities for manipulating transaction scripts (originally from python-bitcoinlib)
 
-#### [key.py](/test/functional/test_framework/key.py)
-Test-only secp256k1 elliptic curve implementation
+#### [test_framework/key.py](../test/functional/test_framework/key.py)
 
-#### [blocktools.py](/test/functional/test_framework/blocktools.py)
+Wrapper around OpenSSL EC_Key (originally from python-bitcoinlib)
+
+#### [test_framework/bignum.py](../test/functional/test_framework/bignum.py)
+
+Helpers for script.py
+
+#### [test_framework/blocktools.py](../test/functional/test_framework/blocktools.py)
+
 Helper functions for creating blocks and transactions.
+
+## Running functional tests in an emulator
+
+Cross-compiled binaries can be tested with qemu or wine.
+
+### AArch64
+
+Prerequisite
+
+```
+sudo apt install qemu-user-static
+```
+
+In your `build` directory, run:
+
+```
+cmake -GNinja .. \
+   -DCMAKE_TOOLCHAIN_FILE=../cmake/platforms/LinuxAArch64.cmake \
+   -DCMAKE_CROSSCOMPILING_EMULATOR=$(command -v qemu-aarch64-static) \
+   -DBUILD_BITCOIN_ZMQ=OFF
+```
+
+To run functional tests:
+
+```
+QEMU_LD_PREFIX=/usr/aarch64-linux-gnu ninja check-functional
+```

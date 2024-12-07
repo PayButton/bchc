@@ -6,6 +6,7 @@
 
 #include <feerate.h>
 
+#include <amount.h>
 #include <tinyformat.h>
 
 CFeeRate::CFeeRate(const Amount nFeePaid, size_t nBytes_) {
@@ -55,9 +56,6 @@ Amount CFeeRate::GetFeeCeiling(size_t nBytes) const {
 }
 
 std::string CFeeRate::ToString() const {
-    const auto currency = Currency::get();
-    return strprintf("%d.%0*d %s/kB", nSatoshisPerK / currency.baseunit,
-                     currency.decimals,
-                     (nSatoshisPerK % currency.baseunit) / currency.subunit,
-                     currency.ticker);
+    return strprintf("%d.%08d %s/kB", nSatoshisPerK / COIN,
+                     (nSatoshisPerK % COIN) / SATOSHI, CURRENCY_UNIT);
 }

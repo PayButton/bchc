@@ -1,4 +1,5 @@
 // Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -50,8 +51,8 @@ void WinShutdownMonitor::registerShutdownBlockReason(const QString &strReason,
     }
 
     if (shutdownBRCreate(mainWinId, strReason.toStdWString().c_str()))
-        qInfo() << "registerShutdownBlockReason: Successfully registered: " +
-                       strReason;
+        qWarning() << "registerShutdownBlockReason: Successfully registered: " +
+                          strReason;
     else
         qWarning() << "registerShutdownBlockReason: Failed to register: " +
                           strReason;

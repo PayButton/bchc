@@ -1,5 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,22 +7,105 @@
 #include <qt/receiverequestdialog.h>
 
 #include <qt/bitcoinunits.h>
+#include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
-#include <qt/qrimagewidget.h>
 #include <qt/walletmodel.h>
 
-#include <QDialog>
-#include <QString>
+#include <QClipboard>
+#include <QDrag>
+#include <QMenu>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QPixmap>
 
 #if defined(HAVE_CONFIG_H)
 #include <config/bitcoin-config.h> /* for USE_QRCODE */
 #endif
 
+#ifdef USE_QRCODE
+#include <qrencode.h>
+#endif
+
+QRImageWidget::QRImageWidget(QWidget *parent)
+    : QLabel(parent), contextMenu(nullptr) {
+    contextMenu = new QMenu(this);
+    QAction *saveImageAction = new QAction(tr("&Save Image..."), this);
+    connect(saveImageAction, &QAction::triggered, this,
+            &QRImageWidget::saveImage);
+    contextMenu->addAction(saveImageAction);
+    QAction *copyImageAction = new QAction(tr("&Copy Image"), this);
+    connect(copyImageAction, &QAction::triggered, this,
+            &QRImageWidget::copyImage);
+    contextMenu->addAction(copyImageAction);
+}
+
+bool QRImageWidget::hasPixmap() const {
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+    return !pixmap(Qt::ReturnByValue).isNull();
+#else
+    return pixmap() != nullptr;
+#endif
+}
+
+QImage QRImageWidget::exportImage() {
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+    return pixmap(Qt::ReturnByValue).toImage();
+#else
+    return hasPixmap() ? pixmap()->toImage() : QImage();
+#endif
+}
+
+void QRImageWidget::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton && hasPixmap()) {
+        event->accept();
+        QMimeData *mimeData = new QMimeData;
+        mimeData->setImageData(exportImage());
+
+        QDrag *drag = new QDrag(this);
+        drag->setMimeData(mimeData);
+        drag->exec();
+    } else {
+        QLabel::mousePressEvent(event);
+    }
+}
+
+void QRImageWidget::saveImage() {
+    if (!hasPixmap()) {
+        return;
+    }
+    QString fn = GUIUtil::getSaveFileName(this, tr("Save QR Code"), QString(),
+                                          tr("PNG Image (*.png)"), nullptr);
+    if (!fn.isEmpty()) {
+        exportImage().save(fn);
+    }
+}
+
+void QRImageWidget::copyImage() {
+    if (!hasPixmap()) {
+        return;
+    }
+    QApplication::clipboard()->setImage(exportImage());
+}
+
+void QRImageWidget::contextMenuEvent(QContextMenuEvent *event) {
+    if (!hasPixmap()) {
+        return;
+    }
+    contextMenu->exec(event->globalPos());
+}
+
 ReceiveRequestDialog::ReceiveRequestDialog(QWidget *parent)
     : QDialog(parent), ui(new Ui::ReceiveRequestDialog), model(nullptr) {
     ui->setupUi(this);
-    GUIUtil::handleCloseWindowShortcut(this);
+
+#ifndef USE_QRCODE
+    ui->btnSaveAs->setVisible(false);
+    ui->lblQRCode->setVisible(false);
+#endif
+
+    connect(ui->btnSaveAs, &QPushButton::clicked, ui->lblQRCode,
+            &QRImageWidget::saveImage);
 }
 
 ReceiveRequestDialog::~ReceiveRequestDialog() {
@@ -34,7 +117,7 @@ void ReceiveRequestDialog::setModel(WalletModel *_model) {
 
     if (_model) {
         connect(_model->getOptionsModel(), &OptionsModel::displayUnitChanged,
-                this, &ReceiveRequestDialog::updateDisplayUnit);
+                this, &ReceiveRequestDialog::update);
     }
 
     // update the display unit if necessary
@@ -43,60 +126,96 @@ void ReceiveRequestDialog::setModel(WalletModel *_model) {
 
 void ReceiveRequestDialog::setInfo(const SendCoinsRecipient &_info) {
     this->info = _info;
-    setWindowTitle(tr("Request payment to %1")
-                       .arg(info.label.isEmpty() ? info.address : info.label));
-    QString uri = GUIUtil::formatBitcoinURI(info);
-
-#ifdef USE_QRCODE
-    if (ui->qr_code->setQR(uri, info.address)) {
-        connect(ui->btnSaveAs, &QPushButton::clicked, ui->qr_code,
-                &QRImageWidget::saveImage);
-    } else {
-        ui->btnSaveAs->setEnabled(false);
-    }
-#else
-    ui->btnSaveAs->hide();
-    ui->qr_code->hide();
-#endif
-
-    ui->uri_content->setText("<a href=\"" + uri + "\">" +
-                             GUIUtil::HtmlEscape(uri) + "</a>");
-    ui->address_content->setText(info.address);
-
-    if (info.amount == Amount::zero()) {
-        ui->amount_tag->hide();
-        ui->amount_content->hide();
-    } // Amount is set in updateDisplayUnit() slot.
-    updateDisplayUnit();
-
-    if (!info.label.isEmpty()) {
-        ui->label_content->setText(info.label);
-    } else {
-        ui->label_tag->hide();
-        ui->label_content->hide();
-    }
-
-    if (!info.message.isEmpty()) {
-        ui->message_content->setText(info.message);
-    } else {
-        ui->message_tag->hide();
-        ui->message_content->hide();
-    }
-
-    if (!model->getWalletName().isEmpty()) {
-        ui->wallet_content->setText(model->getWalletName());
-    } else {
-        ui->wallet_tag->hide();
-        ui->wallet_content->hide();
-    }
+    update();
 }
 
-void ReceiveRequestDialog::updateDisplayUnit() {
+void ReceiveRequestDialog::update() {
     if (!model) {
         return;
     }
-    ui->amount_content->setText(BitcoinUnits::formatWithUnit(
-        model->getOptionsModel()->getDisplayUnit(), info.amount));
+    QString target = info.label;
+    if (target.isEmpty()) {
+        target = info.address;
+    }
+    setWindowTitle(tr("Request payment to %1").arg(target));
+
+    QString uri = GUIUtil::formatBitcoinURI(info);
+    ui->btnSaveAs->setEnabled(false);
+    QString html;
+    html += "<html><font face='verdana, arial, helvetica, sans-serif'>";
+    html += "<b>" + tr("Payment information") + "</b><br>";
+    html += "<b>" + tr("URI") + "</b>: ";
+    html += "<a href=\"" + uri + "\">" + GUIUtil::HtmlEscape(uri) + "</a><br>";
+    html += "<b>" + tr("Address") +
+            "</b>: " + GUIUtil::HtmlEscape(info.address) + "<br>";
+    if (info.amount != Amount::zero()) {
+        html += "<b>" + tr("Amount") + "</b>: " +
+                BitcoinUnits::formatHtmlWithUnit(
+                    model->getOptionsModel()->getDisplayUnit(), info.amount) +
+                "<br>";
+    }
+    if (!info.label.isEmpty()) {
+        html += "<b>" + tr("Label") +
+                "</b>: " + GUIUtil::HtmlEscape(info.label) + "<br>";
+    }
+    if (!info.message.isEmpty()) {
+        html += "<b>" + tr("Message") +
+                "</b>: " + GUIUtil::HtmlEscape(info.message) + "<br>";
+    }
+    if (model->isMultiwallet()) {
+        html += "<b>" + tr("Wallet") +
+                "</b>: " + GUIUtil::HtmlEscape(model->getWalletName()) + "<br>";
+    }
+    ui->outUri->setText(html);
+
+#ifdef USE_QRCODE
+    int fontSize = 10;
+
+    ui->lblQRCode->setText("");
+    if (!uri.isEmpty()) {
+        // limit URI length
+        if (uri.length() > MAX_URI_LENGTH) {
+            ui->lblQRCode->setText(tr("Resulting URI too long, try to reduce "
+                                      "the text for label / message."));
+        } else {
+            QRcode *code = QRcode_encodeString(uri.toUtf8().constData(), 0,
+                                               QR_ECLEVEL_L, QR_MODE_8, 1);
+            if (!code) {
+                ui->lblQRCode->setText(tr("Error encoding URI into QR Code."));
+                return;
+            }
+            QImage qrImage =
+                QImage(code->width + 8, code->width + 8, QImage::Format_RGB32);
+            qrImage.fill(0xffffff);
+            uint8_t *p = code->data;
+            for (int y = 0; y < code->width; y++) {
+                for (int x = 0; x < code->width; x++) {
+                    qrImage.setPixel(x + 4, y + 4, ((*p & 1) ? 0x0 : 0xffffff));
+                    p++;
+                }
+            }
+            QRcode_free(code);
+
+            QImage qrAddrImage =
+                QImage(QR_IMAGE_SIZE, QR_IMAGE_SIZE + 20, QImage::Format_RGB32);
+            qrAddrImage.fill(0xffffff);
+            QPainter painter(&qrAddrImage);
+            painter.drawImage(0, 0,
+                              qrImage.scaled(QR_IMAGE_SIZE, QR_IMAGE_SIZE));
+            QFont font = GUIUtil::fixedPitchFont();
+            font.setPixelSize(fontSize);
+            painter.setFont(font);
+            QRect paddedRect = qrAddrImage.rect();
+            paddedRect.setHeight(QR_IMAGE_SIZE + 12);
+            painter.drawText(paddedRect, Qt::AlignBottom | Qt::AlignCenter,
+                             info.address);
+            painter.end();
+
+            ui->lblQRCode->setPixmap(QPixmap::fromImage(qrAddrImage));
+            ui->btnSaveAs->setEnabled(true);
+        }
+    }
+#endif
 }
 
 void ReceiveRequestDialog::on_btnCopyURI_clicked() {

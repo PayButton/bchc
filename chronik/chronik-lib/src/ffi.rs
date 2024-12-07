@@ -30,6 +30,8 @@ mod ffi_inner {
         pub enable_token_index: bool,
         /// Whether Chronik should index transactions by LOKAD ID
         pub enable_lokad_id_index: bool,
+        /// Whether Chronik should index scripts by script hash
+        pub enable_scripthash_index: bool,
         /// Whether pausing Chronik indexing is allowed
         pub is_pause_allowed: bool,
         /// Whether to output Chronik performance statistics into a perf/
@@ -81,10 +83,16 @@ mod ffi_inner {
             bindex: &CBlockIndex,
         );
         fn handle_block_finalized(&self, bindex: &CBlockIndex);
+        fn handle_block_invalidated(
+            &self,
+            block: &CBlock,
+            bindex: &CBlockIndex,
+        );
     }
 
     unsafe extern "C++" {
-        include!("blockindex.h");
+        //include!("blockindex.h");
+        include!("chain.h");
         include!("chronik-cpp/chronik_validationinterface.h");
         include!("coins.h");
         include!("config.h");
@@ -114,7 +122,7 @@ mod ffi_inner {
         type CTransaction = chronik_bridge::ffi::CTransaction;
 
         /// NodeContext from node/context.h
-        #[namespace = "node"]
+        #[namespace = ""]
         type NodeContext = chronik_bridge::ffi::NodeContext;
 
         /// Bridge to bitcoind to access the node

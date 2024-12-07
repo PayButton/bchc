@@ -1,13 +1,21 @@
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SEEDER_UTIL_H
-#define BITCOIN_SEEDER_UTIL_H
+#pragma once
 
-#include <span.h>
+#include <cstdint>
 
-#define BEGIN(a) BytePtr(&(a))
-#define END(a) BytePtr(&((&(a))[1]))
+namespace seeder {
 
-#endif // BITCOIN_SEEDER_UTIL_H
+// Sleeps for the requested number of milliseconds. Returns true on success or false if short sleep due to app shutdown.
+extern bool SleepAndPollShutdownFlag(int64_t nMilliSec);
+
+// Returns true if app shutdown was requested, false otherwise.
+extern bool ShutdownRequested();
+
+// Do not call this from a signal handler. Sets the internal "shutdown requested" flag to true, and also signals an
+// internal condition variable to wake sleepers.
+extern void RequestShutdown();
+
+} // namespace seeder

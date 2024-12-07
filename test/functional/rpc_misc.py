@@ -1,128 +1,82 @@
+#!/usr/bin/env python3
 # Copyright (c) 2019 The Bitcoin Core developers
+# Copyright (c) 2024 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test RPC misc output."""
-import time
 import xml.etree.ElementTree as ET
 
-from test_framework.authproxy import JSONRPCException
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
+    assert_raises_rpc_error,
     assert_equal,
     assert_greater_than,
     assert_greater_than_or_equal,
-    assert_raises_rpc_error,
+    wait_until,
 )
+
+from test_framework.authproxy import JSONRPCException
 
 
 class RpcMiscTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.supports_cli = False
 
     def run_test(self):
         node = self.nodes[0]
 
-        self.log.info("test CHECK_NONFATAL")
-        assert_raises_rpc_error(
-            -1,
-            'Internal bug detected: "request.params[9].get_str() !='
-            ' "trigger_internal_bug""',
-            lambda: node.echo(arg9="trigger_internal_bug"),
-        )
-
         self.log.info("test getmemoryinfo")
-        memory = node.getmemoryinfo()["locked"]
-        assert_greater_than(memory["used"], 0)
-        assert_greater_than(memory["free"], 0)
-        assert_greater_than(memory["total"], 0)
+        memory = node.getmemoryinfo()['locked']
+        assert_greater_than(memory['used'], 0)
+        assert_greater_than(memory['free'], 0)
+        assert_greater_than(memory['total'], 0)
         # assert_greater_than_or_equal() for locked in case locking pages
         # failed at some point
-        assert_greater_than_or_equal(memory["locked"], 0)
-        assert_greater_than(memory["chunks_used"], 0)
-        assert_greater_than(memory["chunks_free"], 0)
-        assert_equal(memory["used"] + memory["free"], memory["total"])
+        assert_greater_than_or_equal(memory['locked'], 0)
+        assert_greater_than(memory['chunks_used'], 0)
+        assert_greater_than(memory['chunks_free'], 0)
+        assert_equal(memory['used'] + memory['free'], memory['total'])
 
         self.log.info("test mallocinfo")
         try:
             mallocinfo = node.getmemoryinfo(mode="mallocinfo")
             self.log.info('getmemoryinfo(mode="mallocinfo") call succeeded')
             tree = ET.fromstring(mallocinfo)
-            assert_equal(tree.tag, "malloc")
+            assert_equal(tree.tag, 'malloc')
         except JSONRPCException:
             self.log.info('getmemoryinfo(mode="mallocinfo") not available')
-            assert_raises_rpc_error(
-                -8,
-                "mallocinfo is only available when compiled with glibc 2.10+",
-                node.getmemoryinfo,
-                mode="mallocinfo",
-            )
+            assert_raises_rpc_error(-8, 'mallocinfo is only available when compiled with glibc 2.10+',
+                                    node.getmemoryinfo, mode="mallocinfo")
 
-        assert_raises_rpc_error(
-            -8, "unknown mode foobar", node.getmemoryinfo, mode="foobar"
-        )
+        assert_raises_rpc_error(-8, "unknown mode foobar",
+                                node.getmemoryinfo, mode="foobar")
 
-        self.log.info("test logging rpc and help")
-
-        # Test logging RPC returns the expected number of logging categories.
-        # Use check if it is greater or equal because some logging categories
-        # are behind a preprocessor directive.
-        assert_greater_than_or_equal(len(node.logging()), 26)
-
-        # Test toggling a logging category on/off/on with the logging RPC.
-        assert_equal(node.logging()["qt"], True)
-        node.logging(exclude=["qt"])
-        assert_equal(node.logging()["qt"], False)
-        node.logging(include=["qt"])
-        assert_equal(node.logging()["qt"], True)
-
-        # Test logging RPC returns the logging categories in alphabetical
-        # order.
-        sorted_logging_categories = sorted(node.logging())
-        assert_equal(list(node.logging()), sorted_logging_categories)
-
-        # Test logging help returns the logging categories string in
-        # alphabetical order.
-        categories = ", ".join(sorted_logging_categories)
-        logging_help = self.nodes[0].help("logging")
-        assert f"valid logging categories are: {categories}" in logging_help
+        self.log.info("test logging")
+        assert_equal(node.logging()['qt'], True)
+        node.logging(exclude=['qt'])
+        assert_equal(node.logging()['qt'], False)
+        node.logging(include=['qt'])
+        assert_equal(node.logging()['qt'], True)
 
         self.log.info("test getindexinfo")
         # Without any indices running the RPC returns an empty object
         assert_equal(node.getindexinfo(), {})
 
         # Restart the node with indices and wait for them to sync
-        self.restart_node(0, ["-txindex", "-blockfilterindex", "-coinstatsindex"])
-        self.wait_until(lambda: all(i["synced"] for i in node.getindexinfo().values()))
+        self.restart_node(0, ["-txindex"])
+        wait_until(lambda: all(i["synced"] for i in node.getindexinfo().values()))
 
         # Returns a list of all running indices by default
-        values = {"synced": True, "best_block_height": 200}
-        assert_equal(
-            node.getindexinfo(),
-            {
-                "txindex": values,
-                "basic block filter index": values,
-                "coinstatsindex": values,
-            },
-        )
+        assert_equal(node.getindexinfo(),
+                     {"txindex": {"synced": True, "best_block_height": 200}})
+
         # Specifying an index by name returns only the status of that index
-        for i in {"txindex", "basic block filter index", "coinstatsindex"}:
-            assert_equal(node.getindexinfo(i), {i: values})
+        assert_equal(node.getindexinfo("txindex"),
+                     {"txindex": {"synced": True, "best_block_height": 200}})
 
         # Specifying an unknown index name returns an empty result
         assert_equal(node.getindexinfo("foo"), {})
 
-        self.log.info("Test gettime")
 
-        now = int(time.time())
-        node.setmocktime(now)
-
-        # There is actually no easy way to cause the time offset to change
-        time_data = node.gettime()
-        assert_equal(time_data["local"], now)
-        assert_equal(time_data["offset"], 0)
-        assert_equal(time_data["adjusted"], now)
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     RpcMiscTest().main()

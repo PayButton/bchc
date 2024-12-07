@@ -1,29 +1,39 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <netaddress.h>
+#ifdef HAVE_CONFIG_H
+#include <config/bitcoin-config.h>
+#endif
 
 #include <crypto/common.h>
 #include <crypto/sha3.h>
 #include <hash.h>
+#include <netaddress.h>
 #include <prevector.h>
+#include <random.h>
+#include <tinyformat.h>
 #include <util/asmap.h>
+#include <util/bit_cast.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-
-#include <tinyformat.h>
+#include <span.h>
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <ios>
 #include <iterator>
+#include <limits>
+#include <string_view>
 #include <tuple>
 
-constexpr size_t CNetAddr::V1_SERIALIZATION_SIZE;
-constexpr size_t CNetAddr::MAX_ADDRV2_SIZE;
+static constexpr uint8_t pchSingleAddressNetmask[16] =
+    {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 CNetAddr::BIP155Network CNetAddr::GetBIP155Network() const {
     switch (m_net) {
@@ -44,20 +54,16 @@ CNetAddr::BIP155Network CNetAddr::GetBIP155Network() const {
             return BIP155Network::I2P;
         case NET_CJDNS:
             return BIP155Network::CJDNS;
-        case NET_INTERNAL:
-            // should have been handled before calling this function
-        case NET_UNROUTABLE:
-            // m_net is never and should not be set to NET_UNROUTABLE
-        case NET_MAX:
-            // m_net is never and should not be set to NET_MAX
+        case NET_INTERNAL:   // should have been handled before calling this function
+        case NET_UNROUTABLE: // m_net is never and should not be set to NET_UNROUTABLE
+        case NET_MAX:        // m_net is never and should not be set to NET_MAX
             assert(false);
     } // no default case, so the compiler can warn about missing cases
 
     assert(false);
 }
 
-bool CNetAddr::SetNetFromBIP155Network(uint8_t possible_bip155_net,
-                                       size_t address_size) {
+bool CNetAddr::SetNetFromBIP155Network(uint8_t possible_bip155_net, size_t address_size) {
     switch (possible_bip155_net) {
         case BIP155Network::IPV4:
             if (address_size == ADDR_IPV4_SIZE) {
@@ -65,62 +71,49 @@ bool CNetAddr::SetNetFromBIP155Network(uint8_t possible_bip155_net,
                 return true;
             }
             throw std::ios_base::failure(
-                strprintf("BIP155 IPv4 address with length %u (should be %u)",
-                          address_size, ADDR_IPV4_SIZE));
+                strprintf("BIP155 IPv4 address with length %u (should be %u)", address_size, ADDR_IPV4_SIZE));
         case BIP155Network::IPV6:
             if (address_size == ADDR_IPV6_SIZE) {
                 m_net = NET_IPV6;
                 return true;
             }
             throw std::ios_base::failure(
-                strprintf("BIP155 IPv6 address with length %u (should be %u)",
-                          address_size, ADDR_IPV6_SIZE));
+                strprintf("BIP155 IPv6 address with length %u (should be %u)", address_size, ADDR_IPV6_SIZE));
         case BIP155Network::TORV2:
             if (address_size == ADDR_TORV2_SIZE) {
                 m_net = NET_ONION;
                 return true;
             }
             throw std::ios_base::failure(
-                strprintf("BIP155 TORv2 address with length %u (should be %u)",
-                          address_size, ADDR_TORV2_SIZE));
+                strprintf("BIP155 TORv2 address with length %u (should be %u)", address_size, ADDR_TORV2_SIZE));
         case BIP155Network::TORV3:
             if (address_size == ADDR_TORV3_SIZE) {
                 m_net = NET_ONION;
                 return true;
             }
             throw std::ios_base::failure(
-                strprintf("BIP155 TORv3 address with length %u (should be %u)",
-                          address_size, ADDR_TORV3_SIZE));
+                strprintf("BIP155 TORv3 address with length %u (should be %u)", address_size, ADDR_TORV3_SIZE));
         case BIP155Network::I2P:
             if (address_size == ADDR_I2P_SIZE) {
                 m_net = NET_I2P;
                 return true;
             }
             throw std::ios_base::failure(
-                strprintf("BIP155 I2P address with length %u (should be %u)",
-                          address_size, ADDR_I2P_SIZE));
+                strprintf("BIP155 I2P address with length %u (should be %u)", address_size, ADDR_I2P_SIZE));
         case BIP155Network::CJDNS:
             if (address_size == ADDR_CJDNS_SIZE) {
                 m_net = NET_CJDNS;
                 return true;
             }
             throw std::ios_base::failure(
-                strprintf("BIP155 CJDNS address with length %u (should be %u)",
-                          address_size, ADDR_CJDNS_SIZE));
+                strprintf("BIP155 CJDNS address with length %u (should be %u)", address_size, ADDR_CJDNS_SIZE));
     }
 
-    // Don't throw on addresses with unknown network ids (maybe from the
-    // future). Instead silently drop them and have the unserialization code
-    // consume subsequent ones which may be known to us.
+    // Don't throw on addresses with unknown network ids (maybe from the future).
+    // Instead silently drop them and have the unserialization code consume
+    // subsequent ones which may be known to us.
     return false;
 }
-
-/**
- * Construct an unspecified IPv6 network address (::/128).
- *
- * @note This address is considered invalid by CNetAddr::IsValid()
- */
-CNetAddr::CNetAddr() {}
 
 void CNetAddr::SetIP(const CNetAddr &ipIn) {
     // Size check.
@@ -132,8 +125,7 @@ void CNetAddr::SetIP(const CNetAddr &ipIn) {
             assert(ipIn.m_addr.size() == ADDR_IPV6_SIZE);
             break;
         case NET_ONION:
-            assert(ipIn.m_addr.size() == ADDR_TORV2_SIZE ||
-                   ipIn.m_addr.size() == ADDR_TORV3_SIZE);
+            assert(ipIn.m_addr.size() == ADDR_TORV2_SIZE || ipIn.m_addr.size() == ADDR_TORV3_SIZE);
             break;
         case NET_I2P:
             assert(ipIn.m_addr.size() == ADDR_I2P_SIZE);
@@ -156,34 +148,33 @@ void CNetAddr::SetIP(const CNetAddr &ipIn) {
 void CNetAddr::SetLegacyIPv6(Span<const uint8_t> ipv6) {
     assert(ipv6.size() == ADDR_IPV6_SIZE);
 
-    size_t skip{0};
+    size_t skip{};
 
     if (HasPrefix(ipv6, IPV4_IN_IPV6_PREFIX)) {
         // IPv4-in-IPv6
         m_net = NET_IPV4;
-        skip = sizeof(IPV4_IN_IPV6_PREFIX);
+        skip = IPV4_IN_IPV6_PREFIX.size();
     } else if (HasPrefix(ipv6, TORV2_IN_IPV6_PREFIX)) {
         // TORv2-in-IPv6
         m_net = NET_ONION;
-        skip = sizeof(TORV2_IN_IPV6_PREFIX);
+        skip = TORV2_IN_IPV6_PREFIX.size();
     } else if (HasPrefix(ipv6, INTERNAL_IN_IPV6_PREFIX)) {
         // Internal-in-IPv6
         m_net = NET_INTERNAL;
-        skip = sizeof(INTERNAL_IN_IPV6_PREFIX);
+        skip = INTERNAL_IN_IPV6_PREFIX.size();
     } else {
         // IPv6
         m_net = NET_IPV6;
     }
-
-    m_addr.assign(ipv6.begin() + skip, ipv6.end());
+    const auto subspan = ipv6.subspan(skip);
+    m_addr.assign(subspan.begin(), subspan.end());
 }
 
 /**
- * Create an "internal" address that represents a name or FQDN. AddrMan uses
+ * Create an "internal" address that represents a name or FQDN. CAddrMan uses
  * these fake addresses to keep track of which DNS seeds were used.
  * @returns Whether or not the operation was successful.
- * @see NET_INTERNAL, INTERNAL_IN_IPV6_PREFIX, CNetAddr::IsInternal(),
- * CNetAddr::IsRFC4193()
+ * @see NET_INTERNAL, INTERNAL_IN_IPV6_PREFIX, CNetAddr::IsInternal(), CNetAddr::IsRFC4193()
  */
 bool CNetAddr::SetInternal(const std::string &name) {
     if (name.empty()) {
@@ -191,67 +182,58 @@ bool CNetAddr::SetInternal(const std::string &name) {
     }
     m_net = NET_INTERNAL;
     uint8_t hash[32] = {};
-    CSHA256().Write((const uint8_t *)name.data(), name.size()).Finalize(hash);
+    CSHA256().Write(reinterpret_cast<const uint8_t *>(name.data()), name.size()).Finalize(hash);
+    static_assert(ADDR_INTERNAL_SIZE <= 32);
     m_addr.assign(hash, hash + ADDR_INTERNAL_SIZE);
     return true;
 }
 
 namespace torv3 {
 // https://gitweb.torproject.org/torspec.git/tree/rend-spec-v3.txt#n2135
-static constexpr size_t CHECKSUM_LEN = 2;
-static const uint8_t VERSION[] = {3};
-static constexpr size_t TOTAL_LEN =
-    ADDR_TORV3_SIZE + CHECKSUM_LEN + sizeof(VERSION);
+inline constexpr size_t CHECKSUM_LEN = 2;
+inline constexpr std::array<uint8_t, 1> VERSION = {{3}};
+inline constexpr size_t TOTAL_LEN = ADDR_TORV3_SIZE + CHECKSUM_LEN + VERSION.size();
+using ChecksumBytes = std::array<uint8_t, CHECKSUM_LEN>;
 
-static void Checksum(Span<const uint8_t> addr_pubkey,
-                     uint8_t (&checksum)[CHECKSUM_LEN]) {
+static ChecksumBytes Checksum(Span<const uint8_t> addr_pubkey) {
     // TORv3 CHECKSUM = H(".onion checksum" | PUBKEY | VERSION)[:2]
-    static const uint8_t prefix[] = ".onion checksum";
-    static constexpr size_t prefix_len = 15;
-
+    using namespace std::string_view_literals;
     SHA3_256 hasher;
 
-    hasher.Write(Span{prefix}.first(prefix_len));
+    hasher.Write(MakeUInt8Span(".onion checksum"sv));
     hasher.Write(addr_pubkey);
     hasher.Write(VERSION);
 
-    uint8_t checksum_full[SHA3_256::OUTPUT_SIZE];
+    std::array<uint8_t, SHA3_256::OUTPUT_SIZE> checksum_full;
 
     hasher.Finalize(checksum_full);
 
-    memcpy(checksum, checksum_full, sizeof(checksum));
+    ChecksumBytes ret;
+    static_assert(checksum_full.size() >= ret.size());
+    std::copy_n(checksum_full.begin(), ret.size(), ret.begin());
+    return ret;
 }
 
 }; // namespace torv3
 
-bool CNetAddr::SetSpecial(const std::string &addr) {
-    if (!ValidAsCString(addr)) {
-        return false;
-    }
+/**
+ * Parse a TOR address and set this object to it.
+ *
+ * @returns Whether or not the operation was successful.
+ *
+ * @see CNetAddr::IsTor()
+ */
+bool CNetAddr::SetSpecial(const std::string &str) {
+    using namespace std::string_view_literals;
+    constexpr auto suffix = ".onion"sv;
 
-    if (SetTor(addr)) {
-        return true;
-    }
-
-    if (SetI2P(addr)) {
-        return true;
-    }
-
-    return false;
-}
-
-bool CNetAddr::SetTor(const std::string &addr) {
-    static const char *suffix{".onion"};
-    static constexpr size_t suffix_len{6};
-
-    if (addr.size() <= suffix_len ||
-        addr.substr(addr.size() - suffix_len) != suffix) {
+    if (!ValidAsCString(str) || str.size() <= suffix.size()
+        || static_cast<std::string_view>(str).substr(str.size() - suffix.size()) != suffix) {
         return false;
     }
 
     bool invalid;
-    const auto &input = DecodeBase32(
-        addr.substr(0, addr.size() - suffix_len).c_str(), &invalid);
+    const auto &input = DecodeBase32(str.substr(0, str.size() - suffix.size()).c_str(), &invalid);
 
     if (invalid) {
         return false;
@@ -264,20 +246,13 @@ bool CNetAddr::SetTor(const std::string &addr) {
             return true;
         case torv3::TOTAL_LEN: {
             Span<const uint8_t> input_pubkey{input.data(), ADDR_TORV3_SIZE};
-            Span<const uint8_t> input_checksum{input.data() + ADDR_TORV3_SIZE,
-                                               torv3::CHECKSUM_LEN};
-            Span<const uint8_t> input_version{input.data() + ADDR_TORV3_SIZE +
-                                                  torv3::CHECKSUM_LEN,
-                                              sizeof(torv3::VERSION)};
+            Span<const uint8_t> input_checksum{input.data() + ADDR_TORV3_SIZE, torv3::CHECKSUM_LEN};
+            Span<const uint8_t> input_version{input.data() + ADDR_TORV3_SIZE + torv3::CHECKSUM_LEN,
+                                              torv3::VERSION.size()};
 
-            if (input_version != torv3::VERSION) {
-                return false;
-            }
+            const auto calculated_checksum = torv3::Checksum(input_pubkey);
 
-            uint8_t calculated_checksum[torv3::CHECKSUM_LEN];
-            torv3::Checksum(input_pubkey, calculated_checksum);
-
-            if (input_checksum != calculated_checksum) {
+            if (input_checksum != calculated_checksum || input_version != torv3::VERSION) {
                 return false;
             }
 
@@ -290,53 +265,25 @@ bool CNetAddr::SetTor(const std::string &addr) {
     return false;
 }
 
-bool CNetAddr::SetI2P(const std::string &addr) {
-    // I2P addresses that we support consist of 52 base32 characters +
-    // ".b32.i2p".
-    static constexpr size_t b32_len{52};
-    static const char *suffix{".b32.i2p"};
-    static constexpr size_t suffix_len{8};
-
-    if (addr.size() != b32_len + suffix_len ||
-        ToLower(addr.substr(b32_len)) != suffix) {
-        return false;
-    }
-
-    // Remove the ".b32.i2p" suffix and pad to a multiple of 8 chars, so
-    // DecodeBase32() can decode it.
-    const std::string b32_padded = addr.substr(0, b32_len) + "====";
-
-    bool invalid;
-    const auto &address_bytes = DecodeBase32(b32_padded.c_str(), &invalid);
-
-    if (invalid || address_bytes.size() != ADDR_I2P_SIZE) {
-        return false;
-    }
-
-    m_net = NET_I2P;
-    m_addr.assign(address_bytes.begin(), address_bytes.end());
-
-    return true;
-}
-
 CNetAddr::CNetAddr(const struct in_addr &ipv4Addr) {
+    static_assert(sizeof(ipv4Addr) == ADDR_IPV4_SIZE, "struct in_addr must be exactly ADDR_IPV4_SIZE bytes (4)");
     m_net = NET_IPV4;
     const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&ipv4Addr);
     m_addr.assign(ptr, ptr + ADDR_IPV4_SIZE);
 }
 
 CNetAddr::CNetAddr(const struct in6_addr &ipv6Addr, const uint32_t scope) {
-    SetLegacyIPv6(
-        {reinterpret_cast<const uint8_t *>(&ipv6Addr), sizeof(ipv6Addr)});
-    m_scope_id = scope;
+    static_assert(sizeof(ipv6Addr) == ADDR_IPV6_SIZE, "struct in6_addr must be exactly ADDR_IPV6_SIZE bytes (16)");
+    SetLegacyIPv6({reinterpret_cast<const uint8_t *>(&ipv6Addr), ADDR_IPV6_SIZE});
+    scopeId = scope;
 }
 
 bool CNetAddr::IsBindAny() const {
     if (!IsIPv4() && !IsIPv6()) {
         return false;
     }
-    return std::all_of(m_addr.begin(), m_addr.end(),
-                       [](uint8_t b) { return b == 0; });
+
+    return std::all_of(m_addr.begin(), m_addr.end(), [](uint8_t b) { return b == 0; });
 }
 
 bool CNetAddr::IsIPv4() const {
@@ -348,9 +295,10 @@ bool CNetAddr::IsIPv6() const {
 }
 
 bool CNetAddr::IsRFC1918() const {
-    return IsIPv4() &&
-           (m_addr[0] == 10 || (m_addr[0] == 192 && m_addr[1] == 168) ||
-            (m_addr[0] == 172 && m_addr[1] >= 16 && m_addr[1] <= 31));
+    return IsIPv4() && (
+        m_addr[0] == 10 ||
+        (m_addr[0] == 192 && m_addr[1] == 168) ||
+        (m_addr[0] == 172 && m_addr[1] >= 16 && m_addr[1] <= 31));
 }
 
 bool CNetAddr::IsRFC2544() const {
@@ -366,15 +314,13 @@ bool CNetAddr::IsRFC6598() const {
 }
 
 bool CNetAddr::IsRFC5737() const {
-    return IsIPv4() &&
-           (HasPrefix(m_addr, std::array<uint8_t, 3>{{192, 0, 2}}) ||
-            HasPrefix(m_addr, std::array<uint8_t, 3>{{198, 51, 100}}) ||
-            HasPrefix(m_addr, std::array<uint8_t, 3>{{203, 0, 113}}));
+    return IsIPv4() && (HasPrefix(m_addr, std::array<uint8_t, 3>{{192, 0, 2}}) ||
+                        HasPrefix(m_addr, std::array<uint8_t, 3>{{198, 51, 100}}) ||
+                        HasPrefix(m_addr, std::array<uint8_t, 3>{{203, 0, 113}}));
 }
 
 bool CNetAddr::IsRFC3849() const {
-    return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 4>{{0x20, 0x01, 0x0D, 0xB8}});
+    return IsIPv6() && HasPrefix(m_addr, std::array<uint8_t, 4>{{0x20, 0x01, 0x0D, 0xB8}});
 }
 
 bool CNetAddr::IsRFC3964() const {
@@ -383,20 +329,17 @@ bool CNetAddr::IsRFC3964() const {
 
 bool CNetAddr::IsRFC6052() const {
     return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 12>{{0x00, 0x64, 0xFF, 0x9B,
-                                                      0x00, 0x00, 0x00, 0x00,
-                                                      0x00, 0x00, 0x00, 0x00}});
+           HasPrefix(m_addr, std::array<uint8_t, 12>{{0x00, 0x64, 0xFF, 0x9B, 0x00, 0x00,
+                                                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00}});
 }
 
 bool CNetAddr::IsRFC4380() const {
-    return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 4>{{0x20, 0x01, 0x00, 0x00}});
+    return IsIPv6() && HasPrefix(m_addr, std::array<uint8_t, 4>{{0x20, 0x01, 0x00, 0x00}});
 }
 
 bool CNetAddr::IsRFC4862() const {
-    return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 8>{{0xFE, 0x80, 0x00, 0x00,
-                                                     0x00, 0x00, 0x00, 0x00}});
+    return IsIPv6() && HasPrefix(m_addr, std::array<uint8_t, 8>{{0xFE, 0x80, 0x00, 0x00,
+                                                                 0x00, 0x00, 0x00, 0x00}});
 }
 
 bool CNetAddr::IsRFC4193() const {
@@ -405,31 +348,26 @@ bool CNetAddr::IsRFC4193() const {
 
 bool CNetAddr::IsRFC6145() const {
     return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 12>{{0x00, 0x00, 0x00, 0x00,
-                                                      0x00, 0x00, 0x00, 0x00,
-                                                      0xFF, 0xFF, 0x00, 0x00}});
+           HasPrefix(m_addr, std::array<uint8_t, 12>{{0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                                      0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00}});
 }
 
 bool CNetAddr::IsRFC4843() const {
-    return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 3>{{0x20, 0x01, 0x00}}) &&
+    return IsIPv6() && HasPrefix(m_addr, std::array<uint8_t, 3>{{0x20, 0x01, 0x00}}) &&
            (m_addr[3] & 0xF0) == 0x10;
 }
 
 bool CNetAddr::IsRFC7343() const {
-    return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 3>{{0x20, 0x01, 0x00}}) &&
+    return IsIPv6() && HasPrefix(m_addr, std::array<uint8_t, 3>{{0x20, 0x01, 0x00}}) &&
            (m_addr[3] & 0xF0) == 0x20;
 }
 
 bool CNetAddr::IsHeNet() const {
-    return IsIPv6() &&
-           HasPrefix(m_addr, std::array<uint8_t, 4>{{0x20, 0x01, 0x04, 0x70}});
+    return IsIPv6() && HasPrefix(m_addr, std::array<uint8_t, 4>{{0x20, 0x01, 0x04, 0x70}});
 }
 
 /**
  * Check whether this object represents a TOR address.
- *
  * @see CNetAddr::SetSpecial(const std::string &)
  */
 bool CNetAddr::IsTor() const {
@@ -457,9 +395,8 @@ bool CNetAddr::IsLocal() const {
     }
 
     // IPv6 loopback (::1/128)
-    static const uint8_t pchLocal[16] = {0, 0, 0, 0, 0, 0, 0, 0,
-                                         0, 0, 0, 0, 0, 0, 0, 1};
-    if (IsIPv6() && memcmp(m_addr.data(), pchLocal, sizeof(pchLocal)) == 0) {
+    constexpr uint8_t pchLocal[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    if (IsIPv6() && Span{m_addr} == Span{pchLocal}) {
         return true;
     }
 
@@ -476,10 +413,11 @@ bool CNetAddr::IsLocal() const {
  *
  * @see CNetAddr::IsRoutable()
  */
-bool CNetAddr::IsValid() const {
+bool CNetAddr::IsValid() const
+{
     // unspecified IPv6 address (::/128)
-    uint8_t ipNone6[16] = {};
-    if (IsIPv6() && memcmp(m_addr.data(), ipNone6, sizeof(ipNone6)) == 0) {
+    constexpr uint8_t ipNone6[16] = {};
+    if (IsIPv6() && Span{m_addr} == Span{ipNone6}) {
         return false;
     }
 
@@ -506,8 +444,8 @@ bool CNetAddr::IsValid() const {
  * @returns Whether or not this network address is publicly routable on the
  *          global internet.
  *
- * @note A routable address is always valid. As in, the set of routable
- * addresses is a subset of the set of valid addresses.
+ * @note A routable address is always valid. As in, the set of routable addreses
+ *       is a subset of the set of valid addresses.
  *
  * @see CNetAddr::IsValid()
  */
@@ -538,10 +476,8 @@ bool CNetAddr::IsAddrV1Compatible() const {
         case NET_I2P:
         case NET_CJDNS:
             return false;
-        case NET_UNROUTABLE:
-            // m_net is never and should not be set to NET_UNROUTABLE
-        case NET_MAX:
-            // m_net is never and should not be set to NET_MAX
+        case NET_UNROUTABLE: // m_net is never and should not be set to NET_UNROUTABLE
+        case NET_MAX:        // m_net is never and should not be set to NET_MAX
             assert(false);
     } // no default case, so the compiler can warn about missing cases
 
@@ -561,92 +497,52 @@ enum Network CNetAddr::GetNetwork() const {
 }
 
 static std::string IPv4ToString(Span<const uint8_t> a) {
+    assert(a.size() == ADDR_IPV4_SIZE);
     return strprintf("%u.%u.%u.%u", a[0], a[1], a[2], a[3]);
 }
 
-//! Return an IPv6 address text representation with zero compression as
-//! described in RFC 5952 ("A Recommendation for IPv6 Address Text
-//! Representation").
-static std::string IPv6ToString(Span<const uint8_t> a, uint32_t scope_id) {
+static std::string IPv6ToString(Span<const uint8_t> a) {
     assert(a.size() == ADDR_IPV6_SIZE);
-    const std::array<uint16_t, 8> groups{{
-        ReadBE16(&a[0]),
-        ReadBE16(&a[2]),
-        ReadBE16(&a[4]),
-        ReadBE16(&a[6]),
-        ReadBE16(&a[8]),
-        ReadBE16(&a[10]),
-        ReadBE16(&a[12]),
-        ReadBE16(&a[14]),
-    }};
-
-    // The zero compression implementation is inspired by Rust's
-    // std::net::Ipv6Addr, see
-    // https://github.com/rust-lang/rust/blob/cc4103089f40a163f6d143f06359cba7043da29b/library/std/src/net/ip.rs#L1635-L1683
-    struct ZeroSpan {
-        size_t start_index{0};
-        size_t len{0};
-    };
-
-    // Find longest sequence of consecutive all-zero fields. Use first zero
-    // sequence if two or more zero sequences of equal length are found.
-    ZeroSpan longest, current;
-    for (size_t i{0}; i < groups.size(); ++i) {
-        if (groups[i] != 0) {
-            current = {i + 1, 0};
-            continue;
-        }
-        current.len += 1;
-        if (current.len > longest.len) {
-            longest = current;
-        }
-    }
-
-    std::string r;
-    r.reserve(39);
-    for (size_t i{0}; i < groups.size(); ++i) {
-        // Replace the longest sequence of consecutive all-zero fields with
-        // two colons ("::").
-        if (longest.len >= 2 && i >= longest.start_index &&
-            i < longest.start_index + longest.len) {
-            if (i == longest.start_index) {
-                r += "::";
-            }
-            continue;
-        }
-        r += strprintf("%s%x", ((!r.empty() && r.back() != ':') ? ":" : ""),
-                       groups[i]);
-    }
-
-    if (scope_id != 0) {
-        r += strprintf("%%%u", scope_id);
-    }
-
-    return r;
+    // clang-format off
+    return strprintf("%x:%x:%x:%x:%x:%x:%x:%x",
+                     ReadBE16(&a[0]),
+                     ReadBE16(&a[2]),
+                     ReadBE16(&a[4]),
+                     ReadBE16(&a[6]),
+                     ReadBE16(&a[8]),
+                     ReadBE16(&a[10]),
+                     ReadBE16(&a[12]),
+                     ReadBE16(&a[14]));
+    // clang-format on
 }
 
 std::string CNetAddr::ToStringIP() const {
     switch (m_net) {
         case NET_IPV4:
             return IPv4ToString(m_addr);
-        case NET_IPV6:
-            return IPv6ToString(m_addr, m_scope_id);
+        case NET_IPV6: {
+            CService serv(*this, 0);
+            if (const auto optPair = serv.GetSockAddr()) {
+                auto &[sockaddr, socklen] = *optPair;
+                char name[1025] = "";
+                if (!getnameinfo((const struct sockaddr *)&sockaddr, socklen, name, sizeof(name), nullptr, 0,
+                                 NI_NUMERICHOST)) {
+                    return std::string(name);
+                }
+            }
+            return IPv6ToString(m_addr);
+        }
         case NET_ONION:
             switch (m_addr.size()) {
                 case ADDR_TORV2_SIZE:
                     return EncodeBase32(m_addr) + ".onion";
                 case ADDR_TORV3_SIZE: {
-                    uint8_t checksum[torv3::CHECKSUM_LEN];
-                    torv3::Checksum(m_addr, checksum);
+                    const auto checksum = torv3::Checksum(m_addr);
 
-                    // TORv3 onion_address = base32(PUBKEY | CHECKSUM | VERSION)
-                    // + ".onion"
-                    prevector<torv3::TOTAL_LEN, uint8_t> address{m_addr.begin(),
-                                                                 m_addr.end()};
-                    address.insert(address.end(), checksum,
-                                   checksum + torv3::CHECKSUM_LEN);
-                    address.insert(address.end(), torv3::VERSION,
-                                   torv3::VERSION + sizeof(torv3::VERSION));
+                    // TORv3 onion_address = base32(PUBKEY | CHECKSUM | VERSION) + ".onion"
+                    prevector<torv3::TOTAL_LEN, uint8_t> address{m_addr.begin(), m_addr.end()};
+                    address.insert(address.end(), checksum.begin(), checksum.end());
+                    address.insert(address.end(), torv3::VERSION.begin(), torv3::VERSION.end());
 
                     return EncodeBase32(address) + ".onion";
                 }
@@ -654,20 +550,19 @@ std::string CNetAddr::ToStringIP() const {
                     assert(false);
             }
         case NET_I2P:
-            return EncodeBase32(m_addr, false /* don't pad with = */) +
-                   ".b32.i2p";
+            return EncodeBase32(m_addr, false /* don't pad with = */) + ".b32.i2p";
         case NET_CJDNS:
-            return IPv6ToString(m_addr, 0);
+            return IPv6ToString(m_addr);
         case NET_INTERNAL:
             return EncodeBase32(m_addr) + ".internal";
-        case NET_UNROUTABLE:
-            // m_net is never and should not be set to NET_UNROUTABLE
-        case NET_MAX:
-            // m_net is never and should not be set to NET_MAX
+        case NET_UNROUTABLE: // m_net is never and should not be set to NET_UNROUTABLE
+        case NET_MAX:        // m_net is never and should not be set to NET_MAX
             assert(false);
+            break; // prevent compiler warnings if compiling with -Wimplicit-fallthrough
     } // no default case, so the compiler can warn about missing cases
 
     assert(false);
+    return {}; // not reached: prevent compiler warnings about missing return
 }
 
 std::string CNetAddr::ToString() const {
@@ -697,7 +592,7 @@ bool CNetAddr::GetInAddr(struct in_addr *pipv4Addr) const {
         return false;
     }
     assert(sizeof(*pipv4Addr) == m_addr.size());
-    memcpy(pipv4Addr, m_addr.data(), m_addr.size());
+    std::memcpy(pipv4Addr, m_addr.data(), m_addr.size());
     return true;
 }
 
@@ -716,36 +611,32 @@ bool CNetAddr::GetIn6Addr(struct in6_addr *pipv6Addr) const {
         return false;
     }
     assert(sizeof(*pipv6Addr) == m_addr.size());
-    memcpy(pipv6Addr, m_addr.data(), m_addr.size());
+    std::memcpy(pipv6Addr, m_addr.data(), m_addr.size());
     return true;
 }
 
 bool CNetAddr::HasLinkedIPv4() const {
-    return IsRoutable() && (IsIPv4() || IsRFC6145() || IsRFC6052() ||
-                            IsRFC3964() || IsRFC4380());
+    return IsRoutable() && (IsIPv4() || IsRFC6145() || IsRFC6052() || IsRFC3964() || IsRFC4380());
 }
 
 uint32_t CNetAddr::GetLinkedIPv4() const {
     if (IsIPv4()) {
         return ReadBE32(m_addr.data());
     } else if (IsRFC6052() || IsRFC6145()) {
-        // mapped IPv4, SIIT translated IPv4: the IPv4 address is the last 4
-        // bytes of the address
+        // mapped IPv4, SIIT translated IPv4: the IPv4 address is the last 4 bytes of the address
         return ReadBE32(Span{m_addr}.last(ADDR_IPV4_SIZE).data());
     } else if (IsRFC3964()) {
         // 6to4 tunneled IPv4: the IPv4 address is in bytes 2-6
         return ReadBE32(Span{m_addr}.subspan(2, ADDR_IPV4_SIZE).data());
     } else if (IsRFC4380()) {
-        // Teredo tunneled IPv4: the IPv4 address is in the last 4 bytes of the
-        // address, but bitflipped
+        // Teredo tunneled IPv4: the IPv4 address is in the last 4 bytes of the address, but bitflipped
         return ~ReadBE32(Span{m_addr}.last(ADDR_IPV4_SIZE).data());
     }
     assert(false);
 }
 
-Network CNetAddr::GetNetClass() const {
-    // Make sure that if we return NET_IPV6, then IsIPv6() is true. The callers
-    // expect that.
+uint8_t CNetAddr::GetNetClass() const {
+    // Make sure that if we return NET_IPV6, then IsIPv6() is true. The callers expect that.
 
     // Check for "internal" first because such addresses are also !IsRoutable()
     // and we don't want to return NET_UNROUTABLE in that case.
@@ -762,19 +653,16 @@ Network CNetAddr::GetNetClass() const {
 }
 
 uint32_t CNetAddr::GetMappedAS(const std::vector<bool> &asmap) const {
-    uint32_t net_class = GetNetClass();
-    if (asmap.size() == 0 || (net_class != NET_IPV4 && net_class != NET_IPV6)) {
-        return 0; // Indicates not found, safe because AS0 is reserved per
-                  // RFC7607.
+    if (uint8_t net_class;
+            asmap.size() == 0 || ((net_class = GetNetClass()) != NET_IPV4 && net_class != NET_IPV6)) {
+        return 0; // Indicates not found, safe because AS0 is reserved per RFC7607.
     }
     std::vector<bool> ip_bits(128);
     if (HasLinkedIPv4()) {
-        // For lookup, treat as if it was just an IPv4 address
-        // (IPV4_IN_IPV6_PREFIX + IPv4 bits)
+        // For lookup, treat as if it was just an IPv4 address (IPV4_IN_IPV6_PREFIX + IPv4 bits)
         for (int8_t byte_i = 0; byte_i < 12; ++byte_i) {
             for (uint8_t bit_i = 0; bit_i < 8; ++bit_i) {
-                ip_bits[byte_i * 8 + bit_i] =
-                    (IPV4_IN_IPV6_PREFIX[byte_i] >> (7 - bit_i)) & 1;
+                ip_bits[byte_i * 8 + bit_i] = (IPV4_IN_IPV6_PREFIX[byte_i] >> (7 - bit_i)) & 1;
             }
         }
         uint32_t ipv4 = GetLinkedIPv4();
@@ -807,21 +695,18 @@ uint32_t CNetAddr::GetMappedAS(const std::vector<bool> &asmap) const {
  */
 std::vector<uint8_t> CNetAddr::GetGroup(const std::vector<bool> &asmap) const {
     std::vector<uint8_t> vchRet;
-    uint32_t net_class = GetNetClass();
     // If non-empty asmap is supplied and the address is IPv4/IPv6,
     // return ASN to be used for bucketing.
     uint32_t asn = GetMappedAS(asmap);
-    if (asn != 0) { // Either asmap was empty, or address has non-asmappable net
-                    // class (e.g. TOR).
-        vchRet.push_back(NET_IPV6); // IPv4 and IPv6 with same ASN should be in
-                                    // the same bucket
+    if (asn != 0) { // Either asmap was empty, or address has non-asmappable net class (e.g. TOR).
+        vchRet.push_back(NET_IPV6); // IPv4 and IPv6 with same ASN should be in the same bucket
         for (int i = 0; i < 4; i++) {
             vchRet.push_back((asn >> (8 * i)) & 0xFF);
         }
         return vchRet;
     }
 
-    vchRet.push_back(net_class);
+    vchRet.push_back(GetNetClass());
     int nBits{0};
 
     if (IsLocal()) {
@@ -861,30 +746,43 @@ std::vector<uint8_t> CNetAddr::GetGroup(const std::vector<bool> &asmap) const {
 }
 
 std::vector<uint8_t> CNetAddr::GetAddrBytes() const {
+    std::vector<uint8_t> ret;
     if (IsAddrV1Compatible()) {
-        uint8_t serialized[V1_SERIALIZATION_SIZE];
-        SerializeV1Array(serialized);
-        return {std::begin(serialized), std::end(serialized)};
+        const auto v1arr = SerializeV1Array();
+        ret.reserve(v1arr.size());
+        ret.assign(v1arr.begin(), v1arr.end());
+    } else {
+        ret.reserve(m_addr.size());
+        ret.assign(m_addr.begin(), m_addr.end());
     }
-    return std::vector<uint8_t>(m_addr.begin(), m_addr.end());
+    return ret;
 }
 
-// private extensions to enum Network, only returned by GetExtNetwork, and only
-// used in GetReachabilityFrom
-static const int NET_UNKNOWN = NET_MAX + 0;
-static const int NET_TEREDO = NET_MAX + 1;
-static int GetExtNetwork(const CNetAddr *addr) {
-    if (addr == nullptr) {
-        return NET_UNKNOWN;
-    }
-    if (addr->IsRFC4380()) {
-        return NET_TEREDO;
-    }
-    return addr->GetNetwork();
+uint64_t CNetAddr::GetHash() const {
+    const uint256 hash = Hash(m_addr);
+    uint64_t nRet;
+    static_assert(sizeof(nRet) <= hash.size());
+    std::memcpy(&nRet, &*hash.begin(), sizeof(nRet));
+    return nRet;
 }
 
 /** Calculates a metric for how reachable (*this) is from a given partner */
 int CNetAddr::GetReachabilityFrom(const CNetAddr *paddrPartner) const {
+
+    // private extensions to enum Network, only returned by GetExtNetwork, and only
+    // used in GetReachabilityFrom
+    static constexpr int NET_UNKNOWN = NET_MAX + 0;
+    static constexpr int NET_TEREDO = NET_MAX + 1;
+    static auto GetExtNetwork = [](const CNetAddr *addr) -> int {
+        if (addr == nullptr) {
+            return NET_UNKNOWN;
+        }
+        if (addr->IsRFC4380()) {
+            return NET_TEREDO;
+        }
+        return addr->GetNetwork();
+    };
+
     enum Reachability {
         REACH_UNREACHABLE,
         REACH_DEFAULT,
@@ -933,13 +831,6 @@ int CNetAddr::GetReachabilityFrom(const CNetAddr *paddrPartner) const {
                 case NET_ONION:
                     return REACH_PRIVATE;
             }
-        case NET_I2P:
-            switch (ourNet) {
-                case NET_I2P:
-                    return REACH_PRIVATE;
-                default:
-                    return REACH_DEFAULT;
-            }
         case NET_TEREDO:
             switch (ourNet) {
                 default:
@@ -970,17 +861,6 @@ int CNetAddr::GetReachabilityFrom(const CNetAddr *paddrPartner) const {
     }
 }
 
-CService::CService() : port(0) {}
-
-CService::CService(const CNetAddr &cip, uint16_t portIn)
-    : CNetAddr(cip), port(portIn) {}
-
-CService::CService(const struct in_addr &ipv4Addr, uint16_t portIn)
-    : CNetAddr(ipv4Addr), port(portIn) {}
-
-CService::CService(const struct in6_addr &ipv6Addr, uint16_t portIn)
-    : CNetAddr(ipv6Addr), port(portIn) {}
-
 CService::CService(const struct sockaddr_in &addr)
     : CNetAddr(addr.sin_addr), port(ntohs(addr.sin_port)) {
     assert(addr.sin_family == AF_INET);
@@ -992,23 +872,17 @@ CService::CService(const struct sockaddr_in6 &addr)
     assert(addr.sin6_family == AF_INET6);
 }
 
-bool CService::SetSockAddr(const struct sockaddr *paddr) {
-    switch (paddr->sa_family) {
+bool CService::SetSockAddr(const sockaddr_storage &addr) {
+    switch (addr.ss_family) {
         case AF_INET:
-            *this =
-                CService(*reinterpret_cast<const struct sockaddr_in *>(paddr));
+            *this = CService(bit_cast<sockaddr_in>(addr));
             return true;
         case AF_INET6:
-            *this =
-                CService(*reinterpret_cast<const struct sockaddr_in6 *>(paddr));
+            *this = CService(bit_cast<sockaddr_in6>(addr));
             return true;
         default:
             return false;
     }
-}
-
-uint16_t CService::GetPort() const {
-    return port;
 }
 
 bool operator==(const CService &a, const CService &b) {
@@ -1025,48 +899,35 @@ bool operator<(const CService &a, const CService &b) {
 /**
  * Obtain the IPv4/6 socket address this represents.
  *
- * @param[out] paddr The obtained socket address.
- * @param[in,out] addrlen The size, in bytes, of the address structure pointed
- *                        to by paddr. The value that's pointed to by this
- *                        parameter might change after calling this function if
- *                        the size of the corresponding address structure
- *                        changed.
- *
- * @returns Whether or not the operation was successful.
+ * @returns An optional sockaddr / length pair when successful.
  */
-bool CService::GetSockAddr(struct sockaddr *paddr, socklen_t *addrlen) const {
+std::optional<std::pair<sockaddr_storage, socklen_t>> CService::GetSockAddr() const {
+    std::optional<std::pair<sockaddr_storage, socklen_t>> ret;
     if (IsIPv4()) {
-        if (*addrlen < (socklen_t)sizeof(struct sockaddr_in)) {
-            return false;
+        constexpr socklen_t addrlen = sizeof(sockaddr_in);
+        static_assert(addrlen <= sizeof(sockaddr_storage));
+        sockaddr_in addrin = {}; // 0-init
+        if (!GetInAddr(&addrin.sin_addr)) {
+            return ret;
         }
-        *addrlen = sizeof(struct sockaddr_in);
-        struct sockaddr_in *paddrin =
-            reinterpret_cast<struct sockaddr_in *>(paddr);
-        memset(paddrin, 0, *addrlen);
-        if (!GetInAddr(&paddrin->sin_addr)) {
-            return false;
+        addrin.sin_family = AF_INET;
+        addrin.sin_port = htons(port);
+        ret.emplace(sockaddr_storage{}, addrlen);
+        std::memcpy(&ret->first, &addrin, addrlen);
+    } else if (IsIPv6()) {
+        constexpr socklen_t addrlen = sizeof(sockaddr_in6);
+        static_assert(addrlen <= sizeof(sockaddr_storage));
+        sockaddr_in6 addrin6 = {}; // 0-init
+        if (!GetIn6Addr(&addrin6.sin6_addr)) {
+            return ret;
         }
-        paddrin->sin_family = AF_INET;
-        paddrin->sin_port = htons(port);
-        return true;
+        addrin6.sin6_scope_id = scopeId;
+        addrin6.sin6_family = AF_INET6;
+        addrin6.sin6_port = htons(port);
+        ret.emplace(sockaddr_storage{}, addrlen);
+        std::memcpy(&ret->first, &addrin6, addrlen);
     }
-    if (IsIPv6()) {
-        if (*addrlen < (socklen_t)sizeof(struct sockaddr_in6)) {
-            return false;
-        }
-        *addrlen = sizeof(struct sockaddr_in6);
-        struct sockaddr_in6 *paddrin6 =
-            reinterpret_cast<struct sockaddr_in6 *>(paddr);
-        memset(paddrin6, 0, *addrlen);
-        if (!GetIn6Addr(&paddrin6->sin6_addr)) {
-            return false;
-        }
-        paddrin6->sin6_scope_id = m_scope_id;
-        paddrin6->sin6_family = AF_INET6;
-        paddrin6->sin6_port = htons(port);
-        return true;
-    }
-    return false;
+    return ret;
 }
 
 /**
@@ -1074,10 +935,8 @@ bool CService::GetSockAddr(struct sockaddr *paddr, socklen_t *addrlen) const {
  */
 std::vector<uint8_t> CService::GetKey() const {
     auto key = GetAddrBytes();
-    // most significant byte of our port
-    key.push_back(port / 0x100);
-    // least significant byte of our port
-    key.push_back(port & 0x0FF);
+    key.push_back(port >> 8); // most significant byte of our port
+    key.push_back(port & 0x0FF); // least significant byte of our port
     return key;
 }
 
@@ -1097,13 +956,8 @@ std::string CService::ToString() const {
     return ToStringIPPort();
 }
 
-CSubNet::CSubNet() : valid(false) {
-    memset(netmask, 0, sizeof(netmask));
-}
-
 CSubNet::CSubNet(const CNetAddr &addr, uint8_t mask) : CSubNet() {
-    valid = (addr.IsIPv4() && mask <= ADDR_IPV4_SIZE * 8) ||
-            (addr.IsIPv6() && mask <= ADDR_IPV6_SIZE * 8);
+    valid = (addr.IsIPv4() && mask <= ADDR_IPV4_SIZE * 8) || (addr.IsIPv6() && mask <= ADDR_IPV6_SIZE * 8);
     if (!valid) {
         return;
     }
@@ -1115,10 +969,8 @@ CSubNet::CSubNet(const CNetAddr &addr, uint8_t mask) : CSubNet() {
     uint8_t n = mask;
     for (size_t i = 0; i < network.m_addr.size(); ++i) {
         const uint8_t bits = n < 8 ? n : 8;
-        // Set first bits.
-        netmask[i] = (uint8_t)((uint8_t)0xFF << (8 - bits));
-        // Normalize network according to netmask.
-        network.m_addr[i] &= netmask[i];
+        netmask[i] = static_cast<uint8_t>(0xFFu << (8u - bits)); // Set first bits.
+        network.m_addr[i] &= netmask[i]; // Normalize network according to netmask.
         n -= bits;
     }
 }
@@ -1157,8 +1009,7 @@ CSubNet::CSubNet(const CNetAddr &addr, const CNetAddr &mask) : CSubNet() {
     if (!valid) {
         return;
     }
-    // Check if `mask` contains 1-bits after 0-bits (which is an invalid
-    // netmask).
+    // Check if `mask` contains 1-bits after 0-bits (which is an invalid netmask).
     bool zeros_found = false;
     for (auto b : mask.m_addr) {
         const int num_bits = NetmaskBits(b);
@@ -1173,7 +1024,7 @@ CSubNet::CSubNet(const CNetAddr &addr, const CNetAddr &mask) : CSubNet() {
 
     assert(mask.m_addr.size() <= sizeof(netmask));
 
-    memcpy(netmask, mask.m_addr.data(), mask.m_addr.size());
+    std::memcpy(netmask, mask.m_addr.data(), mask.m_addr.size());
 
     network = addr;
 
@@ -1184,6 +1035,9 @@ CSubNet::CSubNet(const CNetAddr &addr, const CNetAddr &mask) : CSubNet() {
 }
 
 CSubNet::CSubNet(const CNetAddr &addr) : CSubNet() {
+    static_assert(sizeof(netmask) == sizeof(pchSingleAddressNetmask),
+                  "netmask and pchSingleAddressNetmask must be the same size");
+
     valid = addr.IsIPv4() || addr.IsIPv6();
     if (!valid) {
         return;
@@ -1191,7 +1045,7 @@ CSubNet::CSubNet(const CNetAddr &addr) : CSubNet() {
 
     assert(addr.m_addr.size() <= sizeof(netmask));
 
-    memset(netmask, 0xFF, addr.m_addr.size());
+    std::memcpy(netmask, pchSingleAddressNetmask, addr.m_addr.size());
 
     network = addr;
 }
@@ -1213,34 +1067,35 @@ bool CSubNet::Match(const CNetAddr &addr) const {
     return true;
 }
 
-std::string CSubNet::ToString() const {
-    assert(network.m_addr.size() <= sizeof(netmask));
-
+uint8_t CSubNet::GetCIDRLength() const {
+    assert(network.m_addr.size() <= std::size(netmask));
     uint8_t cidr = 0;
-
     for (size_t i = 0; i < network.m_addr.size(); ++i) {
-        if (netmask[i] == 0x00) {
-            break;
-        }
-        cidr += NetmaskBits(netmask[i]);
+        const int bits = NetmaskBits(netmask[i]);
+        if (bits <= 0) break; // end of mask
+        cidr += bits;
     }
-
-    return network.ToString() + strprintf("/%u", cidr);
+    return cidr;
 }
 
-bool CSubNet::IsValid() const {
-    return valid;
+std::pair<CNetAddr, uint8_t> CSubNet::GetCIDR() const {
+    return {network, GetCIDRLength()};
+}
+
+std::string CSubNet::ToString() const {
+    return network.ToString() + strprintf("/%u", GetCIDRLength());
+}
+
+bool CSubNet::IsSingleIP() const {
+    assert(network.m_addr.size() <= sizeof(netmask));
+    return 0 == std::memcmp(netmask, pchSingleAddressNetmask, network.m_addr.size());
 }
 
 bool CSubNet::SanityCheck() const {
-    if (!(network.IsIPv4() || network.IsIPv6())) {
-        return false;
-    }
+    if (!(network.IsIPv4() || network.IsIPv6())) return false;
 
     for (size_t x = 0; x < network.m_addr.size(); ++x) {
-        if (network.m_addr[x] & ~netmask[x]) {
-            return false;
-        }
+        if (network.m_addr[x] & ~netmask[x]) return false;
     }
 
     return true;
@@ -1248,10 +1103,27 @@ bool CSubNet::SanityCheck() const {
 
 bool operator==(const CSubNet &a, const CSubNet &b) {
     return a.valid == b.valid && a.network == b.network &&
-           !memcmp(a.netmask, b.netmask, 16);
+           !std::memcmp(a.netmask, b.netmask, 16);
 }
 
 bool operator<(const CSubNet &a, const CSubNet &b) {
-    return (a.network < b.network ||
-            (a.network == b.network && memcmp(a.netmask, b.netmask, 16) < 0));
+    return a.network < b.network ||
+           (a.network == b.network && std::memcmp(a.netmask, b.netmask, 16) < 0);
+}
+
+
+// std::unordered_map support --
+
+size_t SaltedNetAddrHasher::operator()(const CNetAddr &addr) const
+{
+    return static_cast<size_t>(SerializeSipHash(addr, k0(), k1()));
+}
+
+size_t SaltedSubNetHasher::operator()(const CSubNet &subnet) const
+{
+    return static_cast<size_t>(SerializeSipHash(subnet, k0(), k1()));
+}
+
+bool SanityCheckASMap(const std::vector<bool> &asmap) {
+    return SanityCheckASMap(asmap, 128); // For IP address lookups, the input is 128 bits
 }

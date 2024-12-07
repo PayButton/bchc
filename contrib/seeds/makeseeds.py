@@ -9,41 +9,49 @@
 import collections
 import re
 import sys
-from typing import Dict, List, Union
-
 import dns.resolver
 
 NSEEDS = 512
 
-MAX_SEEDS_PER_ASN = {
-    "ipv4": 6,
-    "ipv6": 10,
+MAX_SEEDS_PER_ASN = 2
+
+MIN_BLOCKS = 540000
+
+# These are hosts that have been observed to be behaving strangely (e.g.
+# aggressively connecting to every node).
+SUSPICIOUS_HOSTS = {
+    "23.92.36.9", "72.36.89.11", "130.211.129.106", "178.63.107.226",
+    "83.81.130.26", "88.198.17.7", "148.251.238.178", "176.9.46.6",
+    "54.173.72.127", "54.174.10.182", "54.183.64.54", "54.194.231.211",
+    "54.66.214.167", "54.66.220.137", "54.67.33.14", "54.77.251.214",
+    "54.94.195.96", "54.94.200.247"
 }
 
-MIN_BLOCKS = 830000
 
-PATTERN_IPV4 = re.compile(r"^((\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})):(\d+)$")
+PATTERN_IPV4 = re.compile(
+    r"^((\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})):(\d+)$")
 PATTERN_IPV6 = re.compile(r"^\[([0-9a-z:]+)\]:(\d+)$")
-PATTERN_ONION = re.compile(r"^([abcdefghijklmnopqrstuvwxyz234567]{16}\.onion):(\d+)$")
+PATTERN_ONION = re.compile(
+    r"^([abcdefghijklmnopqrstuvwxyz234567]{56}\.onion):(\d+)$")
 
 # Used to only select nodes with a user agent string compatible with the
-# eCash network.
-PATTERN_AGENT = re.compile(r"^(/Bitcoin ABC:0\.(28|29)\.(.+)/)")
+# Bitcoin Cash specification.
+PATTERN_AGENT = re.compile(
+    r"^(/Bitcoin Cash Node:2[567]\.(\d+)\.(\d+)[^/]*/"
+    r"|/kth-bch:0\.3[2-9]\.(\d+)[^/]*/"
+    r"|/Bitcoin Verde:2\.4\.(\d+)[^/]*/"
+    r"|/BCH Unlimited:2\.(\d+)\.(\d+)[^/]*/)")
 
 
-def parseline(line: str) -> Union[dict, None]:
-    """Parses a line from `seeds_main.txt` into a dictionary of details for that line.
-    or `None`, if the line could not be parsed.
-    """
+def parseline(line):
     sline = line.split()
-    if len(sline) < 12:
-        # line too short to be valid, skip it.
+    if len(sline) < 11:
         return None
 
     # The user agent is at the end of the line. It may contain space, so we
     # concatenate.
     for i in range(12, len(sline)):
-        sline[11] += " " + sline[i]
+        sline[11] += ' ' + sline[i]
 
     # Remove leftovers
     del sline[12:]
@@ -58,13 +66,13 @@ def parseline(line: str) -> Union[dict, None]:
             if m is None:
                 return None
             else:
-                net = "onion"
+                net = 'onion'
                 ipstr = sortkey = m.group(1)
                 port = int(m.group(2))
         else:
-            net = "ipv6"
+            net = 'ipv6'
             # Not interested in localhost
-            if m.group(1) in ["::"]:
+            if m.group(1) in ['::']:
                 return None
             ipstr = m.group(1)
             # XXX parse IPv6 into number, could use name_to_ipv6 from
@@ -80,7 +88,7 @@ def parseline(line: str) -> Union[dict, None]:
             ip = ip + (int(m.group(i + 2)) << (8 * (3 - i)))
         if ip == 0:
             return None
-        net = "ipv4"
+        net = 'ipv4'
         sortkey = ip
         ipstr = m.group(1)
         port = int(m.group(6))
@@ -101,187 +109,118 @@ def parseline(line: str) -> Union[dict, None]:
     blocks = int(sline[8])
     # Construct result.
     return {
-        "net": net,
-        "ip": ipstr,
-        "port": port,
-        "ipnum": ip,
-        "uptime": uptime30,
-        "lastsuccess": lastsuccess,
-        "version": version,
-        "agent": agent,
-        "service": service,
-        "blocks": blocks,
-        "sortkey": sortkey,
+        'net': net,
+        'ip': ipstr,
+        'port': port,
+        'ipnum': ip,
+        'uptime': uptime30,
+        'lastsuccess': lastsuccess,
+        'version': version,
+        'agent': agent,
+        'service': service,
+        'blocks': blocks,
+        'sortkey': sortkey,
     }
 
 
-def dedup(ips: List[Dict]) -> List[Dict]:
-    """Remove duplicates from `ips` where multiple ips share address and port."""
-    d = {}
-    for ip in ips:
-        d[ip["ip"], ip["port"]] = ip
-    return list(d.values())
-
-
-def filtermultiport(ips: List[Dict]) -> List[Dict]:
-    """Filter out hosts with more nodes per IP"""
+def filtermultiport(ips):
+    '''Filter out hosts with more nodes per IP'''
     hist = collections.defaultdict(list)
     for ip in ips:
-        hist[ip["sortkey"]].append(ip)
+        hist[ip['sortkey']].append(ip)
     return [value[0] for (key, value) in list(hist.items()) if len(value) == 1]
-
-
-def lookup_asn(net: str, ip: str) -> Union[int, None]:
-    """Look up the asn for an `ip` address by querying cymru.com
-    on network `net` (e.g. ipv4 or ipv6).
-
-    Returns in integer ASN or None if it could not be found.
-    """
-    try:
-        if net == "ipv4":
-            ipaddr = ip
-            prefix = ".origin"
-        else:
-            # http://www.team-cymru.com/IP-ASN-mapping.html
-            # 2001:4860:b002:23::68
-            res = str()
-            # pick the first 4 nibbles
-            for nb in ip.split(":")[:4]:
-                # right padded with '0'
-                for c in nb.zfill(4):
-                    # 2001 4860 b002 0023
-                    res += c + "."
-            # 2.0.0.1.4.8.6.0.b.0.0.2.0.0.2.3
-            ipaddr = res.rstrip(".")
-            prefix = ".origin6"
-
-        asn = int(
-            [
-                x.to_text()
-                for x in dns.resolver.query(
-                    ".".join(reversed(ipaddr.split("."))) + prefix + ".asn.cymru.com",
-                    "TXT",
-                ).response.answer
-            ][0]
-            .split('"')[1]
-            .split(" ")[0]
-        )
-        return asn
-    except Exception:
-        sys.stderr.write('ERR: Could not resolve ASN for "' + ip + '"\n')
-        return None
-
 
 # Based on Greg Maxwell's seed_filter.py
 
 
-def filterbyasn(ips: List[Dict], max_per_asn: Dict, max_per_net: int) -> List[Dict]:
-    """Prunes `ips` by
-    (a) trimming ips to have at most `max_per_net` ips from each net (e.g. ipv4, ipv6); and
-    (b) trimming ips to have at most `max_per_asn` ips from each asn in each net.
-    """
+def filterbyasn(ips, max_per_asn, max_total):
     # Sift out ips by type
-    ips_ipv46 = [ip for ip in ips if ip["net"] in ["ipv4", "ipv6"]]
-    ips_onion = [ip for ip in ips if ip["net"] == "onion"]
+    ips_ipv46 = [ip for ip in ips if ip['net'] in ['ipv4', 'ipv6']]
+    ips_onion = [ip for ip in ips if ip['net'] == 'onion']
 
-    # Filter IPv46 by ASN, and limit to max_per_net per network
+    # Filter IPv46 by ASN
     result = []
-    net_count: Dict[str, int] = collections.defaultdict(int)
-    asn_count: Dict[int, int] = collections.defaultdict(int)
+    asn_count = {}
+    for ip in ips_ipv46:
+        if len(result) == max_total:
+            break
+        try:
+            if ip['net'] == 'ipv4':
+                ipaddr = ip['ip']
+                prefix = '.origin'
+            else:
+                # http://www.team-cymru.com/IP-ASN-mapping.html
+                # 2001:4860:b002:23::68
+                res = str()
+                # pick the first 4 nibbles
+                for nb in ip['ip'].split(':')[:4]:
+                    # right padded with '0'
+                    for c in nb.zfill(4):
+                        # 2001 4860 b002 0023
+                        res += c + '.'
+                # 2.0.0.1.4.8.6.0.b.0.0.2.0.0.2.3
+                ipaddr = res.rstrip('.')
+                prefix = '.origin6'
 
-    for i, ip in enumerate(ips_ipv46):
-        if i % 10 == 0:
-            # give progress update
-            print(
-                f"{i:6d}/{len(ips_ipv46)} [{100*i/len(ips_ipv46):04.1f}%]\r",
-                file=sys.stderr,
-                end="",
-                flush=True,
-            )
+            asn = int([x.to_text() for x in dns.resolver.query('.'.join(
+                reversed(ipaddr.split('.'))) + prefix + '.asn.cymru.com',
+                'TXT').response.answer][0].split('\"')[1].split(' ')[0])
+            if asn not in asn_count:
+                asn_count[asn] = 0
+            if asn_count[asn] == max_per_asn:
+                continue
+            asn_count[asn] += 1
+            result.append(ip)
+        except Exception:
+            sys.stderr.write(
+                'ERR: Could not resolve ASN for "' + ip['ip'] + '"\n')
 
-        if net_count[ip["net"]] == max_per_net:
-            # do not add this ip as we already too many
-            # ips from this network
-            continue
-        asn = lookup_asn(ip["net"], ip["ip"])
-        if asn is None or asn_count[asn] == max_per_asn[ip["net"]]:
-            # do not add this ip as we already have too many
-            # ips from this ASN on this network
-            continue
-        asn_count[asn] += 1
-        net_count[ip["net"]] += 1
-        result.append(ip)
-
-    # Add back Onions (up to max_per_net)
-    result.extend(ips_onion[0:max_per_net])
+    # Add back Onions
+    result.extend(ips_onion)
     return result
-
-
-def ip_stats(ips: List[Dict]) -> str:
-    """Format and return pretty string from `ips`."""
-    hist: Dict[str, int] = collections.defaultdict(int)
-    for ip in ips:
-        if ip is not None:
-            hist[ip["net"]] += 1
-
-    return f"{hist['ipv4']:6d} {hist['ipv6']:6d} {hist['onion']:6d}"
 
 
 def main():
     lines = sys.stdin.readlines()
     ips = [parseline(line) for line in lines]
 
-    print(
-        "\x1b[7m  IPv4   IPv6  Onion Pass                                          "
-        "     \x1b[0m",
-        file=sys.stderr,
-    )
-    print(f"{ip_stats(ips):s} Initial", file=sys.stderr)
-    # Skip entries with invalid address.
+    # Skip entries with valid address.
     ips = [ip for ip in ips if ip is not None]
-    print(f"{ip_stats(ips):s} Skip entries with invalid address", file=sys.stderr)
-    # Skip duplicates (in case multiple seeds files were concatenated)
-    ips = dedup(ips)
-    print(f"{ip_stats(ips):s} After removing duplicates", file=sys.stderr)
+
+    # Skip entries from suspicious hosts.
+    ips = [ip for ip in ips if ip['ip'] not in SUSPICIOUS_HOSTS]
+
     # Enforce minimal number of blocks.
-    ips = [ip for ip in ips if ip["blocks"] >= MIN_BLOCKS]
-    print(f"{ip_stats(ips):s} Enforce minimal number of blocks", file=sys.stderr)
+    ips = [ip for ip in ips if ip['blocks'] >= MIN_BLOCKS]
+
     # Require service bit 1.
-    ips = [ip for ip in ips if (ip["service"] & 1) == 1]
-    print(f"{ip_stats(ips):s} Require service bit 1", file=sys.stderr)
-    # Require at least 50% 30-day uptime for clearnet, 10% for onion.
-    req_uptime = {
-        "ipv4": 50,
-        "ipv6": 50,
-        "onion": 10,
-    }
-    ips = [ip for ip in ips if ip["uptime"] > req_uptime[ip["net"]]]
-    print(f"{ip_stats(ips):s} Require minimum uptime", file=sys.stderr)
+    ips = [ip for ip in ips if (ip['service'] & 1) == 1]
+
+    # Require at least 50% 30-day uptime.
+    ips = [ip for ip in ips if ip['uptime'] > 50]
+
     # Require a known and recent user agent.
-    ips = [ip for ip in ips if PATTERN_AGENT.match(ip["agent"])]
-    print(f"{ip_stats(ips):s} Require a known and recent user agent", file=sys.stderr)
+    ips = [ip for ip in ips if PATTERN_AGENT.match(ip['agent'])]
+
     # Sort by availability (and use last success as tie breaker)
-    ips.sort(key=lambda x: (x["uptime"], x["lastsuccess"], x["ip"]), reverse=True)
+    ips.sort(key=lambda x:
+             (x['uptime'], x['lastsuccess'], x['ip']), reverse=True)
+
     # Filter out hosts with multiple bitcoin ports, these are likely abusive
     ips = filtermultiport(ips)
-    print(
-        f"{ip_stats(ips):s} Filter out hosts with multiple bitcoin ports",
-        file=sys.stderr,
-    )
+
     # Look up ASNs and limit results, both per ASN and globally.
     ips = filterbyasn(ips, MAX_SEEDS_PER_ASN, NSEEDS)
-    print(
-        f"{ip_stats(ips):s} Look up ASNs and limit results per ASN and per net",
-        file=sys.stderr,
-    )
+
     # Sort the results by IP address (for deterministic output).
-    ips.sort(key=lambda x: (x["net"], x["sortkey"]))
+    ips.sort(key=lambda x: (x['net'], x['sortkey']))
+
     for ip in ips:
-        if ip["net"] == "ipv6":
-            print(f"[{ip['ip']}]:{ip['port']}")
+        if ip['net'] == 'ipv6':
+            print('[{}]:{}'.format(ip['ip'], ip['port']))
         else:
-            print(f"{ip['ip']}:{ip['port']}")
+            print('{}:{}'.format(ip['ip'], ip['port']))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

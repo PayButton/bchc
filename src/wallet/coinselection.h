@@ -1,18 +1,38 @@
 // Copyright (c) 2017 The Bitcoin Core developers
+// Copyright (c) 2019-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_WALLET_COINSELECTION_H
-#define BITCOIN_WALLET_COINSELECTION_H
+#pragma once
 
-#include <consensus/amount.h>
+#include <amount.h>
 #include <primitives/transaction.h>
 #include <random.h>
 
 //! target minimum change amount
 static constexpr Amount MIN_CHANGE{COIN / 100};
 //! final minimum change amount after paying for fees
-static const Amount MIN_FINAL_CHANGE = MIN_CHANGE / 2;
+static constexpr Amount MIN_FINAL_CHANGE = MIN_CHANGE / 2;
+
+//! Hint on what attributes to prioritize when performing coin selection.
+enum class CoinSelectionHint {
+    //! The default case all-around coin selection algorithm.
+    Default = 0,
+
+    //! Over all other features, prioritize speed.
+    Fast = 1,
+
+    //! Value reserved for future algorithm that prioritizes speed.
+    FastReserved = 2,
+
+    //! Largest value in this enum represents invalid.
+    Invalid = 3
+};
+
+inline bool IsValidCoinSelectionHint(int c) {
+    return c >= static_cast<int>(CoinSelectionHint::Default)
+        && c < static_cast<int>(CoinSelectionHint::Invalid);
+}
 
 class CInputCoin {
 public:
@@ -37,8 +57,6 @@ public:
     COutPoint outpoint;
     CTxOut txout;
     Amount effective_value;
-    Amount m_fee{Amount::zero()};
-    Amount m_long_term_fee{Amount::zero()};
 
     /**
      * Pre-computed estimated size of this output as a fully-signed input in a
@@ -60,22 +78,14 @@ public:
 };
 
 struct CoinEligibilityFilter {
+    /** Minimum number of confirmations for outputs that we sent to ourselves.
+     *  We may use unconfirmed UTXOs sent from ourselves, e.g. change outputs. */
     const int conf_mine;
-    /**
-     * Minimum number of confirmations for outputs received from a different
-     * wallet.
-     */
+    /** Minimum number of confirmations for outputs received from a different wallet. */
     const int conf_theirs;
-    /// Include partial destination groups when avoid_reuse and there are full
-    /// groups
-    const bool m_include_partial_groups{false};
 
     CoinEligibilityFilter(int conf_mine_, int conf_theirs_)
         : conf_mine(conf_mine_), conf_theirs(conf_theirs_) {}
-    CoinEligibilityFilter(int conf_mine_, int conf_theirs_,
-                          bool include_partial_groups)
-        : conf_mine(conf_mine_), conf_theirs(conf_theirs_),
-          m_include_partial_groups(include_partial_groups) {}
 };
 
 struct OutputGroup {
@@ -85,20 +95,18 @@ struct OutputGroup {
     int m_depth{999};
     Amount effective_value = Amount::zero();
     Amount fee = Amount::zero();
-    CFeeRate m_effective_feerate{Amount::zero()};
     Amount long_term_fee = Amount::zero();
-    CFeeRate m_long_term_feerate{Amount::zero()};
 
     OutputGroup() {}
-    OutputGroup(const CFeeRate &effective_feerate,
-                const CFeeRate &long_term_feerate)
-        : m_effective_feerate(effective_feerate),
-          m_long_term_feerate(long_term_feerate) {}
-
-    void Insert(const CInputCoin &output, int depth, bool from_me,
-                bool positive_only);
-    bool
-    EligibleForSpending(const CoinEligibilityFilter &eligibility_filter) const;
+    OutputGroup(std::vector<CInputCoin> &&outputs, bool from_me, Amount value, int depth)
+        : m_outputs(std::move(outputs)), m_from_me(from_me), m_value(value), m_depth(depth) {}
+    OutputGroup(const CInputCoin &output, int depth, bool from_me)
+        : OutputGroup() {
+        Insert(output, depth, from_me);
+    }
+    void Insert(const CInputCoin &output, int depth, bool from_me);
+    std::vector<CInputCoin>::iterator Discard(const CInputCoin &output);
+    bool EligibleForSpending(const CoinEligibilityFilter &eligibility_filter) const;
 };
 
 bool SelectCoinsBnB(std::vector<OutputGroup> &utxo_pool,
@@ -109,5 +117,3 @@ bool SelectCoinsBnB(std::vector<OutputGroup> &utxo_pool,
 // Original coin selection algorithm as a fallback
 bool KnapsackSolver(const Amount nTargetValue, std::vector<OutputGroup> &groups,
                     std::set<CInputCoin> &setCoinsRet, Amount &nValueRet);
-
-#endif // BITCOIN_WALLET_COINSELECTION_H

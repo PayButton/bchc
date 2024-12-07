@@ -1,11 +1,13 @@
 // Copyright (c) 2012-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2019 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <dbwrapper.h>
 
+#include <fs.h>
 #include <random.h>
-#include <util/fs_helpers.h>
+#include <util/system.h>
 
 #include <leveldb/cache.h>
 #include <leveldb/env.h>
@@ -117,44 +119,36 @@ static leveldb::Options GetOptions(size_t nCacheSize) {
     return options;
 }
 
-CDBWrapper::CDBWrapper(const DBParams &params)
-    : m_name{fs::PathToString(params.path.stem())}, m_path{params.path},
-      m_is_memory{params.memory_only} {
+CDBWrapper::CDBWrapper(const fs::path &path, size_t nCacheSize, bool fMemory,
+                       bool fWipe, bool obfuscate)
+    : m_name(path.stem().string()) {
     penv = nullptr;
     readoptions.verify_checksums = true;
     iteroptions.verify_checksums = true;
     iteroptions.fill_cache = false;
     syncoptions.sync = true;
-    options = GetOptions(params.cache_bytes);
+    options = GetOptions(nCacheSize);
     options.create_if_missing = true;
-    if (params.memory_only) {
+    if (fMemory) {
         penv = leveldb::NewMemEnv(leveldb::Env::Default());
         options.env = penv;
     } else {
-        if (params.wipe_data) {
-            LogPrintf("Wiping LevelDB in %s\n", fs::PathToString(params.path));
-            leveldb::Status result =
-                leveldb::DestroyDB(fs::PathToString(params.path), options);
+        if (fWipe) {
+            LogPrintf("Wiping LevelDB in %s\n", path.string());
+            leveldb::Status result = leveldb::DestroyDB(path.string(), options);
             dbwrapper_private::HandleError(result);
         }
-        TryCreateDirectories(params.path);
-        LogPrintf("Opening LevelDB in %s\n", fs::PathToString(params.path));
+        TryCreateDirectories(path);
+        LogPrintf("Opening LevelDB in %s\n", path.string());
     }
-    // PathToString() return value is safe to pass to leveldb open function,
-    // because on POSIX leveldb passes the byte string directly to ::open(), and
-    // on Windows it converts from UTF-8 to UTF-16 before calling ::CreateFileW
-    // (see env_posix.cc and env_windows.cc).
-    leveldb::Status status =
-        leveldb::DB::Open(options, fs::PathToString(params.path), &pdb);
+    leveldb::Status status = leveldb::DB::Open(options, path.string(), &pdb);
     dbwrapper_private::HandleError(status);
     LogPrintf("Opened LevelDB successfully\n");
 
-    if (params.options.force_compact) {
-        LogPrintf("Starting database compaction of %s\n",
-                  fs::PathToString(params.path));
+    if (gArgs.GetBoolArg("-forcecompactdb", false)) {
+        LogPrintf("Starting database compaction of %s\n", path.string());
         pdb->CompactRange(nullptr, nullptr);
-        LogPrintf("Finished database compaction of %s\n",
-                  fs::PathToString(params.path));
+        LogPrintf("Finished database compaction of %s\n", path.string());
     }
 
     // The base-case obfuscation key, which is a noop.
@@ -162,7 +156,7 @@ CDBWrapper::CDBWrapper(const DBParams &params)
 
     bool key_exists = Read(OBFUSCATE_KEY_KEY, obfuscate_key);
 
-    if (!key_exists && params.obfuscate && IsEmpty()) {
+    if (!key_exists && obfuscate && IsEmpty()) {
         // Initialize non-degenerate obfuscation if it won't upset existing,
         // non-obfuscated data.
         std::vector<uint8_t> new_key = CreateObfuscateKey();
@@ -171,12 +165,12 @@ CDBWrapper::CDBWrapper(const DBParams &params)
         Write(OBFUSCATE_KEY_KEY, new_key);
         obfuscate_key = new_key;
 
-        LogPrintf("Wrote new obfuscate key for %s: %s\n",
-                  fs::PathToString(params.path), HexStr(obfuscate_key));
+        LogPrintf("Wrote new obfuscate key for %s: %s\n", path.string(),
+                  HexStr(obfuscate_key));
     }
 
-    LogPrintf("Using obfuscation key for %s: %s\n",
-              fs::PathToString(params.path), HexStr(obfuscate_key));
+    LogPrintf("Using obfuscation key for %s: %s\n", path.string(),
+              HexStr(obfuscate_key));
 }
 
 CDBWrapper::~CDBWrapper() {
@@ -234,9 +228,9 @@ const unsigned int CDBWrapper::OBFUSCATE_KEY_NUM_BYTES = 8;
  * obfuscating XOR key.
  */
 std::vector<uint8_t> CDBWrapper::CreateObfuscateKey() const {
-    std::vector<uint8_t> ret(OBFUSCATE_KEY_NUM_BYTES);
-    GetRandBytes(ret);
-    return ret;
+    uint8_t buff[OBFUSCATE_KEY_NUM_BYTES];
+    GetRandBytes(buff, OBFUSCATE_KEY_NUM_BYTES);
+    return std::vector<uint8_t>(&buff[0], &buff[OBFUSCATE_KEY_NUM_BYTES]);
 }
 
 bool CDBWrapper::IsEmpty() {

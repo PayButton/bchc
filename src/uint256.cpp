@@ -1,5 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,22 +8,27 @@
 
 #include <util/strencodings.h>
 
+#include <cstring>
+#include <iterator>
+#include <type_traits>
+
+// Some basic compile-time checks
+static_assert(uint256{}.IsNull() && uint160{}.IsNull(),
+              "Default constructed base_blob should be IsNull()");
+static_assert(std::is_pointer_v<decltype(uint256{}.begin())>,
+              "The below code assumes begin() is a simple pointer to uint8_t");
+
 template <unsigned int BITS>
-base_blob<BITS>::base_blob(const std::vector<uint8_t> &vch) {
-    assert(vch.size() == sizeof(m_data));
-    memcpy(m_data, vch.data(), sizeof(m_data));
+base_blob<BITS>::base_blob(const std::vector<uint8_t> &vch) noexcept {
+    assert(vch.size() == size());
+    std::memcpy(begin(), vch.data(), size());
 }
 
 template <unsigned int BITS> std::string base_blob<BITS>::GetHex() const {
-    uint8_t m_data_rev[WIDTH];
-    for (int i = 0; i < WIDTH; ++i) {
-        m_data_rev[i] = m_data[WIDTH - 1 - i];
-    }
-    return HexStr(m_data_rev);
+    return HexStr(std::reverse_iterator(end()), std::reverse_iterator(begin()));
 }
 
-template <unsigned int BITS> void base_blob<BITS>::SetHex(const char *psz) {
-    memset(m_data, 0, sizeof(m_data));
+template <unsigned int BITS> void base_blob<BITS>::SetHex(const char *psz) noexcept {
 
     // skip leading spaces
     while (IsSpace(*psz)) {
@@ -30,45 +36,47 @@ template <unsigned int BITS> void base_blob<BITS>::SetHex(const char *psz) {
     }
 
     // skip 0x
-    if (psz[0] == '0' && ToLower(psz[1]) == 'x') {
+    if (psz[0] == '0' && ToLower(uint8_t(psz[1])) == 'x') {
         psz += 2;
     }
 
     // hex string to uint
-    size_t digits = 0;
-    while (::HexDigit(psz[digits]) != -1) {
-        digits++;
+    const char *const pbegin = psz;
+    while (::HexDigit(*psz) != -1) {
+        psz++;
     }
 
-    uint8_t *p1 = (uint8_t *)m_data;
-    uint8_t *pend = p1 + WIDTH;
-    while (digits > 0 && p1 < pend) {
-        *p1 = ::HexDigit(psz[--digits]);
-        if (digits > 0) {
-            *p1 |= uint8_t(::HexDigit(psz[--digits])) << 4;
-            p1++;
+    psz--;
+    uint8_t *p1 = begin();
+    const uint8_t *const pend = end();
+    while (psz >= pbegin && p1 < pend) {
+        *p1 = ::HexDigit(*psz--);
+        if (psz >= pbegin) {
+            *p1 |= uint8_t(::HexDigit(*psz--) << 4);
         }
+        ++p1;
     }
+
+    // clear remaining bytes, if any
+    while (p1 < pend)
+        *p1++ = 0;
 }
 
 template <unsigned int BITS>
-void base_blob<BITS>::SetHex(const std::string &str) {
+void base_blob<BITS>::SetHex(const std::string &str) noexcept {
     SetHex(str.c_str());
 }
 
 // Explicit instantiations for base_blob<160>
-template base_blob<160>::base_blob(const std::vector<uint8_t> &);
+template base_blob<160>::base_blob(const std::vector<uint8_t> &) noexcept;
 template std::string base_blob<160>::GetHex() const;
 template std::string base_blob<160>::ToString() const;
-template void base_blob<160>::SetHex(const char *);
-template void base_blob<160>::SetHex(const std::string &);
+template void base_blob<160>::SetHex(const char *) noexcept;
+template void base_blob<160>::SetHex(const std::string &) noexcept;
 
 // Explicit instantiations for base_blob<256>
-template base_blob<256>::base_blob(const std::vector<uint8_t> &);
+template base_blob<256>::base_blob(const std::vector<uint8_t> &) noexcept;
 template std::string base_blob<256>::GetHex() const;
 template std::string base_blob<256>::ToString() const;
-template void base_blob<256>::SetHex(const char *);
-template void base_blob<256>::SetHex(const std::string &);
-
-const uint256 uint256::ZERO(0);
-const uint256 uint256::ONE(1);
+template void base_blob<256>::SetHex(const char *) noexcept;
+template void base_blob<256>::SetHex(const std::string &) noexcept;

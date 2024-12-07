@@ -1,42 +1,30 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2018 The Bitcoin Core developers
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_INIT_H
-#define BITCOIN_INIT_H
+#pragma once
 
-#include <common/system.h>
+#include <node/context.h>
+#include <util/system.h>
 
 #include <memory>
 #include <string>
 
-//! Default value for -daemon option
-static constexpr bool DEFAULT_DAEMON = false;
-//! Default value for -daemonwait option
-static constexpr bool DEFAULT_DAEMONWAIT = false;
-
-class ArgsManager;
 class Config;
 class CScheduler;
 class CWallet;
 class HTTPRPCRequestProcessor;
-namespace interfaces {
-struct BlockAndHeaderTipInfo;
-}
-namespace node {
-struct NodeContext;
-} // namespace node
 class RPCServer;
 
 /** Interrupt threads */
-void Interrupt(node::NodeContext &node);
-void Shutdown(node::NodeContext &node);
+void Interrupt();
+void Shutdown(NodeContext &node);
 //! Initialize the logging infrastructure
-void InitLogging(const ArgsManager &args);
+void InitLogging();
 //! Parameter interaction: change current parameters depending on various rules
-void InitParameterInteraction(ArgsManager &args);
+void InitParameterInteraction();
 
 /**
  * Initialize bitcoin: Basic context setup.
@@ -44,7 +32,7 @@ void InitParameterInteraction(ArgsManager &args);
  * Do not call Shutdown() if this function fails.
  * @pre Parameters should be parsed and config file should be read.
  */
-bool AppInitBasicSetup(const ArgsManager &args);
+bool AppInitBasicSetup();
 /**
  * Initialization: parameter interaction.
  * @note This can be done before daemonization.
@@ -52,7 +40,7 @@ bool AppInitBasicSetup(const ArgsManager &args);
  * @pre Parameters should be parsed and config file should be read,
  * AppInitBasicSetup should have been called.
  */
-bool AppInitParameterInteraction(Config &config, const ArgsManager &args);
+bool AppInitParameterInteraction(Config &config);
 /**
  * Initialization sanity checks: ecc init, sanity checks, dir lock.
  * @note This can be done before daemonization.
@@ -70,11 +58,6 @@ bool AppInitSanityChecks();
  */
 bool AppInitLockDataDirectory();
 /**
- * Initialize node and wallet interface pointers. Has no prerequisites or side
- * effects besides allocating memory.
- */
-bool AppInitInterfaces(node::NodeContext &node);
-/**
  * Bitcoin main initialization.
  * @note This should only be done after daemonization.
  * @pre Parameters should be parsed and config file should be read,
@@ -82,12 +65,12 @@ bool AppInitInterfaces(node::NodeContext &node);
  */
 bool AppInitMain(Config &config, RPCServer &rpcServer,
                  HTTPRPCRequestProcessor &httpRPCRequestProcessor,
-                 node::NodeContext &node,
-                 interfaces::BlockAndHeaderTipInfo *tip_info = nullptr);
+                 NodeContext &node);
 
 /**
- * Register all arguments with the ArgsManager
+ * Setup the arguments for gArgs.
  */
-void SetupServerArgs(node::NodeContext &node);
+void SetupServerArgs();
 
-#endif // BITCOIN_INIT_H
+/** Returns licensing information (for -version) */
+std::string LicenseInfo();

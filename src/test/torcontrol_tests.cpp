@@ -1,9 +1,11 @@
 // Copyright (c) 2017 The Zcash developers
+// Copyright (c) 2019-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 //
+#include <torcontrol.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -16,8 +18,8 @@ std::map<std::string, std::string> ParseTorReplyMapping(const std::string &s);
 
 BOOST_FIXTURE_TEST_SUITE(torcontrol_tests, BasicTestingSetup)
 
-static void CheckSplitTorReplyLine(std::string input, std::string command,
-                                   std::string args) {
+static void CheckSplitTorReplyLine(const std::string &input, const std::string &command,
+                                   const std::string &args) {
     auto ret = SplitTorReplyLine(input);
     BOOST_CHECK_EQUAL(ret.first, command);
     BOOST_CHECK_EQUAL(ret.second, args);
@@ -53,13 +55,13 @@ BOOST_AUTO_TEST_CASE(util_SplitTorReplyLine) {
 }
 
 static void
-CheckParseTorReplyMapping(std::string input,
-                          std::map<std::string, std::string> expected) {
+CheckParseTorReplyMapping(const std::string &input,
+                          const std::map<std::string, std::string> &expected) {
     auto ret = ParseTorReplyMapping(input);
     BOOST_CHECK_EQUAL(ret.size(), expected.size());
-    auto r_it = ret.begin();
-    auto e_it = expected.begin();
-    while (r_it != ret.end() && e_it != expected.end()) {
+    auto r_it = ret.cbegin();
+    auto e_it = expected.cbegin();
+    while (r_it != ret.cend() && e_it != expected.cend()) {
         BOOST_CHECK_EQUAL(r_it->first, e_it->first);
         BOOST_CHECK_EQUAL(r_it->second, e_it->second);
         r_it++;

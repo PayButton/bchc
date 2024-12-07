@@ -1,28 +1,29 @@
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RPC_BLOCKCHAIN_H
-#define BITCOIN_RPC_BLOCKCHAIN_H
+#pragma once
 
-#include <streams.h>
+#include <amount.h>
+#include <core_io.h>
 #include <sync.h>
-#include <util/fs.h>
-#include <validation.h>
-
 #include <univalue.h>
 
-#include <any>
+#include <cstdint>
+#include <vector>
+
+extern RecursiveMutex cs_main;
 
 class CBlock;
 class CBlockIndex;
-class Chainstate;
-class RPCHelpMan;
-namespace node {
-struct NodeContext;
-} // namespace node
+class Config;
+class CTxMemPool;
+class JSONRPCRequest;
+namespace abla { class State; }
 
-RPCHelpMan getblockchaininfo();
+UniValue getblockchaininfo(const Config &config, const JSONRPCRequest &request);
+
+static constexpr int NUM_GETBLOCKSTATS_PERCENTILES = 5;
 
 /**
  * Get the required difficulty of the next block w/r/t the given block index.
@@ -33,24 +34,23 @@ RPCHelpMan getblockchaininfo();
 double GetDifficulty(const CBlockIndex *blockindex);
 
 /** Callback for when block tip changed. */
-void RPCNotifyBlockChange(const CBlockIndex *pindex);
+void RPCNotifyBlockChange(bool ibd, const CBlockIndex *pindex);
 
 /** Block description to JSON */
-UniValue blockToJSON(node::BlockManager &blockman, const CBlock &block,
-                     const CBlockIndex *tip, const CBlockIndex *blockindex,
-                     bool txDetails = false) LOCKS_EXCLUDED(cs_main);
+UniValue::Object blockToJSON(const Config &config, const CBlock &block, const CBlockIndex *tip,
+                             const CBlockIndex *blockindex, TxVerbosity verbosity) LOCKS_EXCLUDED(cs_main);
+
+/** Mempool information to JSON */
+UniValue::Object MempoolInfoToJSON(const Config &config, const CTxMemPool &pool);
+
+/** Mempool to JSON */
+UniValue MempoolToJSON(const CTxMemPool &pool, bool verbose = false);
 
 /** Block header to JSON */
-UniValue blockheaderToJSON(const CBlockIndex *tip,
-                           const CBlockIndex *blockindex)
-    LOCKS_EXCLUDED(cs_main);
+UniValue::Object blockheaderToJSON(const Config &config, const CBlockIndex *tip, const CBlockIndex *blockindex);
 
-/**
- * Helper to create UTXO snapshots given a chainstate and a file handle.
- * @return a UniValue map containing metadata about the snapshot.
- */
-UniValue CreateUTXOSnapshot(node::NodeContext &node, Chainstate &chainstate,
-                            AutoFile &afile, const fs::path &path,
-                            const fs::path &tmppath);
+/** ABLA state to JSON */
+UniValue::Object ablaStateToJSON(const Config &config, const abla::State &ablaState);
 
-#endif // BITCOIN_RPC_BLOCKCHAIN_H
+/** Used by getblockstats to get feerates at different percentiles by weight  */
+void CalculatePercentilesBySize(Amount result[NUM_GETBLOCKSTATS_PERCENTILES], std::vector<std::pair<Amount, int64_t>>& scores, int64_t total_size);

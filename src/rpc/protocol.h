@@ -1,10 +1,19 @@
 // Copyright (c) 2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RPC_PROTOCOL_H
-#define BITCOIN_RPC_PROTOCOL_H
+#pragma once
+
+#include <fs.h>
+
+#include <cstdint>
+#include <list>
+#include <map>
+#include <string>
+
+#include <univalue.h>
 
 //! HTTP status codes
 enum HTTPStatusCode {
@@ -58,6 +67,10 @@ enum RPCErrorCode {
     RPC_IN_WARMUP = -28,
     //! RPC method is deprecated
     RPC_METHOD_DEPRECATED = -32,
+    //! RPC method or subsystem is disabled by node configuration
+    RPC_METHOD_DISABLED = -90,
+    //! RPC is disabled due to blockchain conditions (see software_outdated.cpp)
+    RPC_DISABLED = -100,
 
     //! Aliases for backward compatibility
     RPC_TRANSACTION_ERROR = RPC_VERIFY_ERROR,
@@ -79,11 +92,6 @@ enum RPCErrorCode {
     RPC_CLIENT_INVALID_IP_OR_SUBNET = -30,
     //! No valid connection manager instance found
     RPC_CLIENT_P2P_DISABLED = -31,
-    //! Max number of outbound or block-relay connections already open
-    RPC_CLIENT_NODE_CAPACITY_REACHED = -34,
-
-    //! Chain errors
-    RPC_CLIENT_MEMPOOL_DISABLED = -33, //!< No mempool instance found
 
     //! Wallet errors
     //! Unspecified problem with wallet (key not found etc.)
@@ -118,4 +126,24 @@ enum RPCErrorCode {
     RPC_FORBIDDEN_BY_SAFE_MODE = -2,
 };
 
-#endif // BITCOIN_RPC_PROTOCOL_H
+UniValue::Object JSONRPCRequestObj(std::string&& strMethod, UniValue&& params, UniValue&& id);
+UniValue::Object JSONRPCReplyObj(UniValue&& result, UniValue&& error, UniValue&& id);
+std::string JSONRPCReply(UniValue&& result, UniValue&& error, UniValue&& id);
+/** JSON-RPC error that can be thrown as an exception. */
+struct JSONRPCError {
+    RPCErrorCode code;
+    std::string message;
+    JSONRPCError(RPCErrorCode _code, const std::string& _message) : code(_code), message(_message) {}
+    JSONRPCError(RPCErrorCode _code, std::string&& _message) noexcept : code(_code), message(std::move(_message)) {}
+    /** Converts the error to a UniValue::Object. Error message is moved. */
+    UniValue::Object toObj() &&;
+};
+
+/** Generate a new RPC authentication cookie and write it to disk */
+bool GenerateAuthCookie(std::string *cookie_out);
+/** Read the RPC authentication cookie from disk */
+bool GetAuthCookie(std::string *cookie_out);
+/** Delete RPC authentication cookie from disk */
+void DeleteAuthCookie();
+/** Parse JSON-RPC batch reply into a vector */
+std::vector<UniValue> JSONRPCProcessBatchReply(const UniValue &in, size_t num);

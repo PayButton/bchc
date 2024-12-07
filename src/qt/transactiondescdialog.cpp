@@ -1,11 +1,11 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2019 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/forms/ui_transactiondescdialog.h>
 #include <qt/transactiondescdialog.h>
 
-#include <qt/guiutil.h>
 #include <qt/transactiontablemodel.h>
 
 #include <QModelIndex>
@@ -20,8 +20,6 @@ TransactionDescDialog::TransactionDescDialog(const QModelIndex &idx,
     QString desc =
         idx.data(TransactionTableModel::LongDescriptionRole).toString();
     ui->detailText->setHtml(desc);
-
-    GUIUtil::handleCloseWindowShortcut(this);
 }
 
 TransactionDescDialog::~TransactionDescDialog() {

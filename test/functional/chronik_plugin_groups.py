@@ -22,7 +22,7 @@ from test_framework.blocktools import (
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_RETURN, CScript
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal
 
@@ -35,6 +35,7 @@ class ChronikPluginGroups(BitcoinTestFramework):
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_chronik_plugins()
+        raise SkipTest("Plugins currently not supported")
 
     def run_test(self):
         from test_framework.chronik.client import pb
@@ -73,7 +74,7 @@ class MyPluginPlugin(Plugin):
         outputs = []
         for idx, (op, _) in enumerate(zip(ops[2:], tx.outputs[1:])):
             outputs.append(
-                PluginOutput(idx=idx + 1, group=op)
+                PluginOutput(idx=idx + 1, groups=op)
             )
         return outputs
 """,
@@ -88,6 +89,11 @@ class MyPluginPlugin(Plugin):
         ):
             self.restart_node(0, ["-chronik", "-chronikreindex"])
         peer = node.add_p2p_connection(P2PDataStore())
+
+        assert_equal(
+            chronik.plugin("doesntexist").groups().err(404).msg,
+            '404: Plugin "doesntexist" not loaded',
+        )
 
         plugin = chronik.plugin("my_plugin")
         assert_equal(

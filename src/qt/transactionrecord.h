@@ -1,12 +1,13 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2022 The Bitcoin Cash Node developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_TRANSACTIONRECORD_H
-#define BITCOIN_QT_TRANSACTIONRECORD_H
+#pragma once
 
-#include <consensus/amount.h>
-#include <primitives/blockhash.h>
+#include <amount.h>
+#include <dsproof/dsproof.h>
 #include <primitives/txid.h>
 
 #include <QList>
@@ -27,7 +28,7 @@ class TransactionStatus {
 public:
     TransactionStatus()
         : countsForBalance(false), sortKey(""), matures_in(0),
-          status(Unconfirmed), depth(0), open_for(0) {}
+          status(Unconfirmed), depth(0), open_for(0), cur_num_blocks(-1) {}
 
     enum Status {
         /**
@@ -35,6 +36,10 @@ public:
          */
         Confirmed,
         /// Normal (sent/received) transactions
+        /** Transaction not yet final, waiting for date */
+        OpenUntilDate,
+        /** Transaction not yet final, waiting for block */
+        OpenUntilBlock,
         /** Not yet mined into a block **/
         Unconfirmed,
         /**
@@ -49,7 +54,9 @@ public:
         /** Mined but waiting for maturity */
         Immature,
         /** Mined but not accepted */
-        NotAccepted
+        NotAccepted,
+        /** Double spend proof was found for outpoints involved in this tx */
+        DoubleSpent
     };
 
     /// Transaction counts towards available balance
@@ -74,10 +81,9 @@ public:
 
     /**@}*/
 
-    /**
-     * Current block hash (to know whether cached status is still valid)
+    /** Current number of blocks (to know whether cached status is still valid)
      */
-    BlockHash m_cur_block_hash{};
+    int cur_num_blocks;
 };
 
 /**
@@ -127,6 +133,7 @@ public:
     std::string address;
     Amount debit;
     Amount credit;
+    DoubleSpendProof dsProof;
     /**@}*/
 
     /** Subtransaction index, for sort key */
@@ -146,13 +153,10 @@ public:
 
     /** Update status from core wallet tx.
      */
-    void updateStatus(const interfaces::WalletTxStatus &wtx,
-                      const BlockHash &block_hash, int numBlocks,
+    void updateStatus(const interfaces::WalletTxStatus &wtx, int numBlocks,
                       int64_t block_time);
 
     /** Return whether a status update is needed.
      */
-    bool statusUpdateNeeded(const BlockHash &block_hash) const;
+    bool statusUpdateNeeded(int numBlocks) const;
 };
-
-#endif // BITCOIN_QT_TRANSACTIONRECORD_H

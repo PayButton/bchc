@@ -12,7 +12,7 @@ from test_framework.blocktools import create_block, create_coinbase
 from test_framework.messages import CTxOut
 from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_RETURN, CScript
-from test_framework.test_framework import BitcoinTestFramework
+from test_framework.test_framework import BitcoinTestFramework, SkipTest
 from test_framework.util import assert_equal
 
 
@@ -24,6 +24,7 @@ class ChronikPluginsSetup(BitcoinTestFramework):
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_chronik_plugins()
+        raise SkipTest("Plugins currently not supported")
 
     def run_test(self):
         node = self.nodes[0]

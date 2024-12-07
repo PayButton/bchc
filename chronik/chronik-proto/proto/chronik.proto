@@ -22,6 +22,10 @@ message Blocks {
 message BlockHeader {
     // Raw data
     bytes raw_header = 1;
+    // Merkle root
+    bytes root = 2;
+    // Merkle branch of header up to root, deepest pairing first
+    repeated bytes branch = 3;
 }
 
 // Range of headers
@@ -103,6 +107,8 @@ message Tx {
     // Token status, i.e. whether this tx has any tokens or unintentional token burns
     // or something unexpected, like failed parsings etc.
     TokenStatus token_status = 15;
+    // Whether the transaction has been finalized by avalanche
+    bool is_final = 16;
 }
 
 // UTXO of a script.
@@ -459,6 +465,8 @@ message WsSub {
         WsSubTokenId token_id = 4;
         // Subscription to a lokad ID
         WsSubLokadId lokad_id = 5;
+        // Subscription to a plugin group
+        WsPlugin plugin = 6;
     }
 }
 
@@ -495,6 +503,14 @@ message WsSubLokadId {
     bytes lokad_id = 1;
 }
 
+// Subscription to a group assigned by a plugin to outputs.
+message WsPlugin {
+    // Name of the plugin to subscribe to
+    string plugin_name = 1;
+    // Group assigned by the plugin to subscribe to
+    bytes group = 2;
+}
+
 // Message coming from the WebSocket
 message WsMsg {
     // Kind of message
@@ -508,7 +524,15 @@ message WsMsg {
     }
 }
 
-// Block got connected, disconnected, finalized, etc.
+// The relevant coinbase data
+message CoinbaseData {
+    // The coinbase input scriptsig
+    bytes coinbase_scriptsig = 1;
+    // Outputs of the coinbase tx
+    repeated TxOutput coinbase_outputs = 2;
+}
+
+// Block got connected, disconnected, finalized, invalidated, etc.
 message MsgBlock {
     // What happened to the block
     BlockMsgType msg_type = 1;
@@ -516,6 +540,11 @@ message MsgBlock {
     bytes block_hash = 2;
     // Height of the block
     int32 block_height = 3;
+    // Timestamp field of the block
+    int64 block_timestamp = 4;
+    // The coinbase data, only available if the block is disconnected or
+    // invalidated
+    CoinbaseData coinbase_data = 5;
 }
 
 // Type of message for the block
@@ -526,6 +555,8 @@ enum BlockMsgType {
     BLK_DISCONNECTED = 1;
     // Block has been finalized by Avalanche
     BLK_FINALIZED = 2;
+    // Block has been invalidated by Avalanche
+    BLK_INVALIDATED = 3;
 }
 
 // Tx got added to/removed from mempool, or confirmed in a block, etc.

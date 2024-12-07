@@ -1,33 +1,12 @@
 // Copyright (c) 2021 The Bitcoin Core developers
+// Copyright (c) 2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RPC_SERVER_UTIL_H
-#define BITCOIN_RPC_SERVER_UTIL_H
+#pragma once
+
+#include <node/context.h>
 
 #include <any>
 
-class ArgsManager;
-class CConnman;
-class CTxMemPool;
-class ChainstateManager;
-class PeerManager;
-namespace node {
-struct NodeContext;
-} // namespace node
-namespace avalanche {
-class Processor;
-} // namespace avalanche
-
-node::NodeContext &EnsureAnyNodeContext(const std::any &context);
-CTxMemPool &EnsureMemPool(const node::NodeContext &node);
-CTxMemPool &EnsureAnyMemPool(const std::any &context);
-ArgsManager &EnsureArgsman(const node::NodeContext &node);
-ArgsManager &EnsureAnyArgsman(const std::any &context);
-ChainstateManager &EnsureChainman(const node::NodeContext &node);
-ChainstateManager &EnsureAnyChainman(const std::any &context);
-CConnman &EnsureConnman(const node::NodeContext &node);
-PeerManager &EnsurePeerman(const node::NodeContext &node);
-avalanche::Processor &EnsureAvalanche(const node::NodeContext &node);
-
-#endif // BITCOIN_RPC_SERVER_UTIL_H
+NodeContext& EnsureAnyNodeContext(const std::any& context);

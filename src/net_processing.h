@@ -1,161 +1,172 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_NET_PROCESSING_H
-#define BITCOIN_NET_PROCESSING_H
+#pragma once
 
-#include <avalanche/avalanche.h>
+#include <consensus/params.h>
 #include <net.h>
 #include <sync.h>
+#include <txrequest.h>
 #include <validationinterface.h>
 
-namespace avalanche {
-struct ProofId;
-class Processor;
-} // namespace avalanche
+#include <atomic>
+#include <memory>
 
-class AddrMan;
-class CTxMemPool;
-class ChainstateManager;
+extern RecursiveMutex cs_main;
+
+/**
+ * Default average delay between trickled inventory transmissions in millisec.
+ * Blocks and whitelisted receivers bypass this, outbound peers get half this
+ * delay. Note: this ends up capped at MAX_INV_BROADCAST_INTERVAL (defined in
+ * policy/policy.h).
+ */
+static constexpr unsigned int DEFAULT_INV_BROADCAST_INTERVAL = 500;
+/**
+ * Maximum number of inventory items to send per transmission.
+ * Limits the impact of low-fee transaction floods. Note: this ends up capped
+ * at MAX_INV_BROADCAST_RATE (defined in policy/policy.h).
+ */
+static constexpr unsigned int DEFAULT_INV_BROADCAST_RATE = 7;
+
+
 class Config;
 
 /**
  * Default for -maxorphantx, maximum number of orphan transactions kept in
  * memory.
  */
-static const uint32_t DEFAULT_MAX_ORPHAN_TRANSACTIONS{100};
+static const unsigned int DEFAULT_MAX_ORPHAN_TRANSACTIONS = 100;
 /**
- * Default number of non-mempool transactions to keep around for block
- * reconstruction. Includes orphan and rejected transactions.
+ * Default number of orphan+recently-replaced txn to keep around for block
+ * reconstruction.
  */
-static const uint32_t DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN{100};
-static const bool DEFAULT_PEERBLOCKFILTERS = false;
-/** Threshold for marking a node to be discouraged, e.g. disconnected and added
- * to the discouragement filter. */
-static const int DISCOURAGEMENT_THRESHOLD{100};
-/** The maximum number of address records permitted in an ADDR message. */
-static constexpr size_t MAX_ADDR_TO_SEND{1000};
+static const unsigned int DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN = 100;
 
-/**
- * Number of headers sent in one getheaders result. We rely on the assumption
- * that if a peer sends less than this number, we reached its tip. Changing
- * this value is a protocol upgrade.
- */
-static const unsigned int MAX_HEADERS_RESULTS = 2000;
+/** Default for BIP61 (sending reject messages) */
+static constexpr bool DEFAULT_ENABLE_BIP61 = true;
 
-struct CNodeStateStats {
-    int nSyncHeight = -1;
-    int nCommonHeight = -1;
-    int m_starting_height = -1;
-    std::chrono::microseconds m_ping_wait;
-    std::vector<int> vHeightInFlight;
-    bool m_relay_txs;
-    Amount m_fee_filter_received;
-    uint64_t m_addr_processed = 0;
-    uint64_t m_addr_rate_limited = 0;
-    bool m_addr_relay_enabled{false};
-    ServiceFlags their_services;
-    int64_t presync_height{-1};
-};
+class PeerLogicValidation final : public CValidationInterface,
+                                  public NetEventsInterface {
+private:
+    CConnman *const connman;
+    BanMan *const m_banman;
+    std::shared_ptr<std::atomic_bool> deleted; ///< Used to suppress further scheduler tasks if this instance is gone.
+    TxRequestTracker m_txrequest GUARDED_BY(cs_main);
 
-class PeerManager : public CValidationInterface, public NetEventsInterface {
+    bool SendRejectsAndCheckIfShouldDiscourage(CNode *pnode, bool enable_bip61)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
 public:
-    struct Options {
-        //! Whether this node is running in -blocksonly mode
-        bool ignore_incoming_txs{DEFAULT_BLOCKSONLY};
-        //! Maximum number of orphan transactions kept in memory
-        uint32_t max_orphan_txs{DEFAULT_MAX_ORPHAN_TRANSACTIONS};
-        //! Number of non-mempool transactions to keep around for block
-        //! reconstruction. Includes orphan and rejected transactions.
-        uint32_t max_extra_txs{DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN};
-        //! Whether all P2P messages are captured to disk
-        bool capture_messages{false};
-        //! Number of addresses a node may send in an ADDR message.
-        //! This can be modified for tests only. Changing it on main net may
-        //! cause disconnections.
-        size_t max_addr_to_send{MAX_ADDR_TO_SEND};
+    PeerLogicValidation(CConnman *connman, BanMan *banman,
+                        CScheduler &scheduler, bool enable_bip61, bool enable_feefilter);
 
-        //! Minimum time between two AVAPOLL messages.
-        int64_t avalanche_cooldown{AVALANCHE_DEFAULT_COOLDOWN};
-        //! Minimum time before we will consider replacing a finalized proof
-        //! with a conflicting one.
-        int64_t avalanche_peer_replacement_cooldown{
-            AVALANCHE_DEFAULT_PEER_REPLACEMENT_COOLDOWN};
-        //! Whether this node has enabled avalanche preconsensus.
-        bool avalanche_preconsensus{DEFAULT_AVALANCHE_PRECONSENSUS};
-
-        //! Whether or not the internal RNG behaves deterministically (this is
-        //! a test-only option).
-        bool deterministic_rng{false};
-    };
-
-    static std::unique_ptr<PeerManager>
-    make(CConnman &connman, AddrMan &addrman, BanMan *banman,
-         ChainstateManager &chainman, CTxMemPool &pool,
-         avalanche::Processor *const avalanche, Options opts);
-    virtual ~PeerManager() {}
+    ~PeerLogicValidation();
 
     /**
-     * Attempt to manually fetch block from a given peer. We must already have
-     * the header.
-     *
-     * @param[in]  config       The global config
-     * @param[in]  peer_id      The peer id
-     * @param[in]  block_index  The block index
-     * @returns std::nullopt if a request was successfully made, otherwise an
-     *     error message
+     * Overridden from CValidationInterface.
      */
-    virtual std::optional<std::string>
-    FetchBlock(const Config &config, NodeId peer_id,
-               const CBlockIndex &block_index) = 0;
+    void
+    BlockConnected(const std::shared_ptr<const CBlock> &pblock,
+                   const CBlockIndex *pindexConnected,
+                   const std::vector<CTransactionRef> &vtxConflicted) override;
+    /**
+     * Overridden from CValidationInterface.
+     */
+    void UpdatedBlockTip(const CBlockIndex *pindexNew,
+                         const CBlockIndex *pindexFork,
+                         bool fInitialDownload) override;
+    /**
+     * Overridden from CValidationInterface.
+     */
+    void BlockChecked(const CBlock &block,
+                      const CValidationState &state) override;
+    /**
+     * Overridden from CValidationInterface.
+     */
+    void NewPoWValidBlock(const CBlockIndex *pindex,
+                          const std::shared_ptr<const CBlock> &pblock) override;
 
-    /** Begin running background tasks, should only be called once */
-    virtual void StartScheduledTasks(CScheduler &scheduler) = 0;
+    /**
+     * Initialize a peer by adding it to mapNodeState and pushing a message
+     * requesting its version.
+     */
+    void InitializeNode(const Config &config, CNode *pnode) override;
+    /**
+     * Handle removal of a peer by updating various state and removing it from
+     * mapNodeState.
+     */
+    void FinalizeNode(const Config &config, NodeId nodeid,
+                      bool &fUpdateConnectionTime) override;
+    /**
+     * Process protocol messages received from a given node.
+     */
+    bool ProcessMessages(const Config &config, CNode *pfrom,
+                         std::atomic<bool> &interrupt) override;
+    /**
+     * Send queued protocol messages to be sent to a give node.
+     *
+     * @param[in]   pto             The node which we are sending messages to.
+     * @param[in]   interrupt       Interrupt condition for processing threads
+     * @return                      True if there is more work to be done
+     */
+    bool SendMessages(const Config &config, CNode *pto,
+                      std::atomic<bool> &interrupt) override
+        EXCLUSIVE_LOCKS_REQUIRED(pto->cs_sendProcessing);
 
-    /** Get statistics from node state */
-    virtual bool GetNodeStateStats(NodeId nodeid,
-                                   CNodeStateStats &stats) const = 0;
-
-    /** Whether this node ignores txs received over p2p. */
-    virtual bool IgnoresIncomingTxs() = 0;
-
-    /** Relay transaction to all peers. */
-    virtual void RelayTransaction(const TxId &txid) = 0;
-
-    /** Relay proof to all peers */
-    virtual void RelayProof(const avalanche::ProofId &proofid) = 0;
-
-    /** Send ping message to all peers */
-    virtual void SendPings() = 0;
-
-    /** Set the best height */
-    virtual void SetBestHeight(int height) = 0;
-
-    /** Public for unit testing. */
-    virtual void UnitTestMisbehaving(const NodeId peer_id,
-                                     const int howmuch) = 0;
-
+    /**
+     * Consider evicting an outbound peer based on the amount of time they've
+     * been behind our tip.
+     */
+    void ConsiderEviction(CNode *pto, int64_t time_in_seconds)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     /**
      * Evict extra outbound peers. If we think our tip may be stale, connect to
      * an extra outbound.
      */
-    virtual void CheckForStaleTipAndEvictPeers() = 0;
-
-    /** Process a single message from a peer. Public for fuzz testing */
-    virtual void ProcessMessage(const Config &config, CNode &pfrom,
-                                const std::string &msg_type, CDataStream &vRecv,
-                                const std::chrono::microseconds time_received,
-                                const std::atomic<bool> &interruptMsgProc)
-        EXCLUSIVE_LOCKS_REQUIRED(g_msgproc_mutex) = 0;
-
+    void
+    CheckForStaleTipAndEvictPeers(const Consensus::Params &consensusParams);
     /**
-     * This function is used for testing the stale tip eviction logic, see
-     * denialofservice_tests.cpp
+     * If we have extra outbound peers, try to disconnect the one with the
+     * oldest block announcement.
      */
-    virtual void UpdateLastBlockAnnounceTime(NodeId node,
-                                             int64_t time_in_seconds) = 0;
+    void EvictExtraOutboundPeers(int64_t time_in_seconds)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    /// Called when AcceptToMemoryPool creates a double-spend proof for a tx
+    /// and associates it with said tx. Only ever called at most once per
+    /// proof. Notifies all peers of the new dsproof inv.
+    void TransactionDoubleSpent(const CTransactionRef &ptx, const DspId &dspId) override;
+
+    /// Called when a double-spend proof turns out to be bad either because it
+    /// was a rescued orphan that was bad, or because a peer sent us a bad proof.
+    /// We punish the nodeid(s) in question in that case (if they are still connected).
+    void BadDSProofsDetectedFromNodeIds(const std::vector<NodeId> &nodeIds) override;
+
+private:
+    //! Next time to check for stale tip
+    int64_t m_stale_tip_check_time;
+
+    //! Last time we spammed the "Broadcast" app-wide signal (in non-mockable microseconds)
+    int64_t m_last_bcast_sig_time GUARDED_BY(cs_main) = 0;
+
+    /** Enable BIP61 (sending reject messages) */
+    const bool m_enable_bip61;
+
+    /** Enable sending feefilter messages to peers. */
+    const bool m_enable_feefilter;
 };
 
-#endif // BITCOIN_NET_PROCESSING_H
+struct CNodeStateStats {
+    int nMisbehavior = 0;
+    int nSyncHeight = -1;
+    int nCommonHeight = -1;
+    std::vector<int> vHeightInFlight;
+};
+
+/** Get statistics from node state */
+bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);
+/** Increase a node's misbehavior score. */
+void Misbehaving(NodeId nodeid, int howmuch, const std::string &reason = "");

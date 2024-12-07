@@ -1,15 +1,12 @@
 // Copyright (c) 2017 The Bitcoin Core developers
+// Copyright (c) 2019-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <wallet/coinselection.h>
 
-#include <common/system.h>
-#include <consensus/amount.h>
-#include <feerate.h>
-#include <logging.h>
-#include <util/insert.h>
 #include <util/moneystr.h>
+#include <util/system.h>
 
 #include <optional>
 
@@ -19,8 +16,6 @@ struct {
         return a.effective_value > b.effective_value;
     }
 } descending;
-
-static const size_t TOTAL_TRIES = 100000;
 
 /**
  * This is the Branch and Bound Coin Selection algorithm designed by Murch. It
@@ -56,20 +51,24 @@ static const size_t TOTAL_TRIES = 100000;
  * Thesis:
  * https://murch.one/wp-content/uploads/2016/11/erhardt2016coinselection.pdf
  *
- * @param utxo_pool The set of UTXOs that we are choosing from. These UTXOs will
- *     be sorted in descending order by effective value and the CInputCoins'
- *     values are their effective values.
- * @param target_value This is the value that we want to select.
- *     It is the lower bound of the range.
- * @param cost_of_change This is the cost of creating and spending a change
- *     output. This plus target_value is the upper bound of the range.
- * @param out_set This is an output parameter for the set of CInputCoins that
- *     have been selected.
- * @param value_ret This is an output parameter for the total value of the
- *     CInputCoins that were selected.
- * @param not_input_fees -> The fees that need to be paid for the outputs and
- *     fixed size overhead (version, locktime, marker and flag)
+ * @param const std::vector<CInputCoin>& utxo_pool The set of UTXOs that we are
+ * choosing from. These UTXOs will be sorted in descending order by effective
+ * value and the CInputCoins' values are their effective values.
+ * @param const Amount& target_value This is the value that we want to select.
+ * It is the lower bound of the range.
+ * @param const Amount& cost_of_change This is the cost of creating and
+ * spending a change output. This plus target_value is the upper bound of the
+ * range.
+ * @param std::set<CInputCoin>& out_set -> This is an output parameter for the
+ * set of CInputCoins that have been selected.
+ * @param Amount& value_ret -> This is an output parameter for the total value
+ * of the CInputCoins that were selected.
+ * @param Amount not_input_fees -> The fees that need to be paid for the
+ * outputs and fixed size overhead (version, locktime, marker and flag)
  */
+
+static const size_t TOTAL_TRIES = 100000;
+
 bool SelectCoinsBnB(std::vector<OutputGroup> &utxo_pool,
                     const Amount &target_value, const Amount &cost_of_change,
                     std::set<CInputCoin> &out_set, Amount &value_ret,
@@ -136,9 +135,6 @@ bool SelectCoinsBnB(std::vector<OutputGroup> &utxo_pool,
                 best_selection = curr_selection;
                 best_selection.resize(utxo_pool.size());
                 best_waste = curr_waste;
-                if (best_waste == Amount::zero()) {
-                    break;
-                }
             }
             // Remove the excess value as we will be selecting different coins
             // now
@@ -348,41 +344,29 @@ bool KnapsackSolver(const Amount nTargetValue, std::vector<OutputGroup> &groups,
 
  ******************************************************************************/
 
-void OutputGroup::Insert(const CInputCoin &output, int depth, bool from_me,
-                         bool positive_only) {
-    // Compute the effective value first
-    const Amount coin_fee =
-        output.m_input_bytes < 0
-            ? Amount::zero()
-            : m_effective_feerate.GetFee(output.m_input_bytes);
-    const Amount ev = output.txout.nValue - coin_fee;
-
-    // Filter for positive only here before adding the coin
-    if (positive_only && ev <= Amount::zero()) {
-        return;
-    }
-
+void OutputGroup::Insert(const CInputCoin &output, int depth, bool from_me) {
     m_outputs.push_back(output);
-    CInputCoin &coin = m_outputs.back();
-
-    coin.m_fee = coin_fee;
-    fee += coin.m_fee;
-
-    coin.m_long_term_fee = coin.m_input_bytes < 0
-                               ? Amount::zero()
-                               : m_long_term_feerate.GetFee(coin.m_input_bytes);
-    long_term_fee += coin.m_long_term_fee;
-
-    coin.effective_value = ev;
-    effective_value += coin.effective_value;
-
     m_from_me &= from_me;
-    m_value += output.txout.nValue;
+    m_value += output.effective_value;
     m_depth = std::min(m_depth, depth);
+    effective_value = m_value;
 }
 
-bool OutputGroup::EligibleForSpending(
-    const CoinEligibilityFilter &eligibility_filter) const {
+std::vector<CInputCoin>::iterator
+OutputGroup::Discard(const CInputCoin &output) {
+    auto it = m_outputs.begin();
+    while (it != m_outputs.end() && it->outpoint != output.outpoint) {
+        ++it;
+    }
+    if (it == m_outputs.end()) {
+        return it;
+    }
+    m_value -= output.effective_value;
+    effective_value -= output.effective_value;
+    return m_outputs.erase(it);
+}
+
+bool OutputGroup::EligibleForSpending(const CoinEligibilityFilter &eligibility_filter) const {
     return m_depth >= (m_from_me ? eligibility_filter.conf_mine
                                  : eligibility_filter.conf_theirs);
 }

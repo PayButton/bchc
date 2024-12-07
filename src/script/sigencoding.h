@@ -1,11 +1,10 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCRIPT_SIGENCODING_H
-#define BITCOIN_SCRIPT_SIGENCODING_H
+#pragma once
 
 #include <script/script_error.h>
 #include <script/sighashtype.h>
@@ -13,9 +12,7 @@
 #include <cstdint>
 #include <vector>
 
-typedef std::vector<uint8_t> valtype;
-
-namespace {
+using valtype = std::vector<uint8_t>;
 
 inline SigHashType GetHashType(const valtype &vchSig) {
     if (vchSig.size() == 0) {
@@ -24,8 +21,6 @@ inline SigHashType GetHashType(const valtype &vchSig) {
 
     return SigHashType(vchSig[vchSig.size() - 1]);
 }
-
-} // namespace
 
 /**
  * Check that the signature provided on some data is properly encoded.
@@ -66,5 +61,3 @@ bool CheckTransactionSchnorrSignatureEncoding(const valtype &vchSig,
  */
 bool CheckPubKeyEncoding(const valtype &vchPubKey, uint32_t flags,
                          ScriptError *serror);
-
-#endif // BITCOIN_SCRIPT_SIGENCODING_H

@@ -10,10 +10,6 @@ final class IncludeGuardLinter extends ArcanistLinter {
 
   const INCLUDE_GUARD_INVALID = 1;
 
-  const EXCEPTIONS = array(
-    "src/test/fuzz/FuzzedDataProvider.h"
-  );
-
   public function getInfoName() {
     return 'lint-include-guard';
   }
@@ -44,11 +40,6 @@ final class IncludeGuardLinter extends ArcanistLinter {
   }
 
   public function lintPath($path) {
-    // If file is in list of exceptions, let it go
-    if (in_array($path, self::EXCEPTIONS)) {
-      return;
-    }
-
     $abspath = Filesystem::resolvePath($path, $this->getProjectRoot());
     $fileContent = Filesystem::readFile($abspath);
 
@@ -62,8 +53,6 @@ final class IncludeGuardLinter extends ArcanistLinter {
     $guard = array_slice($guard, 1);
     // Join to a string using an underscore ('_') as the delimiter.
     $guard = implode('_', $guard);
-    // Replace any special char with an underscore.
-    $guard = preg_replace('/[^A-Za-z0-9]/', '_', $guard);
     // Transform the whole string to uppercase.
     $guard = strtoupper($guard);
     // Surround with prefix and suffix.

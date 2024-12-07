@@ -1,8 +1,8 @@
-/***********************************************************************
- * Copyright (c) 2014 Pieter Wuille                                    *
- * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
- ***********************************************************************/
+/**********************************************************************
+ * Copyright (c) 2014 Pieter Wuille                                   *
+ * Distributed under the MIT software license, see the accompanying   *
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
+ **********************************************************************/
 
 #include <stdio.h>
 #include <string.h>
@@ -23,13 +23,13 @@ typedef struct {
     size_t siglen;
     unsigned char pubkey[33];
     size_t pubkeylen;
-} bench_verify_data;
+} benchmark_verify_t;
 
-static void bench_verify(void* arg, int iters) {
+static void benchmark_verify(void* arg) {
     int i;
-    bench_verify_data* data = (bench_verify_data*)arg;
+    benchmark_verify_t* data = (benchmark_verify_t*)arg;
 
-    for (i = 0; i < iters; i++) {
+    for (i = 0; i < 20000; i++) {
         secp256k1_pubkey pubkey;
         secp256k1_ecdsa_signature sig;
         data->sig[data->siglen - 1] ^= (i & 0xFF);
@@ -45,11 +45,11 @@ static void bench_verify(void* arg, int iters) {
 }
 
 #ifdef ENABLE_MODULE_SCHNORR
-static void bench_schnorr_verify(void* arg, int iters) {
+static void benchmark_schnorr_verify(void* arg) {
     int i;
-    bench_verify_data* data = (bench_verify_data*)arg;
+    benchmark_verify_t* data = (benchmark_verify_t*)arg;
 
-    for (i = 0; i < iters; i++) {
+    for (i = 0; i < 20000; i++) {
         secp256k1_pubkey pubkey;
         data->sig[data->siglen - 1] ^= (i & 0xFF);
         data->sig[data->siglen - 2] ^= ((i >> 8) & 0xFF);
@@ -67,9 +67,7 @@ int main(void) {
     int i;
     secp256k1_pubkey pubkey;
     secp256k1_ecdsa_signature sig;
-    bench_verify_data data;
-
-    int iters = get_iters(20000);
+    benchmark_verify_t data;
 
     data.ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 
@@ -86,12 +84,11 @@ int main(void) {
     data.pubkeylen = 33;
     CHECK(secp256k1_ec_pubkey_serialize(data.ctx, data.pubkey, &data.pubkeylen, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
 
-    run_benchmark("ecdsa_verify", bench_verify, NULL, NULL, &data, 10, iters);
-
+    run_benchmark("ecdsa_verify", benchmark_verify, NULL, NULL, &data, 10, 20000);
 #ifdef ENABLE_MODULE_SCHNORR
     CHECK(secp256k1_schnorr_sign(data.ctx, data.sig, data.msg, data.key, NULL, NULL));
     data.siglen = 64;
-    run_benchmark("schnorr_verify", bench_schnorr_verify, NULL, NULL, &data, 10, iters);
+    run_benchmark("schnorr_verify", benchmark_schnorr_verify, NULL, NULL, &data, 10, 20000);
 #endif
 
     secp256k1_context_destroy(data.ctx);

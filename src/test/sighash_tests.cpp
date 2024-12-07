@@ -1,8 +1,8 @@
-// Copyright (c) 2013-2019 The Bitcoin Core developers
+// Copyright (c) 2013-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <common/system.h>
 #include <consensus/tx_check.h>
 #include <consensus/validation.h>
 #include <hash.h>
@@ -11,12 +11,12 @@
 #include <serialize.h>
 #include <streams.h>
 #include <util/strencodings.h>
+#include <util/system.h>
 #include <version.h>
 
 #include <test/data/sighash.json.h>
 #include <test/jsonutil.h>
-#include <test/util/random.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -27,8 +27,10 @@
 // Old script.cpp SignatureHash function
 static uint256 SignatureHashOld(CScript scriptCode, const CTransaction &txTo,
                                 unsigned int nIn, uint32_t nHashType) {
+    static const uint256 one(uint256S(
+        "0000000000000000000000000000000000000000000000000000000000000001"));
     if (nIn >= txTo.vin.size()) {
-        return uint256::ONE;
+        return one;
     }
     CMutableTransaction txTmp(txTo);
 
@@ -57,7 +59,7 @@ static uint256 SignatureHashOld(CScript scriptCode, const CTransaction &txTo,
         // Only lock-in the txout payee at same index as txin
         unsigned int nOut = nIn;
         if (nOut >= txTmp.vout.size()) {
-            return uint256::ONE;
+            return one;
         }
         txTmp.vout.resize(nOut + 1);
         for (size_t i = 0; i < nOut; i++) {
@@ -79,7 +81,7 @@ static uint256 SignatureHashOld(CScript scriptCode, const CTransaction &txTo,
     }
 
     // Serialize and hash
-    HashWriter ss{};
+    CHashWriter ss(SER_GETHASH, 0);
     ss << txTmp << nHashType;
     return ss.GetHash();
 }
@@ -92,7 +94,7 @@ static void RandomScript(CScript &script) {
     script = CScript();
     int ops = (InsecureRandRange(10));
     for (int i = 0; i < ops; i++) {
-        script << oplist[InsecureRandRange(std::size(oplist))];
+        script << oplist[InsecureRandRange(sizeof(oplist) / sizeof(oplist[0]))];
     }
 }
 
@@ -115,7 +117,7 @@ static void RandomTransaction(CMutableTransaction &tx, bool fSingle) {
     for (int out = 0; out < outs; out++) {
         tx.vout.push_back(CTxOut());
         CTxOut &txout = tx.vout.back();
-        txout.nValue = InsecureRandMoneyAmount();
+        txout.nValue = int64_t(InsecureRandRange(100000000)) * SATOSHI;
         RandomScript(txout.scriptPubKey);
     }
 }
@@ -123,10 +125,12 @@ static void RandomTransaction(CMutableTransaction &tx, bool fSingle) {
 BOOST_FIXTURE_TEST_SUITE(sighash_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(sighash_test) {
+    SeedInsecureRand(false);
+
 #if defined(PRINT_SIGHASH_JSON)
     std::cout << "[\n";
     std::cout << "\t[\"raw_transaction, script, input_index, hashType, "
-                 "signature_hash (regular), signature_hash(no forkid), "
+                 "signature_hash (regular), signature_hash(no fork), "
                  "signature_hash(replay protected)\"],\n";
 #endif
 
@@ -141,52 +145,20 @@ BOOST_AUTO_TEST_CASE(sighash_test) {
         RandomScript(scriptCode);
         int nIn = InsecureRandRange(txTo.vin.size());
 
-        uint256 shref =
-            SignatureHashOld(scriptCode, CTransaction(txTo), nIn, nHashType);
-        uint256 shold = SignatureHash(scriptCode, CTransaction(txTo), nIn,
-                                      sigHashType, Amount::zero(), nullptr, 0);
+        uint256 shref = SignatureHashOld(scriptCode, CTransaction(txTo), nIn, nHashType);
+        const ScriptExecutionContext limitedContext{unsigned(nIn), CTxOut{Amount::zero(), scriptCode}, txTo};
+        uint256 shold = SignatureHash(scriptCode, limitedContext, sigHashType, nullptr, 0).signatureHash;
         BOOST_CHECK(shold == shref);
 
-        // Check the impact of the forkid flag.
-        uint256 shreg = SignatureHash(scriptCode, CTransaction(txTo), nIn,
-                                      sigHashType, Amount::zero());
-        if (sigHashType.hasForkId()) {
+        // Check the impact of the fork flag.
+        uint256 shreg = SignatureHash(scriptCode, limitedContext, sigHashType, nullptr, SCRIPT_ENABLE_SIGHASH_FORKID).signatureHash;
+        if (sigHashType.hasFork()) {
             BOOST_CHECK(nHashType & SIGHASH_FORKID);
             BOOST_CHECK(shreg != shref);
         } else {
             BOOST_CHECK((nHashType & SIGHASH_FORKID) == 0);
             BOOST_CHECK(shreg == shref);
         }
-
-        // Make sure replay protection works as expected.
-        uint256 shrep = SignatureHash(scriptCode, CTransaction(txTo), nIn,
-                                      sigHashType, Amount::zero(), nullptr,
-                                      SCRIPT_ENABLE_SIGHASH_FORKID |
-                                          SCRIPT_ENABLE_REPLAY_PROTECTION);
-        uint32_t newForkValue = 0xff0000 | ((nHashType >> 8) ^ 0xdead);
-        uint256 manualshrep = SignatureHash(
-            scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(newForkValue), Amount::zero());
-        BOOST_CHECK(shrep == manualshrep);
-
-        // Replay protection works even if the hash is of the form 0xffxxxx
-        uint256 shrepff = SignatureHash(
-            scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(newForkValue), Amount::zero(), nullptr,
-            SCRIPT_ENABLE_SIGHASH_FORKID | SCRIPT_ENABLE_REPLAY_PROTECTION);
-        uint256 manualshrepff = SignatureHash(
-            scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(newForkValue ^ 0xdead), Amount::zero());
-        BOOST_CHECK(shrepff == manualshrepff);
-
-        uint256 shrepabcdef = SignatureHash(
-            scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(0xabcdef), Amount::zero(), nullptr,
-            SCRIPT_ENABLE_SIGHASH_FORKID | SCRIPT_ENABLE_REPLAY_PROTECTION);
-        uint256 manualshrepabcdef =
-            SignatureHash(scriptCode, CTransaction(txTo), nIn,
-                          sigHashType.withForkValue(0xff1342), Amount::zero());
-        BOOST_CHECK(shrepabcdef == manualshrepabcdef);
 
 #if defined(PRINT_SIGHASH_JSON)
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
@@ -213,11 +185,13 @@ BOOST_AUTO_TEST_CASE(sighash_test) {
 
 // Goal: check that SignatureHash generates correct hash
 BOOST_AUTO_TEST_CASE(sighash_from_data) {
-    UniValue tests = read_json(json_tests::sighash);
+    UniValue tests = read_json(
+        std::string(json_tests::sighash,
+                    json_tests::sighash + sizeof(json_tests::sighash)));
 
     for (size_t idx = 0; idx < tests.size(); idx++) {
-        UniValue test = tests[idx];
-        std::string strTest = test.write();
+        const UniValue& test = tests[idx];
+        std::string strTest = UniValue::stringify(test);
         // Allow for extra stuff (useful for comments)
         if (test.size() < 1) {
             BOOST_ERROR("Bad test: " << strTest);
@@ -238,16 +212,15 @@ BOOST_AUTO_TEST_CASE(sighash_from_data) {
             // deserialize test data
             std::string raw_tx = test[0].get_str();
             std::string raw_script = test[1].get_str();
-            nIn = test[2].getInt<int>();
-            sigHashType = SigHashType(test[3].getInt<int>());
+            nIn = test[2].get_int();
+            sigHashType = SigHashType(test[3].get_int());
             sigHashRegHex = test[4].get_str();
             sigHashOldHex = test[5].get_str();
-            sigHashRepHex = test[6].get_str();
 
             CDataStream stream(ParseHex(raw_tx), SER_NETWORK, PROTOCOL_VERSION);
             stream >> tx;
 
-            TxValidationState state;
+            CValidationState state;
             BOOST_CHECK_MESSAGE(CheckRegularTransaction(*tx, state), strTest);
             BOOST_CHECK(state.IsValid());
 
@@ -258,18 +231,12 @@ BOOST_AUTO_TEST_CASE(sighash_from_data) {
             continue;
         }
 
-        uint256 shreg =
-            SignatureHash(scriptCode, *tx, nIn, sigHashType, Amount::zero());
+        const ScriptExecutionContext limitedContext{unsigned(nIn), CTxOut{Amount::zero(), scriptCode}, *tx};
+        uint256 shreg = SignatureHash(scriptCode, limitedContext, sigHashType, nullptr, SCRIPT_ENABLE_SIGHASH_FORKID).signatureHash;
         BOOST_CHECK_MESSAGE(shreg.GetHex() == sigHashRegHex, strTest);
 
-        uint256 shold = SignatureHash(scriptCode, *tx, nIn, sigHashType,
-                                      Amount::zero(), nullptr, 0);
+        uint256 shold = SignatureHash(scriptCode, limitedContext, sigHashType, nullptr, 0).signatureHash;
         BOOST_CHECK_MESSAGE(shold.GetHex() == sigHashOldHex, strTest);
-
-        uint256 shrep = SignatureHash(
-            scriptCode, *tx, nIn, sigHashType, Amount::zero(), nullptr,
-            SCRIPT_ENABLE_SIGHASH_FORKID | SCRIPT_ENABLE_REPLAY_PROTECTION);
-        BOOST_CHECK_MESSAGE(shrep.GetHex() == sigHashRepHex, strTest);
     }
 }
 

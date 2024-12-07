@@ -1,5 +1,6 @@
 // Copyright (c) 2012-2015 The Bitcoin Core developers
-// Copyright (c) 2019 The Bitcoin developers
+// Copyright (c) 2019- The Bitcoin developers
+// Copyright (c) 2019-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 // (based on key_tests.cpp)
@@ -12,7 +13,7 @@
 #include <tinyformat.h>
 #include <util/strencodings.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -32,7 +33,7 @@ class TestCachingTransactionSignatureChecker {
     CachingTransactionSignatureChecker *pchecker;
 
 public:
-    explicit TestCachingTransactionSignatureChecker(
+    TestCachingTransactionSignatureChecker(
         CachingTransactionSignatureChecker &checkerarg) {
         pchecker = &checkerarg;
     }
@@ -61,9 +62,9 @@ BOOST_AUTO_TEST_CASE(sig_pubkey_hash_variations) {
             "dde3c38e000000000151ffffffff010000000000000000016a00000000"),
         SER_NETWORK, PROTOCOL_VERSION);
     CTransaction dummyTx(deserialize, stream);
-    PrecomputedTransactionData txdata(dummyTx);
-    CachingTransactionSignatureChecker checker(&dummyTx, 0, 0 * SATOSHI, true,
-                                               txdata);
+    ScriptExecutionContext limitedContext(0, CTxOut{0 * SATOSHI, {}}, dummyTx);
+    PrecomputedTransactionData txdata(limitedContext);
+    CachingTransactionSignatureChecker checker(limitedContext, true, txdata);
 
     TestCachingTransactionSignatureChecker testChecker(checker);
 
@@ -77,8 +78,8 @@ BOOST_AUTO_TEST_CASE(sig_pubkey_hash_variations) {
 
     for (int n = 0; n < 16; n++) {
         std::string strMsg = strprintf("Sigcache test1 %i: xx", n);
-        uint256 hashMsg = Hash(strMsg);
-        uint256 hashMsg2 = Hash(Span{strMsg}.last(strMsg.size() - 1));
+        uint256 const hashMsg = Hash(strMsg);
+        uint256 const hashMsg2 = Hash(Span{strMsg}.subspan(1));
 
         std::vector<uint8_t> sig;
         BOOST_CHECK(key1.SignECDSA(hashMsg, sig));

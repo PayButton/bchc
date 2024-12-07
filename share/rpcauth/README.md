@@ -1,7 +1,6 @@
-RPC Tools
----------------------
+# RPC Tools #
 
-### [RPCAuth](/share/rpcauth) ###
+## [RPCAuth](/share/rpcauth) ##
 
 ```
 usage: rpcauth.py [-h] username [password]
@@ -15,4 +14,4 @@ positional arguments:
 
 optional arguments:
   -h, --help  show this help message and exit
-  ```
+```

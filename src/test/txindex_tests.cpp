@@ -1,4 +1,5 @@
-// Copyright (c) 2017-2019 The Bitcoin Core developers
+// Copyright (c) 2017-2018 The Bitcoin Core developers
+// Copyright (c) 2019-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,10 +7,11 @@
 
 #include <chainparams.h>
 #include <script/standard.h>
+#include <util/system.h>
 #include <util/time.h>
 #include <validation.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -30,14 +32,14 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
     // started.
     BOOST_CHECK(!txindex.BlockUntilSyncedToCurrentChain());
 
-    BOOST_REQUIRE(txindex.Start(m_node.chainman->ActiveChainstate()));
+    txindex.Start();
 
     // Allow tx index to catch up with the block index.
     constexpr int64_t timeout_ms = 10 * 1000;
     int64_t time_start = GetTimeMillis();
     while (!txindex.BlockUntilSyncedToCurrentChain()) {
         BOOST_REQUIRE(time_start + timeout_ms > GetTimeMillis());
-        UninterruptibleSleep(std::chrono::milliseconds{100});
+        MilliSleep(100);
     }
 
     // Check that txindex excludes genesis block transactions.
@@ -58,7 +60,7 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
     // Check that new transactions in new blocks make it into the index.
     for (int i = 0; i < 10; i++) {
         CScript coinbase_script_pub_key =
-            GetScriptForDestination(PKHash(coinbaseKey.GetPubKey()));
+            GetScriptForDestination(coinbaseKey.GetPubKey().GetID());
         std::vector<CMutableTransaction> no_txns;
         const CBlock &block =
             CreateAndProcessBlock(no_txns, coinbase_script_pub_key);
@@ -75,9 +77,10 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
     // shutdown sequence (c.f. Shutdown() in init.cpp)
     txindex.Stop();
 
-    // Let scheduler events finish running to avoid accessing any memory related
-    // to txindex after it is destructed
-    SyncWithValidationInterfaceQueue();
+    scheduler.stop();
+    schedulerThread.join();
+
+    // Rest of shutdown sequence and destructors happen in ~TestingSetup()
 }
 
 BOOST_AUTO_TEST_SUITE_END()

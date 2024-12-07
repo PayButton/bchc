@@ -1,11 +1,11 @@
-/***********************************************************************
- * Copyright (c) 2017 Tomas van der Wansem                             *
- * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
- ***********************************************************************/
+/**********************************************************************
+ * Copyright (c) 2017 Tomas van der Wansem                            *
+ * Distributed under the MIT software license, see the accompanying   *
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
+ **********************************************************************/
 
-#ifndef SECP256K1_MODULE_MULTISET_TESTS_H
-#define SECP256K1_MODULE_MULTISET_TESTS_H
+#ifndef _SECP256K1_MODULE_MULTISET_TESTS_
+#define _SECP256K1_MODULE_MULTISET_TESTS_
 
 
 #include "include/secp256k1.h"
@@ -40,7 +40,7 @@ static void initdata(void) {
     int n,m;
     for(n=0; n < DATACOUNT; n++) {
         for(m=0; m < DATALEN/4; m++) {
-            uint32_t x = secp256k1_testrand32();
+            uint32_t x = secp256k1_rand32();
             memcpy(&elements[n][m], &x, sizeof(x));
         }
 
@@ -177,6 +177,12 @@ void test_remove(void) {
     secp256k1_multiset_init(ctx, &r2);
     secp256k1_multiset_init(ctx, &r3);
 
+    /* _is_empty API test */
+    CHECK(secp256k1_multiset_is_empty(ctx, &empty) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r1) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r2) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r3) == 1);
+
     CHECK_EQUAL(&r1,&r2); /* M()==M() */
 
     secp256k1_multiset_add   (ctx, &r1, elements[0], DATALEN);
@@ -211,6 +217,11 @@ void test_remove(void) {
     CHECK_EQUAL(&r1,&r3); /* M(0,1,3,9,8)==M(9,15,15,1,9,0,3,8)-M(15,15,9) */
     CHECK_NOTEQUAL(&r1,&empty); /* M(0,1,3,9,8)!=M() */
 
+    /* _is_empty API test */
+    CHECK(secp256k1_multiset_is_empty(ctx, &r1) == 0);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r2) == 0);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r3) == 0);
+
     secp256k1_multiset_remove(ctx, &r3, elements[8], DATALEN);
     CHECK_NOTEQUAL(&r1,&r3); /* M(0,1,3,9,8)-M(8)!=M(0,1,3,9,8) */
 
@@ -221,6 +232,11 @@ void test_remove(void) {
     secp256k1_multiset_remove(ctx, &r2, elements[3], DATALEN);
 
     CHECK_EQUAL(&r2,&empty); /* M(0,1,3,9,8)-M(0,1,3,9,8)==M() */
+
+    /* _is_empty API test */
+    CHECK(secp256k1_multiset_is_empty(ctx, &r1) == 0);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r2) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r3) == 0);
 }
 
 void test_duplicate(void) {
@@ -271,6 +287,11 @@ void test_empty(void) {
     /* empty + empty = empty */
     secp256k1_multiset_combine(ctx, &r1, &r2);
     CHECK_EQUAL(&empty, &r1); /* M()+M()==M() */
+
+    /* _is_empty API test */
+    CHECK(secp256k1_multiset_is_empty(ctx, &empty) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r1) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &r2) == 1);
 }
 
 void test_testvector(void) {
@@ -333,6 +354,57 @@ void test_testvector(void) {
     CHECK(memcmp(m1m2m3,exp_m1m2m3,32)==0);
 }
 
+void test_serialize(void) {
+    int i;
+    secp256k1_multiset ms, empty;
+    unsigned char ser[33];
+    secp256k1_multiset deser;
+    unsigned char invalid_ser1[33] = {0x5, 0x1},
+                  invalid_ser2[33] = {0x4, 0x1},
+                  empty_ser[33]    = {0x0},
+                  empty_ser2[33]    = {0x0, 0x1, 0x2, 0x3, 0x4};
+
+    secp256k1_multiset_init(ctx, &ms);
+    secp256k1_multiset_init(ctx, &empty);
+
+    for (i = 0; i < DATACOUNT; ++i) {
+        /* Check that serialization round-trip yields the same multiset. First iteration checks empty set. */
+        CHECK(secp256k1_multiset_serialize(ctx, ser, &ms) == 1);
+        CHECK(secp256k1_multiset_parse(ctx, &deser, ser) == 1);
+        CHECK_EQUAL(&ms, &deser);
+
+        /* Add 1 more item to the set */
+        CHECK(secp256k1_multiset_add(ctx, &ms, elements[i], DATALEN) == 1);
+    }
+
+    /* Do the above in reverse, removing elements and then checking the results ser/deser back ok */
+    for (i = DATACOUNT; i >= -1; --i) {
+        /* Check that serialization round-trip yields the same multiset. First iteration checks full set. */
+        CHECK(secp256k1_multiset_serialize(ctx, ser, &ms) == 1);
+        CHECK(secp256k1_multiset_parse(ctx, &deser, ser) == 1);
+        CHECK_EQUAL(&ms, &deser);
+
+        if (i < DATACOUNT && i >= 0) {
+            /* Remove 1 more item from the set */
+            CHECK(secp256k1_multiset_remove(ctx, &ms, elements[i], DATALEN) == 1);
+        }
+        /* On i=0 the set should now be empty, but we iterate 1 more time to check its ser -> deser symmetry */
+        if (i >= 0) CHECK(secp256k1_multiset_is_empty(ctx, &ms) == (i == 0 ? 1 : 0));
+    }
+
+    /* Invalid pubkey encodings should yield an error */
+    CHECK(secp256k1_multiset_parse(ctx, &deser, invalid_ser1) == 0);
+    CHECK(secp256k1_multiset_parse(ctx, &deser, invalid_ser2) == 0);
+    /* Check that all 0's does work and yields an empty set */
+    CHECK(secp256k1_multiset_parse(ctx, &deser, empty_ser) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &deser) == 1);
+    CHECK_EQUAL(&empty, &deser);
+    /* Check that buffer with prefix 0 but nonzero after that works and also defines an empty set */
+    CHECK(secp256k1_multiset_parse(ctx, &deser, empty_ser2) == 1);
+    CHECK(secp256k1_multiset_is_empty(ctx, &deser) == 1);
+    CHECK_EQUAL(&empty, &deser);
+}
+
 void run_multiset_tests(void) {
 
     initdata();
@@ -342,6 +414,7 @@ void run_multiset_tests(void) {
     test_empty();
     test_duplicate();
     test_testvector();
+    test_serialize();
 }
 
-#endif /* SECP256K1_MODULE_MULTISET_TESTS_H */
+#endif /* _SECP256K1_MODULE_MULTISET_TESTS_ */

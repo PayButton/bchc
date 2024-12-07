@@ -1,65 +1,52 @@
 // Copyright (c) 2016-2019 The Bitcoin Core developers
+// Copyright (c) 2020-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <bench/bench.h>
+#include <bench/blockdata.h>
 #include <bench/data.h>
-
-#include <rpc/blockchain.h>
-#include <streams.h>
+#include <bench/json_util.h>
+#include <chain.h>
+#include <chainparams.h>
+#include <config.h>
 #include <validation.h>
-
-#include <test/util/setup_common.h>
+#include <streams.h>
+#include <consensus/validation.h>
+#include <rpc/blockchain.h>
 
 #include <univalue.h>
 
-namespace {
+static void RPCBlockVerbose(int blockHeight, benchmark::State &state, TxVerbosity verbosity) {
+    SelectParams(CBaseChainParams::MAIN);
+    BlockData blockData(blockHeight);
 
-struct TestBlockAndIndex {
-    const std::unique_ptr<const TestingSetup> testing_setup{
-        MakeNoLogFileContext<const TestingSetup>(CBaseChainParams::MAIN)};
-    CBlock block{};
-    BlockHash blockHash{};
-    CBlockIndex blockindex{};
-
-    TestBlockAndIndex() {
-        CDataStream stream(benchmark::data::block413567, SER_NETWORK,
-                           PROTOCOL_VERSION);
-        std::byte a{0};
-        // Prevent compaction
-        stream.write({&a, 1});
-
-        stream >> block;
-
-        blockHash = block.GetHash();
-        blockindex.phashBlock = &blockHash;
-        blockindex.nBits = 403014710;
+    const auto blockuv = blockToJSON(GetConfig(), blockData.block, &blockData.blockIndex, &blockData.blockIndex,
+                                     verbosity);
+    if (verbosity == TxVerbosity::SHOW_DETAILS_AND_PREVOUT) {
+        assert(CheckTxsHavePrevout(blockuv));
     }
-};
 
-} // namespace
-
-static void BlockToJsonVerbose(benchmark::Bench &bench) {
-    TestBlockAndIndex data;
-    bench.run([&] {
-        auto univalue = blockToJSON(
-            data.testing_setup->m_node.chainman->m_blockman, data.block,
-            &data.blockindex, &data.blockindex, /*txDetails=*/true);
-        ankerl::nanobench::doNotOptimizeAway(univalue);
-    });
+    BENCHMARK_LOOP {
+        (void)blockToJSON(GetConfig(), blockData.block, &blockData.blockIndex, &blockData.blockIndex,
+                          TxVerbosity::SHOW_DETAILS_AND_PREVOUT);
+    }
 }
 
-BENCHMARK(BlockToJsonVerbose);
-
-static void BlockToJsonVerboseWrite(benchmark::Bench &bench) {
-    TestBlockAndIndex data;
-    auto univalue = blockToJSON(data.testing_setup->m_node.chainman->m_blockman,
-                                data.block, &data.blockindex, &data.blockindex,
-                                /*txDetails=*/true);
-    bench.run([&] {
-        auto str = univalue.write();
-        ankerl::nanobench::doNotOptimizeAway(str);
-    });
+static void RPCBlockVerbose_1MB(benchmark::State &state) {
+    RPCBlockVerbose(413567, state, TxVerbosity::SHOW_DETAILS);
+}
+static void RPCBlockVerbose_32MB(benchmark::State &state) {
+    RPCBlockVerbose(556034, state, TxVerbosity::SHOW_DETAILS);
+}
+static void RPCBlockVeryVerbose_1MB(benchmark::State &state) {
+    RPCBlockVerbose(413567, state, TxVerbosity::SHOW_DETAILS_AND_PREVOUT);
+}
+static void RPCBlockVeryVerbose_32MB(benchmark::State &state) {
+    RPCBlockVerbose(556034, state, TxVerbosity::SHOW_DETAILS_AND_PREVOUT);
 }
 
-BENCHMARK(BlockToJsonVerboseWrite);
+BENCHMARK(RPCBlockVerbose_1MB, 23);
+BENCHMARK(RPCBlockVerbose_32MB, 1);
+BENCHMARK(RPCBlockVeryVerbose_1MB, 23);
+BENCHMARK(RPCBlockVeryVerbose_32MB, 1);

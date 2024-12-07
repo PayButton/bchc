@@ -6,10 +6,9 @@
 
 #include <chainparams.h>
 #include <interfaces/chain.h>
-#include <node/context.h>
 #include <wallet/wallet.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 #include <wallet/test/wallet_test_fixture.h>
 
 #include <boost/test/unit_test.hpp>
@@ -18,10 +17,9 @@
 
 namespace {
 static std::unique_ptr<CWallet> LoadWallet(WalletBatch &batch) {
-    node::NodeContext node;
-    auto chain = interfaces::MakeChain(node, Params());
-    std::unique_ptr<CWallet> wallet =
-        std::make_unique<CWallet>(chain.get(), "", CreateDummyWalletDatabase());
+    auto chain = interfaces::MakeChain();
+    std::unique_ptr<CWallet> wallet = std::make_unique<CWallet>(
+        Params(), *chain, WalletLocation(), WalletDatabase::CreateDummy());
     DBErrors res = batch.LoadWallet(wallet.get());
     BOOST_CHECK(res == DBErrors::LOAD_OK);
     return wallet;
@@ -31,62 +29,58 @@ static std::unique_ptr<CWallet> LoadWallet(WalletBatch &batch) {
 BOOST_FIXTURE_TEST_SUITE(walletdb_tests, WalletTestingSetup)
 
 BOOST_AUTO_TEST_CASE(write_erase_name) {
-    WalletBatch batch(m_wallet.GetDBHandle());
+    WalletBatch batch(m_wallet.GetDBHandle(), "cr+");
 
-    CTxDestination dst1 = PKHash(uint160S("c0ffee"));
-    CTxDestination dst2 = PKHash(uint160S("f00d"));
+    CTxDestination dst1 = CKeyID(uint160S("c0ffee"));
+    CTxDestination dst2 = CKeyID(uint160S("f00d"));
 
     BOOST_CHECK(batch.WriteName(dst1, "name1"));
     BOOST_CHECK(batch.WriteName(dst2, "name2"));
     {
         auto w = LoadWallet(batch);
-        LOCK(w->cs_wallet);
-        BOOST_CHECK_EQUAL(1, w->m_address_book.count(dst1));
-        BOOST_CHECK_EQUAL("name1", w->m_address_book[dst1].GetLabel());
-        BOOST_CHECK_EQUAL("name2", w->m_address_book[dst2].GetLabel());
+        BOOST_CHECK_EQUAL(1, w->mapAddressBook.count(dst1));
+        BOOST_CHECK_EQUAL("name1", w->mapAddressBook[dst1].name);
+        BOOST_CHECK_EQUAL("name2", w->mapAddressBook[dst2].name);
     }
 
     batch.EraseName(dst1);
 
     {
         auto w = LoadWallet(batch);
-        LOCK(w->cs_wallet);
-        BOOST_CHECK_EQUAL(0, w->m_address_book.count(dst1));
-        BOOST_CHECK_EQUAL(1, w->m_address_book.count(dst2));
+        BOOST_CHECK_EQUAL(0, w->mapAddressBook.count(dst1));
+        BOOST_CHECK_EQUAL(1, w->mapAddressBook.count(dst2));
     }
 }
 
 BOOST_AUTO_TEST_CASE(write_erase_purpose) {
-    WalletBatch batch(m_wallet.GetDBHandle());
+    WalletBatch batch(m_wallet.GetDBHandle(), "cr+");
 
-    CTxDestination dst1 = PKHash(uint160S("c0ffee"));
-    CTxDestination dst2 = PKHash(uint160S("f00d"));
+    CTxDestination dst1 = CKeyID(uint160S("c0ffee"));
+    CTxDestination dst2 = CKeyID(uint160S("f00d"));
 
     BOOST_CHECK(batch.WritePurpose(dst1, "purpose1"));
     BOOST_CHECK(batch.WritePurpose(dst2, "purpose2"));
     {
         auto w = LoadWallet(batch);
-        LOCK(w->cs_wallet);
-        BOOST_CHECK_EQUAL(1, w->m_address_book.count(dst1));
-        BOOST_CHECK_EQUAL("purpose1", w->m_address_book[dst1].purpose);
-        BOOST_CHECK_EQUAL("purpose2", w->m_address_book[dst2].purpose);
+        BOOST_CHECK_EQUAL(1, w->mapAddressBook.count(dst1));
+        BOOST_CHECK_EQUAL("purpose1", w->mapAddressBook[dst1].purpose);
+        BOOST_CHECK_EQUAL("purpose2", w->mapAddressBook[dst2].purpose);
     }
 
     batch.ErasePurpose(dst1);
 
     {
         auto w = LoadWallet(batch);
-        LOCK(w->cs_wallet);
-        BOOST_CHECK_EQUAL(0, w->m_address_book.count(dst1));
-        BOOST_CHECK_EQUAL(1, w->m_address_book.count(dst2));
+        BOOST_CHECK_EQUAL(0, w->mapAddressBook.count(dst1));
+        BOOST_CHECK_EQUAL(1, w->mapAddressBook.count(dst2));
     }
 }
 
 BOOST_AUTO_TEST_CASE(write_erase_destdata) {
-    WalletBatch batch(m_wallet.GetDBHandle());
+    WalletBatch batch(m_wallet.GetDBHandle(), "cr+");
 
-    CTxDestination dst1 = PKHash(uint160S("c0ffee"));
-    CTxDestination dst2 = PKHash(uint160S("f00d"));
+    CTxDestination dst1 = CKeyID(uint160S("c0ffee"));
+    CTxDestination dst2 = CKeyID(uint160S("f00d"));
 
     BOOST_CHECK(batch.WriteDestData(dst1, "key1", "value1"));
     BOOST_CHECK(batch.WriteDestData(dst1, "key2", "value2"));
@@ -94,7 +88,6 @@ BOOST_AUTO_TEST_CASE(write_erase_destdata) {
     BOOST_CHECK(batch.WriteDestData(dst2, "key2", "value4"));
     {
         auto w = LoadWallet(batch);
-        LOCK(w->cs_wallet);
         std::string val;
         BOOST_CHECK(w->GetDestData(dst1, "key1", &val));
         BOOST_CHECK_EQUAL("value1", val);
@@ -110,7 +103,6 @@ BOOST_AUTO_TEST_CASE(write_erase_destdata) {
 
     {
         auto w = LoadWallet(batch);
-        LOCK(w->cs_wallet);
         std::string dummy;
         BOOST_CHECK(w->GetDestData(dst1, "key1", &dummy));
         BOOST_CHECK(!w->GetDestData(dst1, "key2", &dummy));

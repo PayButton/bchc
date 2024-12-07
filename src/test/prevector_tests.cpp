@@ -1,4 +1,5 @@
-// Copyright (c) 2015-2019 The Bitcoin Core developers
+// Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,8 +9,7 @@
 #include <serialize.h>
 #include <streams.h>
 
-#include <test/util/random.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -159,7 +159,7 @@ public:
         test();
     }
 
-    void swap() noexcept {
+    void swap() {
         real_vector.swap(real_vector_alt);
         pre_vector.swap(pre_vector_alt);
         test();

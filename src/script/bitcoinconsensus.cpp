@@ -1,5 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -20,13 +21,13 @@ public:
         : m_type(nTypeIn), m_version(nVersionIn), m_data(txTo),
           m_remaining(txToLen) {}
 
-    void read(Span<std::byte> dst) {
-        if (dst.size() > m_remaining) {
+    void read(char *pch, size_t nSize) {
+        if (nSize > m_remaining) {
             throw std::ios_base::failure(std::string(__func__) +
                                          ": end of data");
         }
 
-        if (dst.data() == nullptr) {
+        if (pch == nullptr) {
             throw std::ios_base::failure(std::string(__func__) +
                                          ": bad destination buffer");
         }
@@ -36,9 +37,9 @@ public:
                                          ": bad source buffer");
         }
 
-        memcpy(dst.data(), m_data, dst.size());
-        m_remaining -= dst.size();
-        m_data += dst.size();
+        memcpy(pch, m_data, nSize);
+        m_remaining -= nSize;
+        m_data += nSize;
     }
 
     template <typename T> TxInputStream &operator>>(T &&obj) {
@@ -83,7 +84,7 @@ static int verify_script(const uint8_t *scriptPubKey,
                          unsigned int nIn, unsigned int flags,
                          bitcoinconsensus_error *err) {
     if (!verify_flags(flags)) {
-        return set_error(err, bitcoinconsensus_ERR_INVALID_FLAGS);
+        return bitcoinconsensus_ERR_INVALID_FLAGS;
     }
     try {
         TxInputStream stream(SER_NETWORK, PROTOCOL_VERSION, txTo, txToLen);
@@ -99,11 +100,16 @@ static int verify_script(const uint8_t *scriptPubKey,
         // Regardless of the verification result, the tx did not error.
         set_error(err, bitcoinconsensus_ERR_OK);
 
-        PrecomputedTransactionData txdata(tx);
+        CScript const spk(scriptPubKey, scriptPubKey + scriptPubKeyLen);
+        ScriptExecutionContext const context(nIn, CTxOut(amount, spk,
+                                                         {} /* no token data (unsupported for now in this lib) */),
+                                             tx);
+        PrecomputedTransactionData txdata(context);
+
         return VerifyScript(
             tx.vin[nIn].scriptSig,
-            CScript(scriptPubKey, scriptPubKey + scriptPubKeyLen), flags,
-            TransactionSignatureChecker(&tx, nIn, amount, txdata), nullptr);
+            spk, flags,
+            TransactionSignatureChecker(context, txdata));
     } catch (const std::exception &) {
         // Error deserializing
         return set_error(err, bitcoinconsensus_ERR_TX_DESERIALIZE);

@@ -1,4 +1,5 @@
 // Copyright (c) 2018 The Bitcoin Core developers
+// Copyright (c) 2019-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,7 +8,6 @@
 #include <chainparams.h>
 #include <config.h>
 #include <httprpc.h>
-#include <key.h>
 #include <qt/bitcoin.h>
 #include <qt/bitcoingui.h>
 #include <qt/networkstyle.h>
@@ -19,10 +19,9 @@
 #if defined(HAVE_CONFIG_H)
 #include <config/bitcoin-config.h>
 #endif
-
-#include <test/util/setup_common.h>
-
-#include <univalue.h>
+#ifdef ENABLE_WALLET
+#include <wallet/db.h>
+#endif
 
 #include <QAction>
 #include <QEventLoop>
@@ -31,10 +30,25 @@
 #include <QTest>
 #include <QTextEdit>
 #include <QtGlobal>
-#include <QtTest/QtTestGui>
+/*
+ * FIXME: <QtTest/QtTestGui> requires QT_WIDGETS_LIB to be defined prior
+ * inclusion to export the QtTest::keyClicks symbol.
+ * On some older Qt versions the definition end up being set by the inclusion of
+ * <QtTest/QtTestWidgets>.
+ * This only occurs when building with autotools, as QMake and CMake define
+ * QT_WIDGETS_LIB on the command line. As a workaround for autotools,
+ * <QtTest/QtTestWidgets> should be included before <QtTest/QtTestGui>.
+ * Also prevent the linter from sorting the includes.
+ */
+// clang-format off
 #include <QtTest/QtTestWidgets>
+#include <QtTest/QtTestGui>
+// clang-format on
 
-#include <any>
+#include <univalue.h>
+
+#include <new>
+#include <string>
 
 namespace {
 //! Call getblockchaininfo RPC and check first field of JSON output.
@@ -50,11 +64,11 @@ void TestRpcCommand(RPCConsole *console) {
     loop.exec();
     QString output = messagesWidget->toPlainText();
     UniValue value;
-    value.read(
+    static_cast<void>(value.read(
         output
             .right(output.size() -
                    output.lastIndexOf(QChar::ObjectReplacementCharacter) - 1)
-            .toStdString());
+            .toStdString()));
     QCOMPARE(value["chain"].get_str(), std::string("regtest"));
 }
 } // namespace
@@ -68,26 +82,19 @@ void AppTests::appTests() {
         // and fails to handle returned nulls
         // (https://bugreports.qt.io/browse/QTBUG-49686).
         QWARN("Skipping AppTests on mac build with 'minimal' platform set due "
-              "to Qt bugs. To run AppTests, invoke with 'QT_QPA_PLATFORM=cocoa "
-              "test_bitcoin-qt' on mac, or else use a linux or windows build.");
+              "to Qt bugs. To run AppTests, invoke "
+              "with 'test_bitcoin-qt -platform cocoa' on mac, or else use a "
+              "linux or windows build.");
         return;
     }
 #endif
 
-    Config &config = const_cast<Config &>(GetConfig());
+    Config &config = GetMutableConfig();
 
-    // Create a temp data directory to backup the gui settings to
-    fs::create_directories([] {
-        BasicTestingSetup test{CBaseChainParams::REGTEST};
-        return gArgs.GetDataDirNet() / "blocks";
-    }());
-
-    qRegisterMetaType<interfaces::BlockAndHeaderTipInfo>(
-        "interfaces::BlockAndHeaderTipInfo");
     m_app.parameterSetup();
     m_app.createOptionsModel(true /* reset settings */);
-    QScopedPointer<const NetworkStyle> style(
-        NetworkStyle::instantiate(Params().NetworkIDString()));
+    QScopedPointer<const NetworkStyle> style(NetworkStyle::instantiate(
+        QString::fromStdString(Params().NetworkIDString())));
     m_app.setupPlatformStyle();
     m_app.createWindow(&config, style.data());
     connect(&m_app, &BitcoinApplication::windowShown, this,
@@ -96,16 +103,15 @@ void AppTests::appTests() {
     m_app.baseInitialize(config);
 
     RPCServer rpcServer;
-    std::any context;
-    HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer, context);
+    HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer);
     m_app.requestInitialize(config, rpcServer, httpRPCRequestProcessor);
     m_app.exec();
     m_app.requestShutdown(config);
     m_app.exec();
 
     // Reset global state to avoid interfering with later tests.
-    LogInstance().DisconnectTestLogger();
     AbortShutdown();
+    UnloadBlockIndex(config);
 }
 
 //! Entry point for BitcoinGUI tests.

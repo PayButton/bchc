@@ -2988,7 +2988,7 @@
     </message>
 </context>
 <context>
-    <name>bitcoin-abc</name>
+    <name>bitcoin-cash-node</name>
     <message>
         <source>Options:</source>
         <translation>Параметры:</translation>
@@ -3058,8 +3058,8 @@
         <translation>Невозможно запустить HTTP сервер. Смотри debug лог для подробностей.</translation>
     </message>
     <message>
-        <source>Bitcoin ABC</source>
-        <translation>Bitcoin ABC</translation>
+        <source>Bitcoin Cash Node</source>
+        <translation>Bitcoin Cash Node</translation>
     </message>
     <message>
         <source>The %s developers</source>
@@ -3654,8 +3654,8 @@
         <translation>Не хранить транзакции в памяти дольше, чем &lt;n&gt; часов (по умолчанию %u)</translation>
     </message>
     <message>
-        <source>Equivalent bytes per sigop in transactions for relay and mining (default: %u)</source>
-        <translation>Эквивалентных байт на sigop в транзакциях для ретрансляции или добычи (по умолчанию: %u)</translation>
+        <source>Equivalent bytes per sigcheck in transactions for relay and mining (default: %u)</source>
+        <translation>Эквивалентных байт на sigcheck в транзакциях для ретрансляции или добычи (по умолчанию: %u)</translation>
     </message>
     <message>
         <source>Fees (in %s/kB) smaller than this are considered zero fee for transaction creation (default: %s)</source>

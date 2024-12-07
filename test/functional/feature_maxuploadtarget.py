@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2015-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -10,12 +11,12 @@ if uploadtarget has been reached.
 * Verify that the upload counters are reset after 24 hours.
 """
 
-import time
 from collections import defaultdict
+import time
 
-from test_framework.blocktools import mine_big_block
 from test_framework.cdefs import LEGACY_MAX_BLOCK_SIZE
-from test_framework.messages import MSG_BLOCK, CInv, msg_getdata
+from test_framework.blocktools import mine_big_block
+from test_framework.messages import CInv, MSG_BLOCK, msg_getdata
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
@@ -39,13 +40,7 @@ class MaxUploadTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 1
         # Start a node with maxuploadtarget of 200 MB (/24h)
-        self.extra_args = [
-            [
-                "-maxuploadtarget=200",
-                "-acceptnonstdtxn=1",
-            ]
-        ]
-        self.supports_cli = False
+        self.extra_args = [["-maxuploadtarget=200", "-acceptnonstdtxn=1"]]
 
         # Cache for utxos, as the listunspent may take a long time later in the
         # test
@@ -77,7 +72,7 @@ class MaxUploadTest(BitcoinTestFramework):
 
         # Store the hash; we'll request this later
         big_old_block = self.nodes[0].getbestblockhash()
-        old_block_size = self.nodes[0].getblock(big_old_block, True)["size"]
+        old_block_size = self.nodes[0].getblock(big_old_block, True)['size']
         big_old_block = int(big_old_block, 16)
 
         # Advance to two days ago
@@ -110,11 +105,12 @@ class MaxUploadTest(BitcoinTestFramework):
         assert_equal(len(self.nodes[0].getpeerinfo()), 3)
         # At most a couple more tries should succeed (depending on how long
         # the test has been running so far).
-        for _ in range(3):
+        for i in range(3):
             p2p_conns[0].send_message(getdata_request)
         p2p_conns[0].wait_for_disconnect()
         assert_equal(len(self.nodes[0].getpeerinfo()), 2)
-        self.log.info("Peer 0 disconnected after downloading old block too many times")
+        self.log.info(
+            "Peer 0 disconnected after downloading old block too many times")
 
         # Requesting the current block on p2p_conns[1] should succeed indefinitely,
         # even when over the max upload target.
@@ -148,39 +144,30 @@ class MaxUploadTest(BitcoinTestFramework):
 
         self.nodes[0].disconnect_p2ps()
 
-        self.log.info(
-            "Restarting node 0 with download permission and 1MB maxuploadtarget"
-        )
-        self.restart_node(
-            0,
-            [
-                "-whitelist=download@127.0.0.1",
-                "-maxuploadtarget=1",
-                "-blockmaxsize=999000",
-            ],
-        )
+        # stop and start node 0 with 1MB maxuploadtarget, whitelist 127.0.0.1
+        self.log.info("Restarting nodes with -whitelist=127.0.0.1")
+        self.stop_node(0)
+        self.start_node(0, ["-whitelist=127.0.0.1",
+                            "-maxuploadtarget=1", "-blockmaxsize=999000"])
 
         # Reconnect to self.nodes[0]
-        peer = self.nodes[0].add_p2p_connection(TestP2PConn())
+        self.nodes[0].add_p2p_connection(TestP2PConn())
 
         # retrieve 20 blocks which should be enough to break the 1MB limit
         getdata_request.inv = [CInv(MSG_BLOCK, big_new_block)]
         for i in range(20):
-            peer.send_and_ping(getdata_request)
-            assert_equal(peer.block_receive_map[big_new_block], i + 1)
+            self.nodes[0].p2p.send_and_ping(getdata_request)
+            assert_equal(
+                self.nodes[0].p2p.block_receive_map[big_new_block], i + 1)
 
         getdata_request.inv = [CInv(MSG_BLOCK, big_old_block)]
-        peer.send_and_ping(getdata_request)
+        self.nodes[0].p2p.send_and_ping(getdata_request)
+        # node is still connected because of the whitelist
+        assert_equal(len(self.nodes[0].getpeerinfo()), 1)
 
         self.log.info(
-            "Peer still connected after trying to download old block (download"
-            " permission)"
-        )
-        peer_info = self.nodes[0].getpeerinfo()
-        # node is still connected
-        assert_equal(len(peer_info), 1)
-        assert_equal(peer_info[0]["permissions"], ["download"])
+            "Peer still connected after trying to download old block (whitelisted)")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     MaxUploadTest().main()

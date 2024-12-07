@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2017 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -28,7 +29,7 @@ class LoggingTest(BitcoinTestFramework):
 
         # test alternative log file name outside datadir
         tempname = os.path.join(self.options.tmpdir, "foo.log")
-        self.restart_node(0, [f"-debuglogfile={tempname}"])
+        self.restart_node(0, ["-debuglogfile={}".format(tempname)])
         assert os.path.isfile(tempname)
 
         # check that invalid log (relative) will cause error
@@ -37,14 +38,13 @@ class LoggingTest(BitcoinTestFramework):
         self.stop_node(0)
         exp_stderr = r"Error: Could not open debug log file \S+$"
         self.nodes[0].assert_start_raises_init_error(
-            [f"-debuglogfile={invalidname}"], exp_stderr, match=ErrorMatch.FULL_REGEX
-        )
+            ["-debuglogfile={}".format(invalidname)], exp_stderr, match=ErrorMatch.FULL_REGEX)
         assert not os.path.isfile(os.path.join(invdir, "foo.log"))
 
         # check that invalid log (relative) works after path exists
         self.stop_node(0)
         os.mkdir(invdir)
-        self.start_node(0, [f"-debuglogfile={invalidname}"])
+        self.start_node(0, ["-debuglogfile={}".format(invalidname)])
         assert os.path.isfile(os.path.join(invdir, "foo.log"))
 
         # check that invalid log (absolute) will cause error
@@ -52,14 +52,13 @@ class LoggingTest(BitcoinTestFramework):
         invdir = os.path.join(self.options.tmpdir, "foo")
         invalidname = os.path.join(invdir, "foo.log")
         self.nodes[0].assert_start_raises_init_error(
-            [f"-debuglogfile={invalidname}"], exp_stderr, match=ErrorMatch.FULL_REGEX
-        )
+            ["-debuglogfile={}".format(invalidname)], exp_stderr, match=ErrorMatch.FULL_REGEX)
         assert not os.path.isfile(os.path.join(invdir, "foo.log"))
 
         # check that invalid log (absolute) works after path exists
         self.stop_node(0)
         os.mkdir(invdir)
-        self.start_node(0, [f"-debuglogfile={invalidname}"])
+        self.start_node(0, ["-debuglogfile={}".format(invalidname)])
         assert os.path.isfile(os.path.join(invdir, "foo.log"))
 
         # check that -nodebuglogfile disables logging
@@ -70,8 +69,9 @@ class LoggingTest(BitcoinTestFramework):
         assert not os.path.isfile(default_log_path)
 
         # just sanity check no crash here
-        self.restart_node(0, [f"-debuglogfile={os.devnull}"])
+        self.stop_node(0)
+        self.start_node(0, ["-debuglogfile={}".format(os.devnull)])
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     LoggingTest().main()

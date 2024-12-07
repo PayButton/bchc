@@ -29,7 +29,7 @@
 #   BerkeleyDB::CXX
 
 # Generate a list of all the possible versioned library name variants given a
-# list of separators.
+# list of separators. 
 function(generate_versions_variants VARIANTS LIB MAJOR MINOR)
 	set(SEPARATORS
 		"" "." "-" "_"
@@ -94,7 +94,7 @@ if(BerkeleyDB_INCLUDE_DIR)
 	if(NOT DEFINED BerkeleyDB_VERSION)
 		# Read the version from file db.h into a variable.
 		file(READ "${BerkeleyDB_INCLUDE_DIR}/db.h" _BerkeleyDB_DB_HEADER)
-
+	
 		# Parse the version into variables.
 		string(REGEX REPLACE
 			".*DB_VERSION_MAJOR[ \t]+([0-9]+).*" "\\1"
@@ -170,6 +170,5 @@ find_package_handle_standard_args(BerkeleyDB
 	REQUIRED_VARS
 		BerkeleyDB_INCLUDE_DIR
 	VERSION_VAR BerkeleyDB_VERSION
-	REASON_FAILURE_MESSAGE "if you don't want to build the wallet feature, this can be skipped by passing -DBUILD_BITCOIN_WALLET=OFF to the cmake command line"
 	HANDLE_COMPONENTS
 )

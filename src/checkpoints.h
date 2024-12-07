@@ -1,10 +1,11 @@
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CHECKPOINTS_H
-#define BITCOIN_CHECKPOINTS_H
+#pragma once
 
+class CBlockIndex;
 struct BlockHash;
 struct CCheckpointData;
 
@@ -18,6 +19,7 @@ namespace Checkpoints {
 bool CheckBlock(const CCheckpointData &data, int nHeight,
                 const BlockHash &hash);
 
-} // namespace Checkpoints
+//! Returns last CBlockIndex* that is a checkpoint
+CBlockIndex *GetLastCheckpoint(const CCheckpointData &data);
 
-#endif // BITCOIN_CHECKPOINTS_H
+} // namespace Checkpoints

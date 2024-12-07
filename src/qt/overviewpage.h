@@ -1,9 +1,9 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_OVERVIEWPAGE_H
-#define BITCOIN_QT_OVERVIEWPAGE_H
+#pragma once
 
 #include <interfaces/wallet.h>
 
@@ -39,7 +39,6 @@ public:
 
 public Q_SLOTS:
     void setBalance(const interfaces::WalletBalances &balances);
-    void setPrivacy(bool privacy);
 
 Q_SIGNALS:
     void transactionClicked(const QModelIndex &index);
@@ -50,7 +49,6 @@ private:
     ClientModel *clientModel;
     WalletModel *walletModel;
     interfaces::WalletBalances m_balances;
-    bool m_privacy{false};
 
     TxViewDelegate *txdelegate;
     std::unique_ptr<TransactionFilterProxy> filter;
@@ -62,5 +60,3 @@ private Q_SLOTS:
     void updateWatchOnlyLabels(bool showWatchOnly);
     void handleOutOfSyncWarningClicks();
 };
-
-#endif // BITCOIN_QT_OVERVIEWPAGE_H

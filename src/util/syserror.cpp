@@ -1,4 +1,5 @@
 // Copyright (c) 2020-2022 The Bitcoin Core developers
+// Copyright (c) 2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -9,16 +10,17 @@
 #include <tinyformat.h>
 #include <util/syserror.h>
 
-#include <cstring>
+#include <string.h> /* for strerror_r or strerror_s */
 
-std::string SysErrorString(int err) {
+std::string SysErrorString(const int err) {
     char buf[1024];
+    buf[0] = 0;
     /**
      * Too bad there are three incompatible implementations of the
      * thread-safe strerror.
      */
     const char *s = nullptr;
-#ifdef WIN32
+#ifdef _WIN32
     if (strerror_s(buf, sizeof(buf), err) == 0) {
         s = buf;
     }
@@ -31,8 +33,8 @@ std::string SysErrorString(int err) {
     if (strerror_r(err, buf, sizeof(buf)) == 0) {
         s = buf;
     }
-#endif
-#endif
+#endif /* STRERROR_R_CHAR_P */
+#endif /* _WIN32 */
     if (s != nullptr) {
         return strprintf("%s (%d)", s, err);
     } else {

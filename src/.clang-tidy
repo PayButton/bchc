@@ -1,11 +1,2 @@
-Checks: '
--*,
-boost-use-to-string,
-readability-braces-around-statements,
-bugprone-argument-comment,
-performance-move-const-arg,
-'
+Checks:      -*,boost-use-to-string,readability-braces-around-statements
 FormatStyle: file
-CheckOptions:
- - key: performance-move-const-arg.CheckTriviallyCopyableMove
-   value: false

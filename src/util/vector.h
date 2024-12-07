@@ -1,11 +1,10 @@
 // Copyright (c) 2019 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_UTIL_VECTOR_H
-#define BITCOIN_UTIL_VECTOR_H
+#pragma once
 
-#include <initializer_list>
 #include <type_traits>
 #include <vector>
 
@@ -17,19 +16,16 @@
  *   (list initialization always copies).
  */
 template <typename... Args>
-inline std::vector<typename std::common_type<Args...>::type>
-Vector(Args &&...args) {
+inline std::vector<typename std::common_type<Args...>::type> Vector(Args &&...args) {
     std::vector<typename std::common_type<Args...>::type> ret;
     ret.reserve(sizeof...(args));
-    // The line below uses the trick from
-    // https://www.experts-exchange.com/articles/32502/None-recursive-variadic-templates-with-std-initializer-list.html
-    (void)std::initializer_list<int>{
-        (ret.emplace_back(std::forward<Args>(args)), 0)...};
+    (ret.push_back(std::forward<Args>(args)), ...);
     return ret;
 }
 
 /** Concatenate two vectors, moving elements. */
-template <typename V> inline V Cat(V v1, V &&v2) {
+template <typename V>
+inline V Cat(V v1, V &&v2) {
     v1.reserve(v1.size() + v2.size());
     for (auto &arg : v2) {
         v1.push_back(std::move(arg));
@@ -38,12 +34,11 @@ template <typename V> inline V Cat(V v1, V &&v2) {
 }
 
 /** Concatenate two vectors. */
-template <typename V> inline V Cat(V v1, const V &v2) {
+template <typename V>
+inline V Cat(V v1, const V &v2) {
     v1.reserve(v1.size() + v2.size());
     for (const auto &arg : v2) {
         v1.push_back(arg);
     }
     return v1;
 }
-
-#endif // BITCOIN_UTIL_VECTOR_H

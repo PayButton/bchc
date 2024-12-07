@@ -1,20 +1,21 @@
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RWCOLLECTION_H
-#define BITCOIN_RWCOLLECTION_H
+#pragma once
 
 #include <threadsafety.h>
+#include <util/noncopyable.h>
 
 #include <boost/range/iterator.hpp>
 
 #include <iterator>
+#include <mutex>
 #include <shared_mutex>
 #include <type_traits>
 #include <utility>
 
-template <typename T, typename L> class RWCollectionView {
+template <typename T, typename L> class RWCollectionView : NonCopyable {
 private:
     L lock;
     T *collection;
@@ -27,9 +28,6 @@ public:
     RWCollectionView(L l, T &c) : lock(std::move(l)), collection(&c) {}
     RWCollectionView(RWCollectionView &&other)
         : lock(std::move(other.lock)), collection(other.collection) {}
-
-    RWCollectionView(const RWCollectionView &) = delete;
-    const RWCollectionView &operator=(const RWCollectionView) = delete;
 
     T *operator->() { return collection; }
     const T *operator->() const { return collection; }
@@ -65,26 +63,19 @@ public:
 
 template <typename T> class RWCollection {
 private:
-    T collection;
-    mutable std::shared_mutex rwmutex;
+    T collection GUARDED_BY(rwlock);
+    mutable std::shared_mutex rwlock;
 
 public:
     RWCollection() : collection() {}
-    explicit RWCollection(T &&collection_)
-        : collection(std::move(collection_)) {}
 
-    using ReadView =
-        RWCollectionView<const T, std::shared_lock<std::shared_mutex>>;
+    using ReadView = RWCollectionView<const T, std::shared_lock<std::shared_mutex>>;
     ReadView getReadView() const {
-        return ReadView(std::shared_lock<std::shared_mutex>(rwmutex),
-                        collection);
+        return ReadView(std::shared_lock(rwlock), collection);
     }
 
     using WriteView = RWCollectionView<T, std::unique_lock<std::shared_mutex>>;
     WriteView getWriteView() {
-        return WriteView(std::unique_lock<std::shared_mutex>(rwmutex),
-                         collection);
+        return WriteView(std::unique_lock(rwlock), collection);
     }
 };
-
-#endif // BITCOIN_RWCOLLECTION_H

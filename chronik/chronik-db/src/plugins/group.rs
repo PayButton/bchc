@@ -11,7 +11,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
-    db::CF_PLUGIN_GROUP_UTXOS,
+    db::{CF_PLUGIN_GROUP_UTXOS, CF_PLUGIN_HISTORY, CF_PLUGIN_HISTORY_NUM_TXS},
     group::{Group, GroupQuery, MemberItem, UtxoDataOutput},
     io::{GroupHistoryConf, GroupUtxoConf},
     plugins::PluginsGroupError::*,
@@ -119,8 +119,17 @@ impl Group for PluginsGroup {
         member.to_vec()
     }
 
+    fn ser_hash_member(&self, _member: &Self::Member<'_>) -> [u8; 32] {
+        unimplemented!("There is no known use case for hashing PluginsGroup")
+    }
+
     fn tx_history_conf() -> GroupHistoryConf {
-        unimplemented!("Tx history for plugin groups not implemented yet")
+        GroupHistoryConf {
+            cf_page_name: CF_PLUGIN_HISTORY,
+            cf_num_txs_name: CF_PLUGIN_HISTORY_NUM_TXS,
+            page_size: 1000,
+            cf_member_hash_name: None,
+        }
     }
 
     fn utxo_conf() -> GroupUtxoConf {

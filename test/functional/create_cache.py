@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -16,6 +17,7 @@ class CreateCache(BitcoinTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 0
+        self.supports_cli = True
 
     def setup_network(self):
         pass
@@ -24,5 +26,5 @@ class CreateCache(BitcoinTestFramework):
         pass
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     CreateCache().main()

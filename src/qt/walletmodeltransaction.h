@@ -1,21 +1,23 @@
 // Copyright (c) 2011-2014 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_WALLETMODELTRANSACTION_H
-#define BITCOIN_QT_WALLETMODELTRANSACTION_H
+#pragma once
 
-#include <primitives/transaction.h>
-#include <qt/sendcoinsrecipient.h>
+#include <qt/walletmodel.h>
 
-#include <consensus/amount.h>
+#include <amount.h>
 
 #include <QObject>
+
+#include <memory>
 
 class SendCoinsRecipient;
 
 namespace interfaces {
 class Node;
+class PendingWalletTx;
 } // namespace interfaces
 
 /** Data model for a walletmodel transaction. */
@@ -26,7 +28,7 @@ public:
 
     QList<SendCoinsRecipient> getRecipients() const;
 
-    CTransactionRef &getWtx();
+    std::unique_ptr<interfaces::PendingWalletTx> &getWtx();
     unsigned int getTransactionSize();
 
     void setTransactionFee(const Amount newFee);
@@ -39,8 +41,6 @@ public:
 
 private:
     QList<SendCoinsRecipient> recipients;
-    CTransactionRef wtx;
+    std::unique_ptr<interfaces::PendingWalletTx> wtx;
     Amount fee;
 };
-
-#endif // BITCOIN_QT_WALLETMODELTRANSACTION_H

@@ -1,6 +1,8 @@
+#!/usr/bin/env python3
 # Copyright (c) 2010 ArtForz -- public domain half-a-node
 # Copyright (c) 2012 Jeff Garzik
 # Copyright (c) 2010-2019 The Bitcoin Core developers
+# Copyright (c) 2022 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Bitcoin test framework primitive and message structures
@@ -17,60 +19,64 @@ ser_*, deser_*: functions that handle serialization/deserialization.
 Classes use __slots__ to ensure extraneous attributes aren't accidentally added
 by tests, compromising their intended effect.
 """
+from codecs import encode
 import copy
+from enum import IntEnum
 import hashlib
+from io import BytesIO
 import random
 import socket
 import struct
 import time
-import unittest
-from base64 import b64decode, b64encode
-from enum import IntEnum
-from io import BytesIO
-from typing import List
+from typing import Optional, Tuple
 
 from test_framework.siphash import siphash256
-from test_framework.util import assert_equal, uint256_hex
+from test_framework.util import hex_str_to_bytes
 
+MIN_VERSION_SUPPORTED = 60001
+# past bip-31 for ping/pong, post sendaddrv2
+MY_VERSION = 70016
+MY_SUBVERSION = b"/python-p2p-tester:0.0.3/"
+# from version 70001 onwards, fRelay should be appended to version
+# messages (BIP37)
+MY_RELAY = 1
+
+MAX_INV_SZ = 50000
 MAX_LOCATOR_SZ = 101
 MAX_BLOCK_BASE_SIZE = 1000000
-MAX_BLOOM_FILTER_SIZE = 36000
-MAX_BLOOM_HASH_FUNCS = 50
 
-# 1,000,000 XEC in satoshis (legacy BCHA)
+# 1 BCH in satoshis
 COIN = 100000000
-# 1 XEC in satoshis
-XEC = 100
-MAX_MONEY = 21000000 * COIN
 
-# Maximum length of incoming protocol messages
-MAX_PROTOCOL_MESSAGE_LENGTH = 2 * 1024 * 1024
+MAX_PROTOCOL_MESSAGE_LENGTH = 2 * 1024 * 1024  # Maximum length of incoming protocol messages
 MAX_HEADERS_RESULTS = 2000  # Number of headers sent in one getheaders result
 MAX_INV_SIZE = 50000  # Maximum number of entries in an 'inv' protocol message
 
-NODE_NETWORK = 1 << 0
-NODE_GETUTXO = 1 << 1
-NODE_BLOOM = 1 << 2
+NODE_NETWORK = (1 << 0)
+# NODE_GETUTXO = (1 << 1)
+NODE_BLOOM = (1 << 2)
 # NODE_WITNESS = (1 << 3)
-# NODE_XTHIN = (1 << 4) # removed in v0.22.12
-NODE_COMPACT_FILTERS = 1 << 6
-NODE_NETWORK_LIMITED = 1 << 10
-NODE_AVALANCHE = 1 << 24
+NODE_XTHIN = (1 << 4)
+NODE_BITCOIN_CASH = (1 << 5)
+NODE_NETWORK_LIMITED = (1 << 10)
+NODE_EXTVERSION = (1 << 11)
 
 MSG_TX = 1
 MSG_BLOCK = 2
 MSG_FILTERED_BLOCK = 3
 MSG_CMPCT_BLOCK = 4
-MSG_AVA_PROOF = 0x1F000001
-MSG_TYPE_MASK = 0xFFFFFFFF >> 2
-
-FILTER_TYPE_BASIC = 0
+MSG_TYPE_MASK = 0xffffffff >> 2
+MSG_DSPROOF = 0x94a0  # Temporary type id
 
 # Serialization/deserialization tools
 
 
 def sha256(s):
-    return hashlib.new("sha256", s).digest()
+    return hashlib.new('sha256', s).digest()
+
+
+def ripemd160(s):
+    return hashlib.new('ripemd160', s).digest()
 
 
 def hash256(s):
@@ -120,7 +126,7 @@ def deser_uint256(f):
 
 def ser_uint256(u):
     rs = b""
-    for _ in range(8):
+    for i in range(8):
         rs += struct.pack("<I", u & 0xFFFFFFFF)
         u >>= 32
     return rs
@@ -145,7 +151,7 @@ def uint256_from_compact(c):
 def deser_vector(f, c, deser_function_name=None):
     nit = deser_compact_size(f)
     r = []
-    for _ in range(nit):
+    for i in range(nit):
         t = c()
         if deser_function_name:
             getattr(t, deser_function_name)(f)
@@ -170,7 +176,7 @@ def ser_vector(v, ser_function_name=None):
 def deser_uint256_vector(f):
     nit = deser_compact_size(f)
     r = []
-    for _ in range(nit):
+    for i in range(nit):
         t = deser_uint256(f)
         r.append(t)
     return r
@@ -186,7 +192,7 @@ def ser_uint256_vector(v):
 def deser_string_vector(f):
     nit = deser_compact_size(f)
     r = []
-    for _ in range(nit):
+    for i in range(nit):
         t = deser_string(f)
         r.append(t)
     return r
@@ -199,17 +205,41 @@ def ser_string_vector(v):
     return r
 
 
+class CompactSize(int):
+    def serialize(self):
+        assert self >= 0
+        if self < 253:
+            return struct.pack("<B", self)
+        elif self < 2**16:
+            return struct.pack("<B", 253) + struct.pack("<H", self)
+        elif self < 2**32:
+            return struct.pack("<B", 254) + struct.pack("<I", self)
+        elif self < 2**64:
+            return struct.pack("<B", 255) + struct.pack("<Q", self)
+
+    def deserialize(self, f):
+        self = struct.unpack("<B", f.read(1))[0]
+        if self == 253:
+            self = struct.unpack("<H", f.read(2))[0]
+        elif self == 254:
+            self = struct.unpack("<I", f.read(4))[0]
+        elif self == 255:
+            self = struct.unpack("<Q", f.read(8))[0]
+        return self
+
+
+# Deserialize from a hex string representation (eg from RPC)
+
+
 def FromHex(obj, hex_string):
-    """Deserialize from a hex string representation (eg from RPC)"""
-    obj.deserialize(BytesIO(bytes.fromhex(hex_string)))
+    obj.deserialize(BytesIO(hex_str_to_bytes(hex_string)))
     return obj
+
+# Convert a binary-serializable object to hex (eg for submission via RPC)
 
 
 def ToHex(obj):
-    """Convert a binary-serializable object to hex
-    (eg for submission via RPC)"""
     return obj.serialize().hex()
-
 
 # Objects that map to bitcoind objects, which can be serialized/deserialized
 
@@ -220,9 +250,13 @@ class CAddress:
     # see https://github.com/bitcoin/bips/blob/master/bip-0155.mediawiki
     NET_IPV4 = 1
 
-    ADDRV2_NET_NAME = {NET_IPV4: "IPv4"}
+    ADDRV2_NET_NAME = {
+        NET_IPV4: "IPv4"
+    }
 
-    ADDRV2_ADDRESS_LENGTH = {NET_IPV4: 4}
+    ADDRV2_ADDRESS_LENGTH = {
+        NET_IPV4: 4
+    }
 
     def __init__(self):
         self.time = 0
@@ -237,8 +271,7 @@ class CAddress:
             # VERSION messages serialize CAddress objects without time
             self.time = struct.unpack("<I", f.read(4))[0]
         self.nServices = struct.unpack("<Q", f.read(8))[0]
-        # We only support IPv4 which means skip 12 bytes and read the next 4 as
-        # IPv4 address.
+        # We only support IPv4 which means skip 12 bytes and read the next 4 as IPv4 address.
         f.read(12)
         self.net = self.NET_IPV4
         self.ip = socket.inet_ntoa(f.read(4))
@@ -286,10 +319,8 @@ class CAddress:
         return r
 
     def __repr__(self):
-        return (
-            f"CAddress(nServices={self.nServices} net={self.ADDRV2_NET_NAME[self.net]} "
-            f"addr={self.ip} port={self.port})"
-        )
+        return ("CAddress(nServices=%i net=%s addr=%s port=%i)"
+                % (self.nServices, self.ADDRV2_NET_NAME[self.net], self.ip, self.port))
 
 
 class CInv:
@@ -301,7 +332,7 @@ class CInv:
         MSG_BLOCK: "Block",
         MSG_FILTERED_BLOCK: "filtered Block",
         MSG_CMPCT_BLOCK: "CompactBlock",
-        MSG_AVA_PROOF: "avalanche proof",
+        0x94a0: "DoubleSpendProofbeta",
     }
 
     def __init__(self, t=0, h=0):
@@ -319,57 +350,51 @@ class CInv:
         return r
 
     def __repr__(self):
-        return f"CInv(type={self.typemap[self.type]} hash={uint256_hex(self.hash)})"
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, CInv)
-            and self.hash == other.hash
-            and self.type == other.type
-        )
+        return "CInv(type={} hash={:064x})".format(
+            self.typemap[self.type], self.hash)
 
 
 class CBlockLocator:
     __slots__ = ("nVersion", "vHave")
 
     def __init__(self):
+        self.nVersion = MY_VERSION
         self.vHave = []
 
     def deserialize(self, f):
-        # Ignore version field.
-        struct.unpack("<i", f.read(4))[0]
+        self.nVersion = struct.unpack("<i", f.read(4))[0]
         self.vHave = deser_uint256_vector(f)
 
     def serialize(self):
         r = b""
-        # Bitcoin ABC ignores version field. Set it to 0.
-        r += struct.pack("<i", 0)
+        r += struct.pack("<i", self.nVersion)
         r += ser_uint256_vector(self.vHave)
         return r
 
     def __repr__(self):
-        return f"CBlockLocator(vHave={self.vHave!r})"
+        return "CBlockLocator(nVersion={} vHave={})".format(
+            self.nVersion, repr(self.vHave))
 
 
 class COutPoint:
-    __slots__ = ("txid", "n")
+    __slots__ = ("hash", "n")
 
-    def __init__(self, txid=0, n=0):
-        self.txid = txid
+    def __init__(self, hash=0, n=0):
+        self.hash = hash
         self.n = n
 
     def deserialize(self, f):
-        self.txid = deser_uint256(f)
+        self.hash = deser_uint256(f)
         self.n = struct.unpack("<I", f.read(4))[0]
 
     def serialize(self):
         r = b""
-        r += ser_uint256(self.txid)
+        r += ser_uint256(self.hash)
         r += struct.pack("<I", self.n)
         return r
 
     def __repr__(self):
-        return f"COutPoint(txid={uint256_hex(self.txid)} n={self.n})"
+        return "COutPoint(hash={:064x} n={})".format(self.hash, self.n)
 
 
 class CTxIn:
@@ -397,34 +422,160 @@ class CTxIn:
         return r
 
     def __repr__(self):
-        return (
-            f"CTxIn(prevout={self.prevout!r} scriptSig={self.scriptSig.hex()} "
-            f"nSequence={self.nSequence})"
-        )
+        return "CTxIn(prevout={} scriptSig={} nSequence={})".format(
+            repr(self.prevout), self.scriptSig.hex(), self.nSequence)
+
+
+class TokenStructure(IntEnum):
+    HasAmount = 0x10
+    HasNFT = 0x20
+    HasCommitmentLength = 0x40
+
+
+class TokenCapability(IntEnum):
+    NoCapability = 0x00
+    Mutable = 0x01
+    Minting = 0x02
+
+
+class TokenOutputData:
+    __slots__ = ("id", "bitfield", "amount", "commitment")
+
+    def __init__(self, id: int = 0, amount: int = 1, commitment: bytes = b'',
+                 bitfield: int = TokenStructure.HasAmount):
+        self.id = id
+        self.amount = amount
+        self.commitment = commitment
+        self.bitfield = bitfield
+
+    @property
+    def id_hex(self) -> str:
+        return ser_uint256(self.id)[::-1].hex()
+
+    @id_hex.setter
+    def id_hex(self, hex: str):
+        b = bytes.fromhex(hex)
+        assert len(b) == 32
+        self.id = uint256_from_str(b[::-1])
+
+    def deserialize(self, f):
+        self.id = deser_uint256(f)
+        self.bitfield = struct.unpack("<B", f.read(1))[0]
+        if self.HasCommitmentLength():
+            self.commitment = deser_string(f)
+        else:
+            self.commitment = b''
+        if self.HasAmount():
+            self.amount = deser_compact_size(f)
+        else:
+            self.amount = 0
+
+    def serialize(self) -> bytes:
+        r = bytearray()
+        r += ser_uint256(self.id)
+        r += struct.pack("B", self.bitfield)
+        if self.HasCommitmentLength():
+            r += ser_string(self.commitment)
+        if self.HasAmount():
+            r += ser_compact_size(self.amount)
+        return bytes(r)
+
+    def GetCapability(self) -> int:
+        return self.bitfield & 0x0f
+
+    def HasCommitmentLength(self) -> bool:
+        return bool(self.bitfield & TokenStructure.HasCommitmentLength)
+
+    def HasAmount(self) -> bool:
+        return bool(self.bitfield & TokenStructure.HasAmount)
+
+    def HasNFT(self) -> bool:
+        return bool(self.bitfield & TokenStructure.HasNFT)
+
+    def IsMintingNFT(self) -> bool:
+        return self.HasNFT() and self.GetCapability() == TokenCapability.Minting
+
+    def IsMutableNFT(self) -> bool:
+        return self.HasNFT() and self.GetCapability() == TokenCapability.Mutable
+
+    def IsImmutableNFT(self) -> bool:
+        return self.HasNFT() and self.GetCapability() == TokenCapability.NoCapability
+
+    def IsValidBitfield(self) -> bool:
+        s = self.bitfield & 0xf0
+        if s >= 0x80 or s == 0x00:
+            return False
+        if self.bitfield & 0x0f > 2:
+            return False
+        if not self.HasNFT() and not self.HasAmount():
+            return False
+        if not self.HasNFT() and (self.bitfield & 0x0f) != 0:
+            return False
+        if not self.HasNFT() and self.HasCommitmentLength():
+            return False
+        return True
+
+    def __repr__(self) -> str:
+        return f"TokenOutputData(id={self.id_hex} bitfield={self.bitfield:02x} amount={self.amount} " \
+               f"commitment={self.commitment[:40].hex()})"
+
+
+class token:
+    """Emulate the C++ 'token' namespace"""
+    PREFIX_BYTE = bytes([0xef])
+    Structure = TokenStructure
+    Capability = TokenCapability
+    OutputData = TokenOutputData
+
+    @classmethod
+    def wrap_spk(cls, token_data: Optional[TokenOutputData], script_pub_key: bytes) -> bytes:
+        if not token_data:
+            return script_pub_key
+        buf = bytearray()
+        buf += cls.PREFIX_BYTE
+        buf += token_data.serialize()
+        buf += script_pub_key
+        return bytes(buf)
+
+    @classmethod
+    def unwrap_spk(cls, wrapped_spk: bytes) -> Tuple[Optional[TokenOutputData], bytes]:
+        if not wrapped_spk or wrapped_spk[0] != cls.PREFIX_BYTE[0]:
+            return None, wrapped_spk
+        token_data = TokenOutputData()
+        f = BytesIO(wrapped_spk)
+        pfx = f.read(1)  # consume prefix byte
+        assert pfx == cls.PREFIX_BYTE
+        token_data.deserialize(f)  # unserialize token_data from buffer after prefix_byte
+        if (not token_data.IsValidBitfield() or (token_data.HasAmount() and not token_data.amount)
+                or (token_data.HasCommitmentLength() and not token_data.commitment)):
+            # Bad bitfield or 0 serialized amount or empty serialized commitment is a deserialization error,
+            # just return the entire buffer as spk
+            return None, wrapped_spk
+        spk = wrapped_spk[f.tell():]  # leftover bytes go to real spk
+        return token_data, spk  # Parsed ok
 
 
 class CTxOut:
-    __slots__ = ("nValue", "scriptPubKey")
+    __slots__ = ("nValue", "scriptPubKey", "tokenData")
 
-    def __init__(self, nValue=0, scriptPubKey=b""):
+    def __init__(self, nValue=0, scriptPubKey=b"", tokenData=None):
         self.nValue = nValue
         self.scriptPubKey = scriptPubKey
+        self.tokenData = tokenData
 
     def deserialize(self, f):
         self.nValue = struct.unpack("<q", f.read(8))[0]
-        self.scriptPubKey = deser_string(f)
+        self.tokenData, self.scriptPubKey = token.unwrap_spk(deser_string(f))
 
     def serialize(self):
-        r = b""
+        r = bytearray()
         r += struct.pack("<q", self.nValue)
-        r += ser_string(self.scriptPubKey)
-        return r
+        r += ser_string(token.wrap_spk(self.tokenData, self.scriptPubKey))
+        return bytes(r)
 
     def __repr__(self):
-        return (
-            f"CTxOut(nValue={self.nValue // XEC}.{self.nValue % XEC:02d} "
-            f"scriptPubKey={self.scriptPubKey.hex()})"
-        )
+        return "CTxOut(nValue={}.{:08d} scriptPubKey={} tokenData={})".format(
+            self.nValue // COIN, self.nValue % COIN, self.scriptPubKey.hex(), repr(self.tokenData))
 
 
 class CTransaction:
@@ -478,7 +629,8 @@ class CTransaction:
     def calc_sha256(self):
         if self.sha256 is None:
             self.sha256 = uint256_from_str(hash256(self.serialize()))
-        self.hash = hash256(self.serialize())[::-1].hex()
+        self.hash = encode(
+            hash256(self.serialize())[::-1], 'hex_codec').decode('ascii')
 
     def get_id(self):
         # For now, just forward the hash.
@@ -488,28 +640,18 @@ class CTransaction:
     def is_valid(self):
         self.calc_sha256()
         for tout in self.vout:
-            if tout.nValue < 0 or tout.nValue > MAX_MONEY:
+            if tout.nValue < 0 or tout.nValue > 21000000 * COIN:
                 return False
         return True
 
     def __repr__(self):
-        return (
-            f"CTransaction(nVersion={self.nVersion} vin={self.vin!r} "
-            f"vout={self.vout!r} nLockTime={self.nLockTime})"
-        )
+        return "CTransaction(nVersion={} vin={} vout={} nLockTime={})".format(
+            self.nVersion, repr(self.vin), repr(self.vout), self.nLockTime)
 
 
 class CBlockHeader:
-    __slots__ = (
-        "hash",
-        "hashMerkleRoot",
-        "hashPrevBlock",
-        "nBits",
-        "nNonce",
-        "nTime",
-        "nVersion",
-        "sha256",
-    )
+    __slots__ = ("hash", "hashMerkleRoot", "hashPrevBlock", "nBits", "nNonce",
+                 "nTime", "nVersion", "sha256")
 
     def __init__(self, header=None):
         if header is None:
@@ -565,7 +707,7 @@ class CBlockHeader:
             r += struct.pack("<I", self.nBits)
             r += struct.pack("<I", self.nNonce)
             self.sha256 = uint256_from_str(hash256(r))
-            self.hash = hash256(r)[::-1].hex()
+            self.hash = encode(hash256(r)[::-1], 'hex_codec').decode('ascii')
 
     def rehash(self):
         self.sha256 = None
@@ -573,32 +715,25 @@ class CBlockHeader:
         return self.sha256
 
     def __repr__(self):
-        return (
-            f"CBlockHeader(nVersion={self.nVersion} "
-            f"hashPrevBlock={uint256_hex(self.hashPrevBlock)} "
-            f"hashMerkleRoot={uint256_hex(self.hashMerkleRoot)} nTime={self.nTime} "
-            f"nBits={self.nBits:08x} nNonce={self.nNonce:08x})"
-        )
-
-
-BLOCK_HEADER_SIZE = len(CBlockHeader().serialize())
-assert_equal(BLOCK_HEADER_SIZE, 80)
+        return "CBlockHeader(nVersion={} hashPrevBlock={:064x} hashMerkleRoot={:064x} nTime={} nBits={:08x} nNonce={:08x})".format(
+            self.nVersion, self.hashPrevBlock, self.hashMerkleRoot,
+            self.nTime, self.nBits, self.nNonce)
 
 
 class CBlock(CBlockHeader):
     __slots__ = ("vtx",)
 
     def __init__(self, header=None):
-        super().__init__(header)
-        self.vtx: List[CTransaction] = []
+        super(CBlock, self).__init__(header)
+        self.vtx = []
 
     def deserialize(self, f):
-        super().deserialize(f)
+        super(CBlock, self).deserialize(f)
         self.vtx = deser_vector(f, CTransaction)
 
     def serialize(self):
         r = b""
-        r += super().serialize()
+        r += super(CBlock, self).serialize()
         r += ser_vector(self.vtx)
         return r
 
@@ -610,7 +745,9 @@ class CBlock(CBlockHeader):
                 i2 = min(i + 1, len(hashes) - 1)
                 newhashes.append(hash256(hashes[i] + hashes[i2]))
             hashes = newhashes
-        return uint256_from_str(hashes[0])
+        if hashes:
+            return uint256_from_str(hashes[0])
+        return 0
 
     def calc_merkle_root(self):
         hashes = []
@@ -639,12 +776,109 @@ class CBlock(CBlockHeader):
             self.rehash()
 
     def __repr__(self):
-        return (
-            f"CBlock(nVersion={self.nVersion} "
-            f"hashPrevBlock={uint256_hex(self.hashPrevBlock)} "
-            f"hashMerkleRoot={uint256_hex(self.hashMerkleRoot)} "
-            f"nTime={self.nTime} nBits={self.nBits:08x} "
-            f"nNonce={self.nNonce:08x} vtx={self.vtx!r})"
+        return "CBlock(nVersion={} hashPrevBlock={:064x} hashMerkleRoot={:064x} nTime={} nBits={:08x} nNonce={:08x} vtx={})".format(
+            self.nVersion, self.hashPrevBlock, self.hashMerkleRoot,
+            self.nTime, self.nBits, self.nNonce, repr(self.vtx))
+
+
+class CDSProof:
+    __slots__ = ("prevTxId",
+                 "prevOutIndex",
+                 "spender1",
+                 "spender2")
+
+    def __init__(self, dsproof=None):
+        if dsproof is None:
+            self.prevTxId = None
+            self.prevOutIndex = 0
+            self.spender1 = CDSProofSpender()
+            self.spender2 = CDSProofSpender()
+        else:
+            self.prevTxId = dsproof.prevTxId
+            self.prevOutIndex = dsproof.prevOutIndex
+            self.spender1 = dsproof.spender1
+            self.spender2 = dsproof.spender2
+
+    def deserialize(self, f):
+        self.prevTxId = deser_uint256(f)
+        self.prevOutIndex = struct.unpack("<i", f.read(4))[0]
+        self.spender1 = CDSProofSpender()
+        self.spender1.deserialize(f)
+        self.spender2 = CDSProofSpender()
+        self.spender2.deserialize(f)
+
+    def serialize(self):
+        r = self.getPrevOutput()
+        r += self.spender1.serialize()
+        r += self.spender2.serialize()
+        return r
+
+    def getPrevOutput(self):
+        r = b""
+        r += ser_uint256(self.prevTxId)
+        r += struct.pack("<I", self.prevOutIndex)
+        return r
+
+    def __repr__(self):
+        return "CDSProof(prevTxId={:064x} prevOutIndex={}\nspender1={}\nspender2={})".format(
+            self.prevTxId, self.prevOutIndex, self.spender1, self.spender2)
+
+
+class CDSProofSpender:
+
+    __slots__ = ("txVersion",
+                 "outSequence",
+                 "lockTime",
+                 "hashPrevOutputs",
+                 "hashSequence",
+                 "hashOutputs",
+                 "pushData")
+
+    def __init__(self, spender=None):
+        if spender is None:
+            self.txVersion = 0
+            self.outSequence = 0
+            self.lockTime = 0
+            self.hashPrevOutputs = None
+            self.hashSequence = None
+            self.hashOutputs = None
+            self.pushData = []
+        else:
+            self.txVersion = spender.txVersion
+            self.outSequence = spender.outSequence
+            self.lockTime = spender.lockTime
+            self.hashPrevOutputs = spender.hashPrevOutputs
+            self.hashSequence = spender.hashSequence
+            self.hashOutputs = spender.hashOutputs
+            self.pushData = spender.pushData
+
+    def deserialize(self, f):
+        self.txVersion = struct.unpack("<i", f.read(4))[0]
+        self.outSequence = struct.unpack("<I", f.read(4))[0]
+        self.lockTime = struct.unpack("<I", f.read(4))[0]
+        self.hashPrevOutputs = deser_uint256(f)
+        self.hashSequence = deser_uint256(f)
+        self.hashOutputs = deser_uint256(f)
+        self.pushData = deser_string_vector(f)
+
+    def serialize(self):
+        r = b""
+        r += struct.pack("<i", self.txVersion)
+        r += struct.pack("<I", self.outSequence)
+        r += struct.pack("<I", self.lockTime)
+        r += ser_uint256(self.hashPrevOutputs)
+        r += ser_uint256(self.hashSequence)
+        r += ser_uint256(self.hashOutputs)
+        r += ser_string_vector(self.pushData)
+        return r
+
+    def pushDataToHex(self, data):
+        return "[" + ",".join(map(bytes.hex, data)) + "]"
+
+    def __repr__(self):
+        return "spender1txVersion={} spender1outSequence={} spender1lockTime={} spender1hashPrevOutputs={:064x} spender1hashSequence={:064x} spender1hashOutputs={:064x} spender1pushData={}".format(
+            self.txVersion, self.outSequence, self.lockTime, self.hashPrevOutputs, self.hashSequence, self.hashOutputs, self.pushDataToHex(
+                self.pushData)
         )
 
 
@@ -667,19 +901,14 @@ class PrefilledTransaction:
         return r
 
     def __repr__(self):
-        return f"PrefilledTransaction(index={self.index}, tx={self.tx!r})"
+        return "PrefilledTransaction(index={}, tx={})".format(
+            self.index, repr(self.tx))
 
 
 # This is what we send on the wire, in a cmpctblock message.
 class P2PHeaderAndShortIDs:
-    __slots__ = (
-        "header",
-        "nonce",
-        "prefilled_txn",
-        "prefilled_txn_length",
-        "shortids",
-        "shortids_length",
-    )
+    __slots__ = ("header", "nonce", "prefilled_txn", "prefilled_txn_length",
+                 "shortids", "shortids_length")
 
     def __init__(self):
         self.header = CBlockHeader()
@@ -693,10 +922,11 @@ class P2PHeaderAndShortIDs:
         self.header.deserialize(f)
         self.nonce = struct.unpack("<Q", f.read(8))[0]
         self.shortids_length = deser_compact_size(f)
-        for _ in range(self.shortids_length):
+        for i in range(self.shortids_length):
             # shortids are defined to be 6 bytes in the spec, so append
             # two zero bytes and read it in as an 8-byte number
-            self.shortids.append(struct.unpack("<Q", f.read(6) + b"\x00\x00")[0])
+            self.shortids.append(
+                struct.unpack("<Q", f.read(6) + b'\x00\x00')[0])
         self.prefilled_txn = deser_vector(f, PrefilledTransaction)
         self.prefilled_txn_length = len(self.prefilled_txn)
 
@@ -712,19 +942,17 @@ class P2PHeaderAndShortIDs:
         return r
 
     def __repr__(self):
-        return (
-            f"P2PHeaderAndShortIDs(header={self.header!r}, nonce={self.nonce}, "
-            f"shortids_length={self.shortids_length}, shortids={self.shortids!r}, "
-            f"prefilled_txn_length={self.prefilled_txn_length}, "
-            f"prefilledtxn={self.prefilled_txn!r}"
-        )
+        return "P2PHeaderAndShortIDs(header={}, nonce={}, shortids_length={}, shortids={}, prefilled_txn_length={}, prefilledtxn={}".format(
+            repr(self.header), self.nonce, self.shortids_length,
+            repr(self.shortids), self.prefilled_txn_length,
+            repr(self.prefilled_txn))
+
+# Calculate the BIP 152-compact blocks shortid for a given transaction hash
 
 
 def calculate_shortid(k0, k1, tx_hash):
-    """Calculate the BIP 152-compact blocks shortid for a given
-    transaction hash"""
     expected_shortid = siphash256(k0, k1, tx_hash)
-    expected_shortid &= 0x0000FFFFFFFFFFFF
+    expected_shortid &= 0x0000ffffffffffff
     return expected_shortid
 
 
@@ -746,8 +974,7 @@ class HeaderAndShortIDs:
             last_index = -1
             for x in p2pheaders_and_shortids.prefilled_txn:
                 self.prefilled_txn.append(
-                    PrefilledTransaction(x.index + last_index + 1, x.tx)
-                )
+                    PrefilledTransaction(x.index + last_index + 1, x.tx))
                 last_index = self.prefilled_txn[-1].index
 
     def to_p2p(self):
@@ -761,8 +988,7 @@ class HeaderAndShortIDs:
         last_index = -1
         for x in self.prefilled_txn:
             ret.prefilled_txn.append(
-                PrefilledTransaction(x.index - last_index - 1, x.tx)
-            )
+                PrefilledTransaction(x.index - last_index - 1, x.tx))
             last_index = x.index
         return ret
 
@@ -774,14 +1000,14 @@ class HeaderAndShortIDs:
         key1 = struct.unpack("<Q", hash_header_nonce_as_str[8:16])[0]
         return [key0, key1]
 
+    # Version 2 compact blocks use wtxid in shortids (rather than txid)
     def initialize_from_block(self, block, nonce=0, prefill_list=None):
         if prefill_list is None:
             prefill_list = [0]
         self.header = CBlockHeader(block)
         self.nonce = nonce
-        self.prefilled_txn = [
-            PrefilledTransaction(i, block.vtx[i]) for i in prefill_list
-        ]
+        self.prefilled_txn = [PrefilledTransaction(i, block.vtx[i])
+                              for i in prefill_list]
         self.shortids = []
         [k0, k1] = self.get_siphash_keys()
         for i in range(len(block.vtx)):
@@ -790,10 +1016,9 @@ class HeaderAndShortIDs:
                 self.shortids.append(calculate_shortid(k0, k1, tx_hash))
 
     def __repr__(self):
-        return (
-            f"HeaderAndShortIDs(header={self.header!r}, nonce={self.nonce}, "
-            f"shortids={self.shortids!r}, prefilledtxn={self.prefilled_txn!r}"
-        )
+        return "HeaderAndShortIDs(header={}, nonce={}, shortids={}, prefilledtxn={}".format(
+            repr(self.header), self.nonce, repr(self.shortids),
+            repr(self.prefilled_txn))
 
 
 class BlockTransactionsRequest:
@@ -806,7 +1031,7 @@ class BlockTransactionsRequest:
     def deserialize(self, f):
         self.blockhash = deser_uint256(f)
         indexes_length = deser_compact_size(f)
-        for _ in range(indexes_length):
+        for i in range(indexes_length):
             self.indexes.append(deser_compact_size(f))
 
     def serialize(self):
@@ -834,10 +1059,8 @@ class BlockTransactionsRequest:
         return absolute_indexes
 
     def __repr__(self):
-        return (
-            f"BlockTransactionsRequest(hash={uint256_hex(self.blockhash)} "
-            f"indexes={self.indexes!r})"
-        )
+        return "BlockTransactionsRequest(hash={:064x} indexes={})".format(
+            self.blockhash, repr(self.indexes))
 
 
 class BlockTransactions:
@@ -858,394 +1081,18 @@ class BlockTransactions:
         return r
 
     def __repr__(self):
-        return (
-            f"BlockTransactions(hash={uint256_hex(self.blockhash)} "
-            f"transactions={self.transactions!r})"
-        )
-
-
-class AvalancheStake:
-    __slots__ = ("utxo", "amount", "height", "pubkey", "is_coinbase")
-
-    def __init__(self, utxo=None, amount=0, height=0, pubkey=b"", is_coinbase=False):
-        self.utxo: COutPoint = utxo or COutPoint()
-        self.amount: int = amount
-        """Amount in satoshis (int64)"""
-        self.height: int = height
-        """Block height containing this utxo (uint32)"""
-        self.pubkey: bytes = pubkey
-        """Public key"""
-
-        self.is_coinbase: bool = is_coinbase
-
-    def deserialize(self, f):
-        self.utxo = COutPoint()
-        self.utxo.deserialize(f)
-        self.amount = struct.unpack("<q", f.read(8))[0]
-        height_ser = struct.unpack("<I", f.read(4))[0]
-        self.is_coinbase = bool(height_ser & 1)
-        self.height = height_ser >> 1
-        self.pubkey = deser_string(f)
-
-    def serialize(self) -> bytes:
-        r = self.utxo.serialize()
-        height_ser = self.height << 1 | int(self.is_coinbase)
-        r += struct.pack("<q", self.amount)
-        r += struct.pack("<I", height_ser)
-        r += ser_compact_size(len(self.pubkey))
-        r += self.pubkey
-        return r
-
-    def __repr__(self):
-        return (
-            f"AvalancheStake(utxo={self.utxo}, amount={self.amount},"
-            f" height={self.height}, "
-            f"pubkey={self.pubkey.hex()})"
-        )
-
-
-class AvalancheSignedStake:
-    __slots__ = ("stake", "sig")
-
-    def __init__(self, stake=None, sig=b""):
-        self.stake: AvalancheStake = stake or AvalancheStake()
-        self.sig: bytes = sig
-        """Signature for this stake, bytes of length 64"""
-
-    def deserialize(self, f):
-        self.stake = AvalancheStake()
-        self.stake.deserialize(f)
-        self.sig = f.read(64)
-
-    def serialize(self) -> bytes:
-        return self.stake.serialize() + self.sig
-
-
-class AvalancheProof:
-    __slots__ = (
-        "sequence",
-        "expiration",
-        "master",
-        "stakes",
-        "payout_script",
-        "signature",
-        "limited_proofid",
-        "proofid",
-    )
-
-    def __init__(
-        self,
-        sequence=0,
-        expiration=0,
-        master=b"",
-        signed_stakes=None,
-        payout_script=b"",
-        signature=b"",
-    ):
-        self.sequence: int = sequence
-        self.expiration: int = expiration
-        self.master: bytes = master
-
-        self.stakes: List[AvalancheSignedStake] = signed_stakes or [
-            AvalancheSignedStake()
-        ]
-
-        self.payout_script = payout_script
-        self.signature = signature
-
-        self.limited_proofid: int = None
-        self.proofid: int = None
-        self.compute_proof_id()
-
-    def compute_proof_id(self):
-        """Compute Bitcoin's 256-bit hash (double SHA-256) of the
-        serialized proof data.
-        """
-        ss = struct.pack("<Qq", self.sequence, self.expiration)
-        ss += ser_string(self.payout_script)
-        ss += ser_compact_size(len(self.stakes))
-        # Use unsigned stakes
-        for s in self.stakes:
-            ss += s.stake.serialize()
-        h = hash256(ss)
-        self.limited_proofid = uint256_from_str(h)
-        h += ser_string(self.master)
-        h = hash256(h)
-        # make it an int, for comparing with Delegation.proofid
-        self.proofid = uint256_from_str(h)
-
-    def deserialize(self, f):
-        self.sequence = struct.unpack("<Q", f.read(8))[0]
-        self.expiration = struct.unpack("<q", f.read(8))[0]
-        self.master = deser_string(f)
-        self.stakes = deser_vector(f, AvalancheSignedStake)
-        self.payout_script = deser_string(f)
-        self.signature = f.read(64)
-        self.compute_proof_id()
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<Q", self.sequence)
-        r += struct.pack("<q", self.expiration)
-        r += ser_string(self.master)
-        r += ser_vector(self.stakes)
-        r += ser_string(self.payout_script)
-        r += self.signature
-        return r
-
-    def __repr__(self):
-        return (
-            f"AvalancheProof(proofid={uint256_hex(self.proofid)}, "
-            f"limited_proofid={uint256_hex(self.limited_proofid)}, "
-            f"sequence={self.sequence}, "
-            f"expiration={self.expiration}, "
-            f"master={self.master.hex()}, "
-            f"payout_script={self.payout_script.hex()}, "
-            f"signature={b64encode(self.signature)}, "
-            f"stakes={self.stakes})"
-        )
-
-
-class AvalanchePrefilledProof:
-    __slots__ = ("index", "proof")
-
-    def __init__(self, index=0, proof=None):
-        self.index = index
-        self.proof = proof or AvalancheProof()
-
-    def deserialize(self, f):
-        self.index = deser_compact_size(f)
-        self.proof.deserialize(f)
-
-    def serialize(self):
-        r = b""
-        r += ser_compact_size(self.index)
-        r += self.proof.serialize()
-        return r
-
-    def __repr__(self):
-        return f"AvalanchePrefilledProof(index={self.index}, proof={self.proof!r})"
-
-
-class AvalanchePoll:
-    __slots__ = ("round", "invs")
-
-    def __init__(self, avaround=0, invs=None):
-        self.round = avaround
-        self.invs = invs if invs is not None else []
-
-    def deserialize(self, f):
-        self.round = struct.unpack("<q", f.read(8))[0]
-        self.invs = deser_vector(f, CInv)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<q", self.round)
-        r += ser_vector(self.invs)
-        return r
-
-    def __repr__(self):
-        return f"AvalanchePoll(round={self.round}, invs={self.invs!r})"
-
-
-class AvalancheVoteError(IntEnum):
-    ACCEPTED = 0
-    INVALID = 1
-    PARKED = 2
-    FORK = 3
-    UNKNOWN = -1
-    MISSING = -2
-    PENDING = -3
-
-
-class AvalancheProofVoteResponse(IntEnum):
-    ACTIVE = 0
-    REJECTED = 1
-    IMMATURE = 2
-    CONFLICT = 3
-    UNKNOWN = -1
-
-
-class AvalancheTxVoteError(IntEnum):
-    ACCEPTED = 0
-    INVALID = 1
-    UNKNOWN = -1
-    ORPHAN = -2
-
-
-class AvalancheVote:
-    __slots__ = ("error", "hash")
-
-    def __init__(self, e=0, h=0):
-        self.error = e
-        self.hash = h
-
-    def deserialize(self, f):
-        self.error = struct.unpack("<i", f.read(4))[0]
-        self.hash = deser_uint256(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<i", self.error)
-        r += ser_uint256(self.hash)
-        return r
-
-    def __repr__(self):
-        return f"AvalancheVote(error={self.error}, hash={uint256_hex(self.hash)})"
-
-
-class AvalancheResponse:
-    __slots__ = ("round", "cooldown", "votes")
-
-    def __init__(self, avaround=0, cooldown=0, votes=None):
-        self.round = avaround
-        self.cooldown = cooldown
-        self.votes = votes if votes is not None else []
-
-    def deserialize(self, f):
-        self.round = struct.unpack("<q", f.read(8))[0]
-        self.cooldown = struct.unpack("<i", f.read(4))[0]
-        self.votes = deser_vector(f, AvalancheVote)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<q", self.round)
-        r += struct.pack("<i", self.cooldown)
-        r += ser_vector(self.votes)
-        return r
-
-    def get_hash(self):
-        return hash256(self.serialize())
-
-    def __repr__(self):
-        return (
-            f"AvalancheResponse(round={self.round}, cooldown={self.cooldown}, "
-            f"votes={self.votes!r})"
-        )
-
-
-class TCPAvalancheResponse:
-    __slots__ = ("response", "sig")
-
-    def __init__(self, response=AvalancheResponse(), sig=b"\0" * 64):
-        self.response = response
-        self.sig = sig
-
-    def deserialize(self, f):
-        self.response.deserialize(f)
-        self.sig = f.read(64)
-
-    def serialize(self):
-        r = b""
-        r += self.response.serialize()
-        r += self.sig
-        return r
-
-    def __repr__(self):
-        return f"TCPAvalancheResponse(response={self.response!r}, sig={self.sig})"
-
-
-class AvalancheDelegationLevel:
-    __slots__ = ("pubkey", "sig")
-
-    def __init__(self, pubkey=b"", sig=b"\0" * 64):
-        self.pubkey = pubkey
-        self.sig = sig
-
-    def deserialize(self, f):
-        self.pubkey = deser_string(f)
-        self.sig = f.read(64)
-
-    def serialize(self):
-        r = b""
-        r += ser_string(self.pubkey)
-        r += self.sig
-        return r
-
-    def __repr__(self):
-        return f"AvalancheDelegationLevel(pubkey={self.pubkey.hex()}, sig={self.sig})"
-
-
-class AvalancheDelegation:
-    __slots__ = ("limited_proofid", "proof_master", "proofid", "levels")
-
-    def __init__(self, limited_proofid=0, proof_master=b"", levels=None):
-        self.limited_proofid: int = limited_proofid
-        self.proof_master: bytes = proof_master
-        self.levels: List[AvalancheDelegationLevel] = levels or []
-        self.proofid: int = self.compute_proofid()
-
-    def compute_proofid(self) -> int:
-        return uint256_from_str(
-            hash256(ser_uint256(self.limited_proofid) + ser_string(self.proof_master))
-        )
-
-    def deserialize(self, f):
-        self.limited_proofid = deser_uint256(f)
-        self.proof_master = deser_string(f)
-        self.levels = deser_vector(f, AvalancheDelegationLevel)
-
-        self.proofid = self.compute_proofid()
-
-    def serialize(self):
-        r = b""
-        r += ser_uint256(self.limited_proofid)
-        r += ser_string(self.proof_master)
-        r += ser_vector(self.levels)
-        return r
-
-    def __repr__(self):
-        return (
-            "AvalancheDelegation("
-            f"limitedProofId={uint256_hex(self.limited_proofid)}, "
-            f"proofMaster={self.proof_master.hex()}, "
-            f"proofid={uint256_hex(self.proofid)}, "
-            f"levels={self.levels})"
-        )
-
-    def getid(self):
-        h = ser_uint256(self.proofid)
-        for level in self.levels:
-            h = hash256(h + ser_string(level.pubkey))
-        return h
-
-
-class AvalancheHello:
-    __slots__ = ("delegation", "sig")
-
-    def __init__(self, delegation=AvalancheDelegation(), sig=b"\0" * 64):
-        self.delegation = delegation
-        self.sig = sig
-
-    def deserialize(self, f):
-        self.delegation.deserialize(f)
-        self.sig = f.read(64)
-
-    def serialize(self):
-        r = b""
-        r += self.delegation.serialize()
-        r += self.sig
-        return r
-
-    def __repr__(self):
-        return f"AvalancheHello(delegation={self.delegation!r}, sig={self.sig})"
-
-    def get_sighash(self, node):
-        b = self.delegation.getid()
-        b += struct.pack("<Q", node.remote_nonce)
-        b += struct.pack("<Q", node.local_nonce)
-        b += struct.pack("<Q", node.remote_extra_entropy)
-        b += struct.pack("<Q", node.local_extra_entropy)
-        return hash256(b)
+        return "BlockTransactions(hash={:064x} transactions={})".format(
+            self.blockhash, repr(self.transactions))
 
 
 class CPartialMerkleTree:
-    __slots__ = ("nTransactions", "vBits", "vHash")
+    __slots__ = ("fBad", "nTransactions", "vBits", "vHash")
 
     def __init__(self):
         self.nTransactions = 0
         self.vHash = []
         self.vBits = []
+        self.fBad = False
 
     def deserialize(self, f):
         self.nTransactions = struct.unpack("<i", f.read(4))[0]
@@ -1266,10 +1113,8 @@ class CPartialMerkleTree:
         return r
 
     def __repr__(self):
-        return (
-            f"CPartialMerkleTree(nTransactions={self.nTransactions}, "
-            f"Hash={self.vHash!r}, vBits={self.vBits!r})"
-        )
+        return "CPartialMerkleTree(nTransactions={}, vHash={}, vBits={})".format(
+            self.nTransactions, repr(self.vHash), repr(self.vBits))
 
 
 class CMerkleBlock:
@@ -1290,38 +1135,28 @@ class CMerkleBlock:
         return r
 
     def __repr__(self):
-        return f"CMerkleBlock(header={self.header!r}, txn={self.txn!r})"
+        return "CMerkleBlock(header={}, txn={})".format(
+            repr(self.header), repr(self.txn))
 
 
 # Objects that correspond to messages on the wire
 
 
 class msg_version:
-    __slots__ = (
-        "addrFrom",
-        "addrTo",
-        "nNonce",
-        "relay",
-        "nServices",
-        "nStartingHeight",
-        "nTime",
-        "nVersion",
-        "strSubVer",
-        "nExtraEntropy",
-    )
+    __slots__ = ("addrFrom", "addrTo", "nNonce", "nRelay", "nServices",
+                 "nStartingHeight", "nTime", "nVersion", "strSubVer")
     msgtype = b"version"
 
     def __init__(self):
-        self.nVersion = 0
-        self.nServices = 0
+        self.nVersion = MY_VERSION
+        self.nServices = 1
         self.nTime = int(time.time())
         self.addrTo = CAddress()
         self.addrFrom = CAddress()
         self.nNonce = random.getrandbits(64)
-        self.strSubVer = ""
+        self.strSubVer = MY_SUBVERSION
         self.nStartingHeight = -1
-        self.relay = 0
-        self.nExtraEntropy = random.getrandbits(64)
+        self.nRelay = MY_RELAY
 
     def deserialize(self, f):
         self.nVersion = struct.unpack("<i", f.read(4))[0]
@@ -1333,13 +1168,18 @@ class msg_version:
         self.addrFrom = CAddress()
         self.addrFrom.deserialize(f, with_time=False)
         self.nNonce = struct.unpack("<Q", f.read(8))[0]
-        self.strSubVer = deser_string(f).decode("utf-8")
+        self.strSubVer = deser_string(f)
 
         self.nStartingHeight = struct.unpack("<i", f.read(4))[0]
 
-        self.relay = struct.unpack("<b", f.read(1))[0]
-
-        self.nExtraEntropy = struct.unpack("<Q", f.read(8))[0]
+        if self.nVersion >= 70001:
+            # Relay field is optional for version 70001 onwards
+            try:
+                self.nRelay = struct.unpack("<b", f.read(1))[0]
+            except Exception:
+                self.nRelay = 0
+        else:
+            self.nRelay = 0
 
     def serialize(self):
         r = b""
@@ -1349,20 +1189,48 @@ class msg_version:
         r += self.addrTo.serialize(with_time=False)
         r += self.addrFrom.serialize(with_time=False)
         r += struct.pack("<Q", self.nNonce)
-        r += ser_string(self.strSubVer.encode("utf-8"))
+        r += ser_string(self.strSubVer)
         r += struct.pack("<i", self.nStartingHeight)
-        r += struct.pack("<b", self.relay)
-        r += struct.pack("<Q", self.nExtraEntropy)
+        r += struct.pack("<b", self.nRelay)
         return r
 
     def __repr__(self):
-        return (
-            f"msg_version(nVersion={self.nVersion} nServices={self.nServices} "
-            f"nTime={self.nTime} addrTo={self.addrTo!r} addrFrom={self.addrFrom!r} "
-            f"nNonce=0x{self.nNonce:016X} strSubVer={self.strSubVer} "
-            f"nStartingHeight={self.nStartingHeight} relay={self.relay} "
-            f"nExtraEntropy={self.nExtraEntropy})"
-        )
+        return 'msg_version(nVersion={} nServices={} nTime={} addrTo={} addrFrom={} nNonce=0x{:016X} strSubVer={} nStartingHeight={} nRelay={})'.format(
+            self.nVersion, self.nServices, self.nTime,
+            repr(self.addrTo), repr(self.addrFrom), self.nNonce,
+            self.strSubVer, self.nStartingHeight, self.nRelay)
+
+
+class msg_extversion(object):
+    msgtype = b"extversion"
+
+    def __init__(self, xver=None):
+        if xver is None:
+            xver = {}
+        self.xver = xver
+
+    def deserialize(self, f):
+        map_size = CompactSize().deserialize(f)
+        self.xver = {}
+        for i in range(map_size):
+            key = CompactSize().deserialize(f)
+            val_size = CompactSize().deserialize(f)
+            value = f.read(val_size)
+            self.xver[key] = value
+
+    def serialize(self):
+        res = CompactSize(len(self.xver)).serialize()
+        for k, v in self.xver.items():
+            res += CompactSize(k).serialize()
+            if isinstance(v, int):
+                # serialize integers in compact format inside the vector
+                v = CompactSize(v).serialize()
+            res += CompactSize(len(v)).serialize()
+            res += v
+        return res
+
+    def __repr__(self):
+        return "msg_extversion({})".format(repr(self.xver))
 
 
 class msg_verack:
@@ -1396,7 +1264,7 @@ class msg_addr:
         return ser_vector(self.addrs)
 
     def __repr__(self):
-        return f"msg_addr(addrs={self.addrs!r})"
+        return "msg_addr(addrs={})".format(repr(self.addrs))
 
 
 class msg_addrv2:
@@ -1413,7 +1281,7 @@ class msg_addrv2:
         return ser_vector(self.addrs, "serialize_v2")
 
     def __repr__(self):
-        return f"msg_addrv2(addrs={self.addrs!r})"
+        return "msg_addrv2(addrs={})".format(repr(self.addrs))
 
 
 class msg_sendaddrv2:
@@ -1450,7 +1318,7 @@ class msg_inv:
         return ser_vector(self.inv)
 
     def __repr__(self):
-        return f"msg_inv(inv={self.inv!r})"
+        return "msg_inv(inv={})".format(repr(self.inv))
 
 
 class msg_getdata:
@@ -1467,7 +1335,7 @@ class msg_getdata:
         return ser_vector(self.inv)
 
     def __repr__(self):
-        return f"msg_getdata(inv={self.inv!r})"
+        return "msg_getdata(inv={})".format(repr(self.inv))
 
 
 class msg_getblocks:
@@ -1490,10 +1358,8 @@ class msg_getblocks:
         return r
 
     def __repr__(self):
-        return (
-            f"msg_getblocks(locator={self.locator!r} "
-            f"hashstop={uint256_hex(self.hashstop)})"
-        )
+        return "msg_getblocks(locator={} hashstop={:064x})".format(
+            repr(self.locator), self.hashstop)
 
 
 class msg_tx:
@@ -1510,7 +1376,7 @@ class msg_tx:
         return self.tx.serialize()
 
     def __repr__(self):
-        return f"msg_tx(tx={self.tx!r})"
+        return "msg_tx(tx={})".format(repr(self.tx))
 
 
 class msg_block:
@@ -1530,13 +1396,35 @@ class msg_block:
         return self.block.serialize()
 
     def __repr__(self):
-        return f"msg_block(block={self.block!r})"
+        return "msg_block(block={})".format(repr(self.block))
+
+
+class msg_dsproof:
+    __slots__ = ("dsproof",)
+    msgtype = b"dsproof-beta"
+
+    def __init__(self, dsproof=None):
+        if dsproof is None:
+            self.dsproof = CDSProof()
+        else:
+            self.dsproof = dsproof
+
+    def deserialize(self, f):
+        self.dsproof.deserialize(f)
+
+    def serialize(self):
+        return self.dsproof.serialize()
+
+    def __repr__(self):
+        return "msg_dsproof(dsproof-beta={})".format(repr(self.dsproof))
 
 
 # for cases where a user needs tighter control over what is sent over the wire
 # note that the user must supply the name of the msgtype, and the data
+
+
 class msg_generic:
-    __slots__ = "data"
+    __slots__ = ("msgtype", "data")
 
     def __init__(self, msgtype, data=None):
         self.msgtype = msgtype
@@ -1582,7 +1470,7 @@ class msg_ping:
         return r
 
     def __repr__(self):
-        return f"msg_ping(nonce={self.nonce:08x})"
+        return "msg_ping(nonce={:08x})".format(self.nonce)
 
 
 class msg_pong:
@@ -1601,7 +1489,7 @@ class msg_pong:
         return r
 
     def __repr__(self):
-        return f"msg_pong(nonce={self.nonce:08x})"
+        return "msg_pong(nonce={:08x})".format(self.nonce)
 
 
 class msg_mempool:
@@ -1622,7 +1510,7 @@ class msg_mempool:
 
 
 class msg_notfound:
-    __slots__ = ("vec",)
+    __slots__ = ("vec", )
     msgtype = b"notfound"
 
     def __init__(self, vec=None):
@@ -1635,7 +1523,7 @@ class msg_notfound:
         return ser_vector(self.vec)
 
     def __repr__(self):
-        return f"msg_notfound(vec={self.vec!r})"
+        return "msg_notfound(vec={})".format(repr(self.vec))
 
 
 class msg_sendheaders:
@@ -1660,10 +1548,7 @@ class msg_sendheaders:
 # vector of hashes
 # hash_stop (hash of last desired block header, 0 to get as many as possible)
 class msg_getheaders:
-    __slots__ = (
-        "hashstop",
-        "locator",
-    )
+    __slots__ = ("hashstop", "locator",)
     msgtype = b"getheaders"
 
     def __init__(self):
@@ -1682,10 +1567,8 @@ class msg_getheaders:
         return r
 
     def __repr__(self):
-        return (
-            f"msg_getheaders(locator={self.locator!r}, "
-            f"stop={uint256_hex(self.hashstop)})"
-        )
+        return "msg_getheaders(locator={}, stop={:064x})".format(
+            repr(self.locator), self.hashstop)
 
 
 # headers message has
@@ -1708,7 +1591,40 @@ class msg_headers:
         return ser_vector(blocks)
 
     def __repr__(self):
-        return f"msg_headers(headers={self.headers!r})"
+        return "msg_headers(headers={})".format(repr(self.headers))
+
+
+class msg_reject:
+    __slots__ = ("code", "data", "message", "reason")
+    msgtype = b"reject"
+    REJECT_MALFORMED = 1
+
+    def __init__(self):
+        self.message = b""
+        self.code = 0
+        self.reason = b""
+        self.data = 0
+
+    def deserialize(self, f):
+        self.message = deser_string(f)
+        self.code = struct.unpack("<B", f.read(1))[0]
+        self.reason = deser_string(f)
+        if (self.code != self.REJECT_MALFORMED
+                and (self.message == b"block" or self.message == b"tx")):
+            self.data = deser_uint256(f)
+
+    def serialize(self):
+        r = ser_string(self.message)
+        r += struct.pack("<B", self.code)
+        r += ser_string(self.reason)
+        if (self.code != self.REJECT_MALFORMED
+                and (self.message == b"block" or self.message == b"tx")):
+            r += ser_uint256(self.data)
+        return r
+
+    def __repr__(self):
+        return "msg_reject: {} {} {} [{:064x}]".format(
+            self.message, self.code, self.reason, self.data)
 
 
 class msg_merkleblock:
@@ -1728,14 +1644,14 @@ class msg_merkleblock:
         return self.merkleblock.serialize()
 
     def __repr__(self):
-        return f"msg_merkleblock(merkleblock={self.merkleblock!r})"
+        return "msg_merkleblock(merkleblock={})".format(repr(self.merkleblock))
 
 
 class msg_filterload:
     __slots__ = ("data", "nHashFuncs", "nTweak", "nFlags")
     msgtype = b"filterload"
 
-    def __init__(self, data=b"00", nHashFuncs=0, nTweak=0, nFlags=0):
+    def __init__(self, data=b'00', nHashFuncs=0, nTweak=0, nFlags=0):
         self.data = data
         self.nHashFuncs = nHashFuncs
         self.nTweak = nTweak
@@ -1756,14 +1672,12 @@ class msg_filterload:
         return r
 
     def __repr__(self):
-        return (
-            f"msg_filterload(data={self.data}, nHashFuncs={self.nHashFuncs}, "
-            f"nTweak={self.nTweak}, nFlags={self.nFlags})"
-        )
+        return "msg_filterload(data={}, nHashFuncs={}, nTweak={}, nFlags={})".format(
+            self.data, self.nHashFuncs, self.nTweak, self.nFlags)
 
 
 class msg_filteradd:
-    __slots__ = "data"
+    __slots__ = ("data")
     msgtype = b"filteradd"
 
     def __init__(self, data):
@@ -1778,7 +1692,7 @@ class msg_filteradd:
         return r
 
     def __repr__(self):
-        return f"msg_filteradd(data={self.data})"
+        return "msg_filteradd(data={})".format(self.data)
 
 
 class msg_filterclear:
@@ -1814,16 +1728,16 @@ class msg_feefilter:
         return r
 
     def __repr__(self):
-        return f"msg_feefilter(feerate={self.feerate:08x})"
+        return "msg_feefilter(feerate={:08x})".format(self.feerate)
 
 
 class msg_sendcmpct:
     __slots__ = ("announce", "version")
     msgtype = b"sendcmpct"
 
-    def __init__(self, announce=False, version=1):
-        self.announce = announce
-        self.version = version
+    def __init__(self):
+        self.announce = False
+        self.version = 1
 
     def deserialize(self, f):
         self.announce = struct.unpack("<?", f.read(1))[0]
@@ -1836,7 +1750,8 @@ class msg_sendcmpct:
         return r
 
     def __repr__(self):
-        return f"msg_sendcmpct(announce={self.announce}, version={self.version})"
+        return "msg_sendcmpct(announce={}, version={})".format(
+            self.announce, self.version)
 
 
 class msg_cmpctblock:
@@ -1856,7 +1771,8 @@ class msg_cmpctblock:
         return r
 
     def __repr__(self):
-        return f"msg_cmpctblock(HeaderAndShortIDs={self.header_and_shortids!r})"
+        return "msg_cmpctblock(HeaderAndShortIDs={})".format(
+            repr(self.header_and_shortids))
 
 
 class msg_getblocktxn:
@@ -1876,7 +1792,8 @@ class msg_getblocktxn:
         return r
 
     def __repr__(self):
-        return f"msg_getblocktxn(block_txn_request={self.block_txn_request!r})"
+        return "msg_getblocktxn(block_txn_request={})".format(
+            repr(self.block_txn_request))
 
 
 class msg_blocktxn:
@@ -1895,473 +1812,5 @@ class msg_blocktxn:
         return r
 
     def __repr__(self):
-        return f"msg_blocktxn(block_transactions={self.block_transactions!r})"
-
-
-class msg_getcfilters:
-    __slots__ = ("filter_type", "start_height", "stop_hash")
-    msgtype = b"getcfilters"
-
-    def __init__(self, filter_type, start_height, stop_hash):
-        self.filter_type = filter_type
-        self.start_height = start_height
-        self.stop_hash = stop_hash
-
-    def deserialize(self, f):
-        self.filter_type = struct.unpack("<B", f.read(1))[0]
-        self.start_height = struct.unpack("<I", f.read(4))[0]
-        self.stop_hash = deser_uint256(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<B", self.filter_type)
-        r += struct.pack("<I", self.start_height)
-        r += ser_uint256(self.stop_hash)
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_getcfilters(filter_type={self.filter_type:#x}, "
-            f"start_height={self.start_height}, stop_hash={self.stop_hash:x})"
-        )
-
-
-class msg_cfilter:
-    __slots__ = ("filter_type", "block_hash", "filter_data")
-    msgtype = b"cfilter"
-
-    def __init__(self, filter_type=None, block_hash=None, filter_data=None):
-        self.filter_type = filter_type
-        self.block_hash = block_hash
-        self.filter_data = filter_data
-
-    def deserialize(self, f):
-        self.filter_type = struct.unpack("<B", f.read(1))[0]
-        self.block_hash = deser_uint256(f)
-        self.filter_data = deser_string(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<B", self.filter_type)
-        r += ser_uint256(self.block_hash)
-        r += ser_string(self.filter_data)
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_cfilter(filter_type={self.filter_type:#x}, "
-            f"block_hash={self.block_hash:x})"
-        )
-
-
-class msg_getcfheaders:
-    __slots__ = ("filter_type", "start_height", "stop_hash")
-    msgtype = b"getcfheaders"
-
-    def __init__(self, filter_type, start_height, stop_hash):
-        self.filter_type = filter_type
-        self.start_height = start_height
-        self.stop_hash = stop_hash
-
-    def deserialize(self, f):
-        self.filter_type = struct.unpack("<B", f.read(1))[0]
-        self.start_height = struct.unpack("<I", f.read(4))[0]
-        self.stop_hash = deser_uint256(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<B", self.filter_type)
-        r += struct.pack("<I", self.start_height)
-        r += ser_uint256(self.stop_hash)
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_getcfheaders(filter_type={self.filter_type:#x}, "
-            f"start_height={self.start_height}, stop_hash={self.stop_hash:x})"
-        )
-
-
-class msg_cfheaders:
-    __slots__ = ("filter_type", "stop_hash", "prev_header", "hashes")
-    msgtype = b"cfheaders"
-
-    def __init__(self, filter_type=None, stop_hash=None, prev_header=None, hashes=None):
-        self.filter_type = filter_type
-        self.stop_hash = stop_hash
-        self.prev_header = prev_header
-        self.hashes = hashes
-
-    def deserialize(self, f):
-        self.filter_type = struct.unpack("<B", f.read(1))[0]
-        self.stop_hash = deser_uint256(f)
-        self.prev_header = deser_uint256(f)
-        self.hashes = deser_uint256_vector(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<B", self.filter_type)
-        r += ser_uint256(self.stop_hash)
-        r += ser_uint256(self.prev_header)
-        r += ser_uint256_vector(self.hashes)
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_cfheaders(filter_type={self.filter_type:#x}, "
-            f"stop_hash={self.stop_hash:x})"
-        )
-
-
-class msg_getcfcheckpt:
-    __slots__ = ("filter_type", "stop_hash")
-    msgtype = b"getcfcheckpt"
-
-    def __init__(self, filter_type, stop_hash):
-        self.filter_type = filter_type
-        self.stop_hash = stop_hash
-
-    def deserialize(self, f):
-        self.filter_type = struct.unpack("<B", f.read(1))[0]
-        self.stop_hash = deser_uint256(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<B", self.filter_type)
-        r += ser_uint256(self.stop_hash)
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_getcfcheckpt(filter_type={self.filter_type:#x}, "
-            f"stop_hash={self.stop_hash:x})"
-        )
-
-
-class msg_cfcheckpt:
-    __slots__ = ("filter_type", "stop_hash", "headers")
-    msgtype = b"cfcheckpt"
-
-    def __init__(self, filter_type=None, stop_hash=None, headers=None):
-        self.filter_type = filter_type
-        self.stop_hash = stop_hash
-        self.headers = headers
-
-    def deserialize(self, f):
-        self.filter_type = struct.unpack("<B", f.read(1))[0]
-        self.stop_hash = deser_uint256(f)
-        self.headers = deser_uint256_vector(f)
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<B", self.filter_type)
-        r += ser_uint256(self.stop_hash)
-        r += ser_uint256_vector(self.headers)
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_cfcheckpt(filter_type={self.filter_type:#x}, "
-            f"stop_hash={self.stop_hash:x})"
-        )
-
-
-class msg_avaproof:
-    __slots__ = ("proof",)
-    msgtype = b"avaproof"
-
-    def __init__(self):
-        self.proof = AvalancheProof()
-
-    def deserialize(self, f):
-        self.proof.deserialize(f)
-
-    def serialize(self):
-        r = b""
-        r += self.proof.serialize()
-        return r
-
-    def __repr__(self):
-        return f"msg_avaproof(proof={self.proof!r})"
-
-
-class msg_avapoll:
-    __slots__ = ("poll",)
-    msgtype = b"avapoll"
-
-    def __init__(self):
-        self.poll = AvalanchePoll()
-
-    def deserialize(self, f):
-        self.poll.deserialize(f)
-
-    def serialize(self):
-        r = b""
-        r += self.poll.serialize()
-        return r
-
-    def __repr__(self):
-        return f"msg_avapoll(poll={self.poll!r})"
-
-
-class msg_avaresponse:
-    __slots__ = ("response",)
-    msgtype = b"avaresponse"
-
-    def __init__(self):
-        self.response = AvalancheResponse()
-
-    def deserialize(self, f):
-        self.response.deserialize(f)
-
-    def serialize(self):
-        r = b""
-        r += self.response.serialize()
-        return r
-
-    def __repr__(self):
-        return f"msg_avaresponse(response={self.response!r})"
-
-
-class msg_tcpavaresponse:
-    __slots__ = ("response",)
-    msgtype = b"avaresponse"
-
-    def __init__(self):
-        self.response = TCPAvalancheResponse()
-
-    def deserialize(self, f):
-        self.response.deserialize(f)
-
-    def serialize(self):
-        r = b""
-        r += self.response.serialize()
-        return r
-
-    def __repr__(self):
-        return f"msg_tcpavaresponse(response={self.response!r})"
-
-
-class msg_avahello:
-    __slots__ = ("hello",)
-    msgtype = b"avahello"
-
-    def __init__(self):
-        self.hello = AvalancheHello()
-
-    def deserialize(self, f):
-        self.hello.deserialize(f)
-
-    def serialize(self):
-        r = b""
-        r += self.hello.serialize()
-        return r
-
-    def __repr__(self):
-        return f"msg_avahello(response={self.hello!r})"
-
-
-class msg_getavaaddr:
-    __slots__ = ()
-    msgtype = b"getavaaddr"
-
-    def __init__(self):
-        pass
-
-    def deserialize(self, f):
-        pass
-
-    def serialize(self):
-        return b""
-
-    def __repr__(self):
-        return "msg_getavaaddr()"
-
-
-class msg_getavaproofs:
-    __slots__ = ()
-    msgtype = b"getavaproofs"
-
-    def __init__(self):
-        pass
-
-    def deserialize(self, f):
-        pass
-
-    def serialize(self):
-        return b""
-
-    def __repr__(self):
-        return "msg_getavaproofs()"
-
-
-class msg_avaproofs:
-    __slots__ = ("key0", "key1", "shortids", "prefilled_proofs")
-    msgtype = b"avaproofs"
-
-    def __init__(self):
-        self.key0 = 0
-        self.key1 = 0
-        self.shortids = []
-        self.prefilled_proofs = []
-
-    def deserialize(self, f):
-        self.key0 = struct.unpack("<Q", f.read(8))[0]
-        self.key1 = struct.unpack("<Q", f.read(8))[0]
-        shortids_length = deser_compact_size(f)
-        for _ in range(shortids_length):
-            # shortids are defined to be 6 bytes in the spec, so append
-            # two zero bytes and read it in as an 8-byte number
-            self.shortids.append(struct.unpack("<Q", f.read(6) + b"\x00\x00")[0])
-
-        # The indices are differentially encoded
-        self.prefilled_proofs = deser_vector(f, AvalanchePrefilledProof)
-        current_indice = -1
-        for p in self.prefilled_proofs:
-            current_indice += p.index + 1
-            p.index = current_indice
-
-    def serialize(self):
-        r = b""
-        r += struct.pack("<Q", self.key0)
-        r += struct.pack("<Q", self.key1)
-        r += ser_compact_size(len(self.shortids))
-        for shortid in self.shortids:
-            # We only want the first 6 bytes
-            r += struct.pack("<Q", shortid)[0:6]
-
-        r += ser_compact_size(len(self.prefilled_proofs))
-        if len(self.prefilled_proofs) < 1:
-            return r
-
-        # The indices are differentially encoded
-        r += self.prefilled_proofs[0].serialize()
-        for i in range(len(self.prefilled_proofs[1:])):
-            r += ser_compact_size(
-                self.prefilled_proofs[i + 1].index - self.prefilled_proofs[i].index - 1
-            )
-            r += self.prefilled_proofs[i].proof.serialize()
-
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_avaproofs(key0={self.key0}, key1={self.key1}, "
-            f"len(shortids)={len(self.shortids)}, shortids={self.shortids}), "
-            f"len(prefilled_proofs)={len(self.prefilled_proofs)}, "
-            f"prefilled_proofs={self.prefilled_proofs})"
-        )
-
-
-class msg_avaproofsreq:
-    __slots__ = "indices"
-    msgtype = b"avaproofsreq"
-
-    def __init__(self):
-        self.indices = []
-
-    def deserialize(self, f):
-        indices_length = deser_compact_size(f)
-
-        # The indices are differentially encoded
-        current_indice = -1
-        for _ in range(indices_length):
-            current_indice += deser_compact_size(f) + 1
-            self.indices.append(current_indice)
-
-    def serialize(self):
-        r = b""
-        r += ser_compact_size(len(self.indices))
-
-        if len(self.indices) < 1:
-            return r
-
-        # The indices are differentially encoded
-        r += ser_compact_size(self.indices[0])
-        for i in range(len(self.indices[1:])):
-            r += ser_compact_size(self.indices[i + 1] - self.indices[i] - 1)
-
-        return r
-
-    def __repr__(self):
-        return (
-            f"msg_avaproofsreq(len(shortids)={len(self.indices)}, "
-            f"indices={self.indices})"
-        )
-
-
-class TestFrameworkMessages(unittest.TestCase):
-    def test_avalanche_proof_serialization_round_trip(self):
-        """Verify that an AvalancheProof object is unchanged after a round-trip
-        of deserialization-serialization.
-        """
-
-        # Extracted from proof_tests.cpp
-        proof_hex = (
-            "d97587e6c882615796011ec8f9a7b1c621023beefdde700a6bc02036335b4df141"
-            "c8bc67bb05a971f5ac2745fd683797dde30169a79ff23e1d58c64afad42ad81cff"
-            "e53967e16beb692fc5776bb442c79c5d91de00cf21804712806594010038e168a3"
-            "2102449fb5237efe8f647d32e8b64f06c22d1d40368eaca2a71ffc6a13ecc8bce6"
-            "804534ca1f5e22670be3df5cbd5957d8dd83d05c8f17eae391f0e7ffdce4fb3def"
-            "adb7c079473ebeccf88c1f8ce87c61e451447b89c445967335ffd1aadef4299823"
-            "21023beefdde700a6bc02036335b4df141c8bc67bb05a971f5ac2745fd683797dd"
-            "e3ac7b0b7865200f63052ff980b93f965f398dda04917d411dd46e3c009a5fef35"
-            "661fac28779b6a22760c00004f5ddf7d9865c7fead7e4a840b947939590261640f"
-        )
-
-        avaproof = FromHex(AvalancheProof(), proof_hex)
-        self.assertEqual(ToHex(avaproof), proof_hex)
-
-        self.assertEqual(
-            uint256_hex(avaproof.proofid),
-            "455f34eb8a00b0799630071c0728481bdb1653035b1484ac33e974aa4ae7db6d",
-        )
-        self.assertEqual(avaproof.sequence, 6296457553413371353)
-        self.assertEqual(avaproof.expiration, -4129334692075929194)
-        self.assertEqual(
-            avaproof.master,
-            bytes.fromhex(
-                "023beefdde700a6bc02036335b4df141c8bc67bb05a971f5ac2745fd683797dde3"
-            ),
-        )
-        # P2PK to master pubkey
-        # We can't use a CScript() here because it would cause a circular
-        # import
-        self.assertEqual(
-            avaproof.payout_script,
-            bytes.fromhex(
-                "21023beefdde700a6bc02036335b4df141c8bc67bb05a971f5ac2745fd683797dde3ac"
-            ),
-        )
-        self.assertEqual(
-            avaproof.signature,
-            b64decode(
-                "ewt4ZSAPYwUv+YC5P5ZfOY3aBJF9QR3UbjwAml/vNWYfrCh3m2oidgwAAE9d332YZcf+rX5KhAuUeTlZAmFkDw=="
-            ),
-        )
-
-        self.assertEqual(len(avaproof.stakes), 1)
-        self.assertEqual(
-            avaproof.stakes[0].sig,
-            b64decode(
-                "RTTKH14iZwvj31y9WVfY3YPQXI8X6uOR8Of/3OT7Pe+tt8B5Rz6+zPiMH4zofGHkUUR7icRFlnM1/9Gq3vQpmA=="
-            ),
-        )
-        self.assertEqual(
-            f"{avaproof.stakes[0].stake.utxo.txid:x}",
-            "915d9cc742b46b77c52f69eb6be16739e5ff1cd82ad4fa4ac6581d3ef29fa769",
-        )
-        self.assertEqual(avaproof.stakes[0].stake.utxo.n, 567214302)
-        self.assertEqual(avaproof.stakes[0].stake.amount, 444638638000000)
-        self.assertEqual(avaproof.stakes[0].stake.height, 1370779804)
-        self.assertEqual(avaproof.stakes[0].stake.is_coinbase, False)
-        self.assertEqual(
-            avaproof.stakes[0].stake.pubkey,
-            bytes.fromhex(
-                "02449fb5237efe8f647d32e8b64f06c22d1d40368eaca2a71ffc6a13ecc8bce680"
-            ),
-        )
-
-        msg_proof = msg_avaproof()
-        msg_proof.proof = avaproof
-        self.assertEqual(ToHex(msg_proof), proof_hex)
+        return "msg_blocktxn(block_transactions={})".format(
+            repr(self.block_transactions))

@@ -1,9 +1,8 @@
-// Copyright (c) 2019 The Bitcoin developers
+// Copyright (c) 2019-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_UTIL_BITMANIP_H
-#define BITCOIN_UTIL_BITMANIP_H
+#pragma once
 
 #include <config/bitcoin-config.h>
 
@@ -25,5 +24,3 @@ inline uint32_t countBits(uint32_t v) {
     return (((v + (v >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24;
 #endif
 }
-
-#endif // BITCOIN_UTIL_BITMANIP_H

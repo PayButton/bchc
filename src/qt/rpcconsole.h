@@ -1,11 +1,10 @@
 // Copyright (c) 2011-2019 The Bitcoin Core developers
+// Copyright (c) 2020-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_RPCCONSOLE_H
-#define BITCOIN_QT_RPCCONSOLE_H
+#pragma once
 
-#include <qt/clientmodel.h>
 #include <qt/guiutil.h>
 #include <qt/peertablemodel.h>
 
@@ -15,6 +14,7 @@
 #include <QThread>
 #include <QWidget>
 
+class ClientModel;
 class PlatformStyle;
 class RPCTimerInterface;
 class WalletModel;
@@ -55,19 +55,21 @@ public:
                                    pstrFilteredOut, wallet_model);
     }
 
-    void setClientModel(ClientModel *model = nullptr, int bestblock_height = 0,
-                        int64_t bestblock_date = 0,
-                        double verification_progress = 0.0);
+    void setClientModel(ClientModel *model);
     void addWallet(WalletModel *const walletModel);
     void removeWallet(WalletModel *const walletModel);
 
     enum MessageClass { MC_ERROR, MC_DEBUG, CMD_REQUEST, CMD_REPLY, CMD_ERROR };
 
-    enum class TabTypes { INFO, CONSOLE, GRAPH, PEERS };
+    enum TabTypes {
+        TAB_INFO = 0,
+        TAB_CONSOLE = 1,
+        TAB_GRAPH = 2,
+        TAB_PEERS = 3
+    };
 
     std::vector<TabTypes> tabs() const {
-        return {TabTypes::INFO, TabTypes::CONSOLE, TabTypes::GRAPH,
-                TabTypes::PEERS};
+        return {TAB_INFO, TAB_CONSOLE, TAB_GRAPH, TAB_PEERS};
     }
 
     QString tabTitle(TabTypes tab_type) const;
@@ -97,8 +99,6 @@ private Q_SLOTS:
     void showOrHideBanTableIfRequired();
     /** clear the selected node */
     void clearSelectedNode();
-    /** show detailed information on ui about selected node */
-    void updateDetailWidget();
 
 public Q_SLOTS:
     void clear(bool clearHistory = true);
@@ -114,16 +114,17 @@ public Q_SLOTS:
     void setNumConnections(int count);
     /** Set network state shown in the UI */
     void setNetworkActive(bool networkActive);
-    /** Set number of blocks and last block date shown in the UI */
-    void setNumBlocks(int count, const QDateTime &blockDate,
-                      double nVerificationProgress, SyncType synctype);
-    /** Set size (number of transactions and memory usage) of the mempool in the
-     * UI */
-    void setMempoolSize(long numberOfTxs, size_t dynUsage);
+    /** Set number of blocks, last block date and last block hash shown in the UI */
+    void setNumBlocks(int count, const QDateTime& blockDate, const QString& blockHash, double nVerificationProgress, bool headers);
+    /** Set size (number of transactions, total size, and memory usage) of the mempool in the UI */
+    void setMempoolSize(size_t count, size_t totalSize, size_t dynamicUsage);
     /** Go forward or back in history */
     void browseHistory(int offset);
     /** Scroll console view to end */
     void scrollToEnd();
+    /** Handle selection of peer in peers list */
+    void peerSelected(const QItemSelection &selected,
+                      const QItemSelection &deselected);
     /** Handle selection caching before update */
     void peerLayoutAboutToChange();
     /** Handle updated peer information */
@@ -139,11 +140,14 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     // For RPC command executor
+    void stopExecutor();
     void cmdRequest(const QString &command, const WalletModel *wallet_model);
 
 private:
     void startExecutor();
     void setTrafficGraphRange(int mins);
+    /** show detailed information on ui about selected node */
+    void updateNodeDetail(const CNodeCombinedStats *stats);
 
     enum ColumnWidths {
         ADDRESS_COLUMN_WIDTH = 200,
@@ -173,19 +177,6 @@ private:
     /** Update UI with latest network info from model. */
     void updateNetworkState();
 
-    /**
-     * Helper for the output of a time duration field. Inputs are UNIX epoch
-     * times.
-     */
-    QString TimeDurationField(std::chrono::seconds time_now,
-                              std::chrono::seconds time_at_event) const {
-        return time_at_event.count()
-                   ? GUIUtil::formatDurationStr(time_now - time_at_event)
-                   : tr("Never");
-    }
-
 private Q_SLOTS:
     void updateAlerts(const QString &warnings);
 };
-
-#endif // BITCOIN_QT_RPCCONSOLE_H

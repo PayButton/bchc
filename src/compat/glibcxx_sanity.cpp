@@ -1,10 +1,12 @@
 // Copyright (c) 2009-2014 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <list>
 #include <locale>
 #include <stdexcept>
+#include <tuple>
 
 namespace {
 // trigger: use ctype<char>::widen to trigger ctype<char>::_M_widen_init().
@@ -48,7 +50,8 @@ bool sanity_test_list(unsigned int size) {
 bool sanity_test_range_fmt() {
     std::string test;
     try {
-        [[maybe_unused]] auto &c = test.at(1);
+        /* sometimes .at() is [[nodiscard]] */
+        std::ignore = test.at(1);
     } catch (const std::out_of_range &) {
         return true;
     } catch (...) {

@@ -3,7 +3,7 @@
 <plist version="0.9">
 <dict>
   <key>LSMinimumSystemVersion</key>
-  <string>10.15.0</string>
+  <string>10.14.0</string>
 
   <key>LSArchitecturePriority</key>
   <array>
@@ -30,7 +30,7 @@
 
   <key>CFBundleExecutable</key>
   <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
-
+  
   <key>CFBundleName</key>
   <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
 
@@ -54,52 +54,15 @@
     </dict>
   </array>
 
-  <key>UTExportedTypeDeclarations</key>
-  <array>
-    <dict>
-      <key>UTTypeIdentifier</key>
-      <string>org.bitcoincash.paymentrequest</string>
-      <key>UTTypeDescription</key>
-      <string>Bitcoin Cash payment request</string>
-      <key>UTTypeConformsTo</key>
-      <array>
-        <string>public.data</string>
-      </array>
-      <key>UTTypeTagSpecification</key>
-      <dict>
-        <key>public.mime-type</key>
-        <string>application/bitcoincash-paymentrequest</string>
-        <key>public.filename-extension</key>
-        <array>
-          <string>bitcoincashpaymentrequest</string>
-        </array>
-      </dict>
-    </dict>
-  </array>
-
-  <key>CFBundleDocumentTypes</key>
-  <array>
-    <dict>
-      <key>CFBundleTypeRole</key>
-      <string>Editor</string>
-      <key>LSItemContentTypes</key>
-      <array>
-        <string>org.bitcoincash.paymentrequest</string>
-      </array>
-      <key>LSHandlerRank</key>
-      <string>Owner</string>
-    </dict>
-  </array>
-
   <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 
   <key>NSHighResolutionCapable</key>
     <string>True</string>
 
-  <key>NSRequiresAquaSystemAppearance</key>
+  <key>LSAppNapIsDisabled</key>
     <string>True</string>
-
+  
   <key>LSApplicationCategoryType</key>
     <string>public.app-category.finance</string>
 </dict>

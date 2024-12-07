@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <immintrin.h>
 
+#include <crypto/common.h>
+
 namespace {
 
 alignas(__m128i) const uint8_t MASK[16] = {0x03, 0x02, 0x01, 0x00, 0x07, 0x06,
@@ -70,41 +72,21 @@ inline void __attribute__((always_inline)) Unshuffle(__m128i &s0, __m128i &s1) {
     s0 = _mm_blend_epi16(t1, t2, 0xF0);
     s1 = _mm_alignr_epi8(t2, t1, 0x08);
 }
-
-/*
- * Prevent the compiler from raising a -Wcast-align warning when using unaligned
- * specific instruction, such as _mm_loadu_si128 or _mm_storeu_si128 (note the
- * 'u' suffix for unaligned accesses).
- */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"
-inline __m128i __attribute__((always_inline))
-LoadInteger128Unaligned(const uint8_t *mem_addr) {
-    return _mm_loadu_si128((const __m128i *)mem_addr);
-}
-inline __m128i __attribute__((always_inline))
-LoadInteger128Unaligned(const uint32_t *mem_addr) {
-    return _mm_loadu_si128((const __m128i *)mem_addr);
-}
-
-inline void __attribute__((always_inline))
-StoreInteger128Unaligned(uint8_t *mem_addr, __m128i i128) {
-    _mm_storeu_si128((__m128i *)mem_addr, i128);
-}
-inline void __attribute__((always_inline))
-StoreInteger128Unaligned(uint32_t *mem_addr, __m128i i128) {
-    _mm_storeu_si128((__m128i *)mem_addr, i128);
-}
-#pragma GCC diagnostic pop
-
+#ifdef __clang__
+// The below few functions cast various smaller types to 128-bit integer pointers,
+// which produces warnings on clang, and so we suppress these warnings here.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-align"
+#endif
 __m128i inline __attribute__((always_inline)) Load(const uint8_t *in) {
-    return _mm_shuffle_epi8(LoadInteger128Unaligned(in),
+    return _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)in),
                             _mm_load_si128((const __m128i *)MASK));
 }
 
 inline void __attribute__((always_inline)) Save(uint8_t *out, __m128i s) {
-    StoreInteger128Unaligned(
-        out, _mm_shuffle_epi8(s, _mm_load_si128((const __m128i *)MASK)));
+    _mm_storeu_si128(
+        (__m128i *)out,
+        _mm_shuffle_epi8(s, _mm_load_si128((const __m128i *)MASK)));
 }
 } // namespace
 
@@ -113,8 +95,8 @@ void Transform(uint32_t *s, const uint8_t *chunk, size_t blocks) {
     __m128i m0, m1, m2, m3, s0, s1, so0, so1;
 
     /* Load state */
-    s0 = LoadInteger128Unaligned(s);
-    s1 = LoadInteger128Unaligned(s + 4);
+    s0 = _mm_loadu_si128((const __m128i *)s);
+    s1 = _mm_loadu_si128((const __m128i *)(s + 4));
     Shuffle(s0, s1);
 
     while (blocks--) {
@@ -167,9 +149,12 @@ void Transform(uint32_t *s, const uint8_t *chunk, size_t blocks) {
     }
 
     Unshuffle(s0, s1);
-    StoreInteger128Unaligned(s, s0);
-    StoreInteger128Unaligned(s + 4, s1);
+    _mm_storeu_si128((__m128i *)s, s0);
+    _mm_storeu_si128((__m128i *)(s + 4), s1);
 }
+#ifdef __clang__
+#pragma clang diagnostic pop // end clang warning suppression for -Wcast-align
+#endif
 } // namespace sha256_shani
 
 namespace sha256d64_shani {

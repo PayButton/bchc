@@ -4,18 +4,25 @@
 
 //! Module containing [`Subs`].
 
-use bitcoinsuite_core::{block::BlockHash, tx::Tx};
+use std::collections::BTreeMap;
+
+use bitcoinsuite_core::{
+    block::BlockHash,
+    tx::{OutPoint, Tx},
+};
 use chronik_db::{
     groups::{LokadIdGroup, ScriptGroup, TokenIdGroup, TokenIdGroupAux},
     io::BlockHeight,
+    plugins::PluginsGroup,
 };
+use chronik_plugin::data::PluginOutput;
 use chronik_util::log;
 use tokio::sync::broadcast;
 
 use crate::subs_group::{SubsGroup, TxMsgType};
 
 /// Block update message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockMsg {
     /// What happened with the block.
     pub msg_type: BlockMsgType,
@@ -23,6 +30,11 @@ pub struct BlockMsg {
     pub hash: BlockHash,
     /// Height of the block which we got an update for.
     pub height: BlockHeight,
+    /// The timestamp of the block
+    pub timestamp: i64,
+    /// The coinbase tx for the block, only available upon disconnect or
+    /// invalidate
+    pub coinbase_tx: Option<Tx>,
 }
 
 /// Type of message for the block.
@@ -34,6 +46,8 @@ pub enum BlockMsgType {
     Disconnected,
     /// Block has been finalized by Avalanche
     Finalized,
+    /// Block has been invalidated by Avalanche
+    Invalidated,
 }
 
 const BLOCK_CHANNEL_CAPACITY: usize = 16;
@@ -45,6 +59,7 @@ pub struct Subs {
     subs_script: SubsGroup<ScriptGroup>,
     subs_token_id: SubsGroup<TokenIdGroup>,
     subs_lokad_id: SubsGroup<LokadIdGroup>,
+    subs_plugins: SubsGroup<PluginsGroup>,
 }
 
 impl Subs {
@@ -55,6 +70,7 @@ impl Subs {
             subs_script: SubsGroup::new(script_group),
             subs_token_id: SubsGroup::new(TokenIdGroup),
             subs_lokad_id: SubsGroup::new(LokadIdGroup),
+            subs_plugins: SubsGroup::new(PluginsGroup),
         }
     }
 
@@ -78,17 +94,25 @@ impl Subs {
         &mut self.subs_lokad_id
     }
 
+    /// Mutable reference to the plugins subscribers.
+    pub fn subs_plugin_mut(&mut self) -> &mut SubsGroup<PluginsGroup> {
+        &mut self.subs_plugins
+    }
+
     /// Send out updates to subscribers for this tx and msg_type.
     pub fn handle_tx_event(
         &mut self,
         tx: &Tx,
         msg_type: TxMsgType,
         token_id_aux: &TokenIdGroupAux,
+        plugin_outputs: &BTreeMap<OutPoint, PluginOutput>,
     ) {
         self.subs_script.handle_tx_event(tx, &(), msg_type);
         self.subs_token_id
             .handle_tx_event(tx, token_id_aux, msg_type);
         self.subs_lokad_id.handle_tx_event(tx, &(), msg_type);
+        self.subs_plugins
+            .handle_tx_event(tx, plugin_outputs, msg_type);
     }
 
     /// Send out msg_type updates for the txs of the block to subscribers.
@@ -97,10 +121,12 @@ impl Subs {
         txs: &[Tx],
         msg_type: TxMsgType,
         token_id_aux: &TokenIdGroupAux,
+        plugin_outputs: &BTreeMap<OutPoint, PluginOutput>,
     ) {
         if self.subs_script.is_empty()
             && self.subs_token_id.is_empty()
             && self.subs_lokad_id.is_empty()
+            && self.subs_plugins.is_empty()
         {
             // Short-circuit if no subscriptions
             return;
@@ -110,6 +136,8 @@ impl Subs {
             self.subs_token_id
                 .handle_tx_event(tx, token_id_aux, msg_type);
             self.subs_lokad_id.handle_tx_event(tx, &(), msg_type);
+            self.subs_plugins
+                .handle_tx_event(tx, plugin_outputs, msg_type);
         }
     }
 

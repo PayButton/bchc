@@ -1,15 +1,22 @@
 [Unit]
-Description=eCash node
+Description=Bitcoin Cash Node Daemon
 After=network.target
 
 [Service]
-ExecStart=%h/bitcoin-abc/bin/bitcoind -daemonwait -conf=%h/.bitcoin/bitcoin.conf -pid=%h/.bitcoin/bitcoind.pid
-ExecStopPost=-/bin/bash -c 'mv %h/.bitcoin/debug.log %h/.bitcoin/debug_$(date +%%Y%%m%%d%%H%%M%%S).log'
+User=bitcoin
+Group=bitcoin
+
 Type=forking
-PIDFile=%h/.bitcoin/bitcoind.pid
-Restart=unless-stopped
-RestartSec=5
-StartLimitInterval=10
+PIDFile=/var/lib/bitcoind/bitcoind.pid
+ExecStart=/usr/bin/bitcoind -daemon -pid=/var/lib/bitcoind/bitcoind.pid \
+-conf=/etc/bitcoin/bitcoin.conf -datadir=/var/lib/bitcoind -disablewallet
+
+Restart=always
+PrivateTmp=true
+TimeoutStopSec=60s
+TimeoutStartSec=2s
+StartLimitInterval=120s
+StartLimitBurst=5
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

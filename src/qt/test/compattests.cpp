@@ -1,4 +1,5 @@
 // Copyright (c) 2016 The Bitcoin Core developers
+// Copyright (c) 2017-2019 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,11 +8,6 @@
 #endif
 
 #include <qt/test/compattests.h>
-
-#if defined(ENABLE_WALLET) && defined(ENABLE_BIP70)
-// this includes protobuf's port.h which defines its own bswap macos
-#include <qt/paymentrequestplus.h>
-#endif
 
 #include <compat/byteswap.h>
 

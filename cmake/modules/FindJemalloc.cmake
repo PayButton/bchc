@@ -27,7 +27,7 @@ find_brew_prefix(_Jemalloc_BREW_HINT jemalloc)
 
 find_path(Jemalloc_INCLUDE_DIR
 	NAMES jemalloc.h
-	PATHS ${Jemalloc_INCLUDE_DIR}
+	PATHS ${PC_Jemalloc_INCLUDE_DIRS}
 	PATH_SUFFIXES include jemalloc
 	HINTS ${_Jemalloc_BREW_HINT}
 )
@@ -38,7 +38,7 @@ mark_as_advanced(Jemalloc_INCLUDE_DIR)
 if(Jemalloc_INCLUDE_DIR)
 	if(NOT Jemalloc_VERSION)
 		# If pkgconfig found a version number, use it.
-		if(PC_Jemalloc_VERSION AND (Jemalloc_INCLUDE_DIR STREQUAL PC_Jemalloc_INCLUDEDIR))
+		if(PC_Jemalloc_VERSION)
 			set(_Jemalloc_VERSION ${PC_Jemalloc_VERSION})
 		else()
 			# Read the version from file db.h into a variable.
@@ -111,6 +111,5 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Jemalloc
 	REQUIRED_VARS Jemalloc_INCLUDE_DIR
 	VERSION_VAR Jemalloc_VERSION
-	REASON_FAILURE_MESSAGE "this is an optional dependency that can be disabled by passing -DUSE_JEMALLOC=OFF to the cmake command line"
 	HANDLE_COMPONENTS
 )

@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,6 +7,7 @@
 
 #include <QApplication>
 #include <QByteArray>
+#include <QIcon>
 #include <QImageWriter>
 #include <QMessageBox>
 #include <QMetaType>
@@ -16,8 +18,14 @@
 #ifdef USE_DBUS
 #include <QtDBus>
 #include <cstdint>
+#include <cstring>
 #endif
+// Include ApplicationServices.h after QtDbus to avoid redefinition of check().
+// This affects at least OSX 10.6. See /usr/include/AssertMacros.h for details.
+// Note: This could also be worked around using:
+// #define __ASSERT_MACROS_DEFINE_VERSIONS_WITHOUT_UNDERSCORES 0
 #ifdef Q_OS_MAC
+#include <ApplicationServices/ApplicationServices.h>
 #include <qt/macnotificationhandler.h>
 #endif
 
@@ -33,7 +41,7 @@ Notificator::Notificator(const QString &_programName,
       trayIcon(_trayIcon)
 #ifdef USE_DBUS
       ,
-      interface(nullptr)
+      interface(0)
 #endif
 {
     if (_trayIcon && _trayIcon->supportsMessages()) {
@@ -101,16 +109,17 @@ FreedesktopImage::FreedesktopImage(const QImage &img)
       bitsPerSample(BITS_PER_SAMPLE) {
     // Convert 00xAARRGGBB to RGBA bytewise (endian-independent) format
     QImage tmp = img.convertToFormat(QImage::Format_ARGB32);
-    const uint32_t *data = reinterpret_cast<const uint32_t *>(tmp.bits());
 
     unsigned int num_pixels = width * height;
     image.resize(num_pixels * BYTES_PER_PIXEL);
 
     for (unsigned int ptr = 0; ptr < num_pixels; ++ptr) {
-        image[ptr * BYTES_PER_PIXEL + 0] = data[ptr] >> 16; // R
-        image[ptr * BYTES_PER_PIXEL + 1] = data[ptr] >> 8;  // G
-        image[ptr * BYTES_PER_PIXEL + 2] = data[ptr];       // B
-        image[ptr * BYTES_PER_PIXEL + 3] = data[ptr] >> 24; // A
+        uint32_t pixel;
+        std::memcpy(&pixel, tmp.bits() + ptr * sizeof(uint32_t), sizeof(uint32_t));
+        image[ptr * BYTES_PER_PIXEL + 0] = pixel >> 16; // R
+        image[ptr * BYTES_PER_PIXEL + 1] = pixel >> 8;  // G
+        image[ptr * BYTES_PER_PIXEL + 2] = pixel;       // B
+        image[ptr * BYTES_PER_PIXEL + 3] = pixel >> 24; // A
     }
 }
 
@@ -142,15 +151,14 @@ QVariant FreedesktopImage::toVariant(const QImage &img) {
 void Notificator::notifyDBus(Class cls, const QString &title,
                              const QString &text, const QIcon &icon,
                              int millisTimeout) {
-    // https://developer.gnome.org/notification-spec/
+    Q_UNUSED(cls);
     // Arguments for DBus call:
     QList<QVariant> args;
 
     // Program Name:
     args.append(programName);
 
-    // Replaces ID; A value of 0 means that this notification won't replace any
-    // existing notifications:
+    // Unique ID of this notification type:
     args.append(0U);
 
     // Application Icon, empty string
@@ -203,10 +211,12 @@ void Notificator::notifyDBus(Class cls, const QString &title,
 #endif
 
 void Notificator::notifySystray(Class cls, const QString &title,
-                                const QString &text, int millisTimeout) {
+                                const QString &text, const QIcon &icon,
+                                int millisTimeout) {
+    Q_UNUSED(icon);
     QSystemTrayIcon::MessageIcon sicon = QSystemTrayIcon::NoIcon;
-    // Set icon based on class
-    switch (cls) {
+    switch (cls) // Set icon based on class
+    {
         case Information:
             sicon = QSystemTrayIcon::Information;
             break;
@@ -220,13 +230,17 @@ void Notificator::notifySystray(Class cls, const QString &title,
     trayIcon->showMessage(title, text, sicon, millisTimeout);
 }
 
+// Based on Qt's tray icon implementation
 #ifdef Q_OS_MAC
-void Notificator::notifyMacUserNotificationCenter(const QString &title,
-                                                  const QString &text) {
+void Notificator::notifyMacUserNotificationCenter(Class cls,
+                                                  const QString &title,
+                                                  const QString &text,
+                                                  const QIcon &icon) {
     // icon is not supported by the user notification center yet. OSX will use
     // the app icon.
     MacNotificationHandler::instance()->showNotification(title, text);
 }
+
 #endif
 
 void Notificator::notify(Class cls, const QString &title, const QString &text,
@@ -238,11 +252,11 @@ void Notificator::notify(Class cls, const QString &title, const QString &text,
             break;
 #endif
         case QSystemTray:
-            notifySystray(cls, title, text, millisTimeout);
+            notifySystray(cls, title, text, icon, millisTimeout);
             break;
 #ifdef Q_OS_MAC
         case UserNotificationCenter:
-            notifyMacUserNotificationCenter(title, text);
+            notifyMacUserNotificationCenter(cls, title, text, icon);
             break;
 #endif
         default:

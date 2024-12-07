@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.13)
 project(Leveldb VERSION 0.1.0 LANGUAGES C CXX)
 
 # This project can take advantage of C++11.
@@ -16,7 +16,6 @@ add_compiler_flags(
 	-Wno-shadow
 	-Wno-sign-compare
 	-Wno-unused-const-variable
-	-Wno-conditional-uninitialized
 )
 add_c_compiler_flags(-Wno-strict-prototypes)
 
@@ -89,7 +88,16 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	)
 
 	find_package(SHLWAPI REQUIRED)
-	target_link_libraries(leveldb SHLWAPI::shlwapi)
+	# We cannot use the imported target here, because cmake will introduce an
+	# -isystem compilation directive and cause the build to fail with MinGw.
+	# This comes from a couple cmake bugs:
+	#  - https://gitlab.kitware.com/cmake/cmake/issues/16291
+	#  - https://gitlab.kitware.com/cmake/cmake/issues/19095
+	# These issues are solved from cmake 3.14.1. Once this version is enforced,
+	# the following can be used:
+	# target_link_libraries(leveldb SHLWAPI::shlwapi)
+	target_link_libraries(leveldb ${SHLWAPI_LIBRARIES})
+	target_include_directories(leveldb PUBLIC ${SHLWAPI_INCLUDE_DIRS})
 else()
 	set(LEVELDB_PLATFORM POSIX)
 	target_sources(leveldb PRIVATE port/port_posix.cc)
@@ -176,12 +184,9 @@ if(ENABLE_HWCRC32)
 endif()
 
 option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
-if(LEVELDB_BUILD_TESTS)
+if(LEVELDB_BUILD_TESTS AND ENABLE_TEST)
 	include(TestSuite)
 	create_test_suite(leveldb)
-	# Create a single job pool for the test suite in order to make the tests run
-	# serially.
-	test_suite_create_pool(leveldb 1)
 
 	add_library(leveldb_test_base
 		EXCLUDE_FROM_ALL
@@ -228,4 +233,4 @@ if(LEVELDB_BUILD_TESTS)
 		create_leveldb_test(c_test db/c_test.c)
 		create_leveldb_test(env_posix_test util/env_posix_test.cc)
 	endif()
-endif(LEVELDB_BUILD_TESTS)
+endif(LEVELDB_BUILD_TESTS AND ENABLE_TEST)

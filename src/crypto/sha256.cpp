@@ -7,6 +7,7 @@
 #include <compat/cpuid.h>
 #include <crypto/common.h>
 
+#include <atomic>
 #include <cassert>
 #include <cstring>
 

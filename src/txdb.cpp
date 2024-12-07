@@ -1,68 +1,39 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2018 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <txdb.h>
 
 #include <chain.h>
-#include <common/system.h>
-#include <logging.h>
-#include <node/ui_interface.h>
-#include <pow/pow.h>
+#include <chainparams.h>
+#include <hash.h>
+#include <pow.h>
 #include <random.h>
 #include <shutdown.h>
-#include <util/translation.h>
+#include <ui_interface.h>
+#include <util/system.h>
 #include <util/vector.h>
-#include <version.h>
 
 #include <cstdint>
-#include <memory>
 
-static constexpr uint8_t DB_COIN{'C'};
-static constexpr uint8_t DB_COINS{'c'};
-static constexpr uint8_t DB_BLOCK_FILES{'f'};
-static constexpr uint8_t DB_BLOCK_INDEX{'b'};
+static const char DB_COIN = 'C';
+static const char DB_COINS = 'c';
+static const char DB_BLOCK_FILES = 'f';
+static const char DB_BLOCK_INDEX = 'b';
 
-static constexpr uint8_t DB_BEST_BLOCK{'B'};
-static constexpr uint8_t DB_HEAD_BLOCKS{'H'};
-static constexpr uint8_t DB_FLAG{'F'};
-static constexpr uint8_t DB_REINDEX_FLAG{'R'};
-static constexpr uint8_t DB_LAST_BLOCK{'l'};
-
-// Keys used in previous version that might still be found in the DB:
-static constexpr uint8_t DB_TXINDEX_BLOCK{'T'};
-//               uint8_t DB_TXINDEX{'t'}
-
-util::Result<void> CheckLegacyTxindex(CBlockTreeDB &block_tree_db) {
-    CBlockLocator ignored{};
-    if (block_tree_db.Read(DB_TXINDEX_BLOCK, ignored)) {
-        return util::Error{
-            _("The -txindex upgrade started by a previous version can not "
-              "be completed. Restart with the previous version or run a "
-              "full -reindex.")};
-    }
-    bool txindex_legacy_flag{false};
-    block_tree_db.ReadFlag("txindex", txindex_legacy_flag);
-    if (txindex_legacy_flag) {
-        // Disable legacy txindex and warn once about occupied disk space
-        if (!block_tree_db.WriteFlag("txindex", false)) {
-            return util::Error{Untranslated(
-                "Failed to write block index db flag 'txindex'='0'")};
-        }
-        return util::Error{
-            _("The block index db contains a legacy 'txindex'. To clear the "
-              "occupied disk space, run a full -reindex, otherwise ignore "
-              "this error. This error message will not be displayed again.")};
-    }
-    return {};
-}
+static const char DB_BEST_BLOCK = 'B';
+static const char DB_HEAD_BLOCKS = 'H';
+static const char DB_FLAG = 'F';
+static const char DB_REINDEX_FLAG = 'R';
+static const char DB_LAST_BLOCK = 'l';
 
 namespace {
 
 struct CoinEntry {
     COutPoint *outpoint;
-    uint8_t key;
+    char key;
     explicit CoinEntry(const COutPoint *ptr)
         : outpoint(const_cast<COutPoint *>(ptr)), key(DB_COIN) {}
 
@@ -75,34 +46,20 @@ struct CoinEntry {
 };
 } // namespace
 
-CCoinsViewDB::CCoinsViewDB(DBParams db_params, CoinsViewOptions options)
-    : m_db_params{std::move(db_params)}, m_options{std::move(options)},
-      m_db{std::make_unique<CDBWrapper>(m_db_params)} {}
-
-void CCoinsViewDB::ResizeCache(size_t new_cache_size) {
-    // We can't do this operation with an in-memory DB since we'll lose all the
-    // coins upon reset.
-    if (!m_db_params.memory_only) {
-        // Have to do a reset first to get the original `m_db` state to release
-        // its filesystem lock.
-        m_db.reset();
-        m_db_params.cache_bytes = new_cache_size;
-        m_db_params.wipe_data = false;
-        m_db = std::make_unique<CDBWrapper>(m_db_params);
-    }
-}
+CCoinsViewDB::CCoinsViewDB(size_t nCacheSize, bool fMemory, bool fWipe)
+    : db(GetDataDir() / "chainstate", nCacheSize, fMemory, fWipe, true) {}
 
 bool CCoinsViewDB::GetCoin(const COutPoint &outpoint, Coin &coin) const {
-    return m_db->Read(CoinEntry(&outpoint), coin);
+    return db.Read(CoinEntry(&outpoint), coin);
 }
 
 bool CCoinsViewDB::HaveCoin(const COutPoint &outpoint) const {
-    return m_db->Exists(CoinEntry(&outpoint));
+    return db.Exists(CoinEntry(&outpoint));
 }
 
 BlockHash CCoinsViewDB::GetBestBlock() const {
     BlockHash hashBestChain;
-    if (!m_db->Read(DB_BEST_BLOCK, hashBestChain)) {
+    if (!db.Read(DB_BEST_BLOCK, hashBestChain)) {
         return BlockHash();
     }
     return hashBestChain;
@@ -110,17 +67,19 @@ BlockHash CCoinsViewDB::GetBestBlock() const {
 
 std::vector<BlockHash> CCoinsViewDB::GetHeadBlocks() const {
     std::vector<BlockHash> vhashHeadBlocks;
-    if (!m_db->Read(DB_HEAD_BLOCKS, vhashHeadBlocks)) {
+    if (!db.Read(DB_HEAD_BLOCKS, vhashHeadBlocks)) {
         return std::vector<BlockHash>();
     }
     return vhashHeadBlocks;
 }
 
-bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
-                              bool erase) {
-    CDBBatch batch(*m_db);
+bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
+    CDBBatch batch(db);
     size_t count = 0;
     size_t changed = 0;
+    size_t batch_size =
+        (size_t)gArgs.GetArg("-dbbatchsize", nDefaultDbBatchSize);
+    int crash_simulate = gArgs.GetArg("-dbcrashratio", 0);
     assert(!hashBlock.IsNull());
 
     BlockHash old_tip = GetBestBlock();
@@ -151,15 +110,16 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
             changed++;
         }
         count++;
-        it = erase ? mapCoins.erase(it) : std::next(it);
-        if (batch.SizeEstimate() > m_options.batch_write_bytes) {
+        CCoinsMap::iterator itOld = it++;
+        mapCoins.erase(itOld);
+        if (batch.SizeEstimate() > batch_size) {
             LogPrint(BCLog::COINDB, "Writing partial batch of %.2f MiB\n",
                      batch.SizeEstimate() * (1.0 / 1048576.0));
-            m_db->WriteBatch(batch);
+            db.WriteBatch(batch);
             batch.Clear();
-            if (m_options.simulate_crash_ratio) {
+            if (crash_simulate) {
                 static FastRandomContext rng;
-                if (rng.randrange(m_options.simulate_crash_ratio) == 0) {
+                if (rng.randrange(crash_simulate) == 0) {
                     LogPrintf("Simulating a crash. Goodbye.\n");
                     _Exit(0);
                 }
@@ -173,7 +133,7 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
 
     LogPrint(BCLog::COINDB, "Writing final batch of %.2f MiB\n",
              batch.SizeEstimate() * (1.0 / 1048576.0));
-    bool ret = m_db->WriteBatch(batch);
+    bool ret = db.WriteBatch(batch);
     LogPrint(BCLog::COINDB,
              "Committed %u changed transaction outputs (out of "
              "%u) to coin database...\n",
@@ -182,8 +142,11 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
 }
 
 size_t CCoinsViewDB::EstimateSize() const {
-    return m_db->EstimateSize(DB_COIN, uint8_t(DB_COIN + 1));
+    return db.EstimateSize(DB_COIN, char(DB_COIN + 1));
 }
+
+CBlockTreeDB::CBlockTreeDB(size_t nCacheSize, bool fMemory, bool fWipe)
+    : CDBWrapper(GetIndexDir(), nCacheSize, fMemory, fWipe) {}
 
 bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
     return Read(std::make_pair(DB_BLOCK_FILES, nFile), info);
@@ -191,7 +154,7 @@ bool CBlockTreeDB::ReadBlockFileInfo(int nFile, CBlockFileInfo &info) {
 
 bool CBlockTreeDB::WriteReindexing(bool fReindexing) {
     if (fReindexing) {
-        return Write(DB_REINDEX_FLAG, uint8_t{'1'});
+        return Write(DB_REINDEX_FLAG, '1');
     } else {
         return Erase(DB_REINDEX_FLAG);
     }
@@ -205,9 +168,9 @@ bool CBlockTreeDB::ReadLastBlockFile(int &nFile) {
     return Read(DB_LAST_BLOCK, nFile);
 }
 
-CCoinsViewCursor *CCoinsViewDB::Cursor() const {
+CCoinsViewCursor *CCoinsViewDB::Cursor(bool snapshot) const {
     CCoinsViewDBCursor *i = new CCoinsViewDBCursor(
-        const_cast<CDBWrapper &>(*m_db).NewIterator(), GetBestBlock());
+        const_cast<CDBWrapper &>(db).NewIterator(snapshot), GetBestBlock());
     /**
      * It seems that there are no "const iterators" for LevelDB. Since we only
      * need read operations on it, use a const-cast to get around that
@@ -279,44 +242,29 @@ bool CBlockTreeDB::WriteBatchSync(
 }
 
 bool CBlockTreeDB::WriteFlag(const std::string &name, bool fValue) {
-    return Write(std::make_pair(DB_FLAG, name),
-                 fValue ? uint8_t{'1'} : uint8_t{'0'});
+    return Write(std::make_pair(DB_FLAG, name), fValue ? '1' : '0');
 }
 
 bool CBlockTreeDB::ReadFlag(const std::string &name, bool &fValue) {
-    uint8_t ch;
+    char ch;
     if (!Read(std::make_pair(DB_FLAG, name), ch)) {
         return false;
     }
-    fValue = ch == uint8_t{'1'};
+    fValue = ch == '1';
     return true;
 }
 
 bool CBlockTreeDB::LoadBlockIndexGuts(
     const Consensus::Params &params,
     std::function<CBlockIndex *(const BlockHash &)> insertBlockIndex) {
-    AssertLockHeld(::cs_main);
     std::unique_ptr<CDBIterator> pcursor(NewIterator());
-
-    uint64_t version = 0;
-    pcursor->Seek("version");
-    if (pcursor->Valid()) {
-        pcursor->GetValue(version);
-    }
-
-    if (version != CLIENT_VERSION) {
-        return error("%s: Invalid block index database version: %s", __func__,
-                     version);
-    }
 
     pcursor->Seek(std::make_pair(DB_BLOCK_INDEX, uint256()));
 
-    // Load m_block_index
+    // Load mapBlockIndex
     while (pcursor->Valid()) {
-        if (ShutdownRequested()) {
-            return false;
-        }
-        std::pair<uint8_t, uint256> key;
+        if (ShutdownRequested()) return false;
+        std::pair<char, uint256> key;
         if (!pcursor->GetKey(key) || key.first != DB_BLOCK_INDEX) {
             break;
         }
@@ -327,8 +275,7 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
         }
 
         // Construct block index object
-        CBlockIndex *pindexNew =
-            insertBlockIndex(diskindex.ConstructBlockHash());
+        CBlockIndex *pindexNew = insertBlockIndex(diskindex.GetBlockHash());
         pindexNew->pprev = insertBlockIndex(diskindex.hashPrev);
         pindexNew->nHeight = diskindex.nHeight;
         pindexNew->nFile = diskindex.nFile;
@@ -341,6 +288,7 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
         pindexNew->nNonce = diskindex.nNonce;
         pindexNew->nStatus = diskindex.nStatus;
         pindexNew->nTx = diskindex.nTx;
+        pindexNew->SetAblaStateOpt(diskindex.GetAblaStateOpt());
 
         if (!CheckProofOfWork(pindexNew->GetBlockHash(), pindexNew->nBits,
                               params)) {
@@ -374,7 +322,7 @@ public:
     template <typename Stream> void Unserialize(Stream &s) {
         uint32_t nCode = 0;
         // version
-        unsigned int nVersionDummy = 0;
+        unsigned int nVersionDummy{};
         ::Unserialize(s, VARINT(nVersionDummy));
         // header code
         ::Unserialize(s, VARINT(nCode));
@@ -414,7 +362,7 @@ public:
  * Currently implemented: from the per-tx utxo model (0.8..0.14.x) to per-txout.
  */
 bool CCoinsViewDB::Upgrade() {
-    std::unique_ptr<CDBIterator> pcursor(m_db->NewIterator());
+    std::unique_ptr<CDBIterator> pcursor(db.NewIterator());
     pcursor->Seek(std::make_pair(DB_COINS, uint256()));
     if (!pcursor->Valid()) {
         return true;
@@ -422,9 +370,11 @@ bool CCoinsViewDB::Upgrade() {
 
     int64_t count = 0;
     LogPrintf("Upgrading utxo-set database...\n");
+    LogPrintfToBeContinued("[0%%]...");
+    uiInterface.ShowProgress(_("Upgrading UTXO database"), 0, true);
     size_t batch_size = 1 << 24;
-    CDBBatch batch(*m_db);
-    int reportDone = -1;
+    CDBBatch batch(db);
+    int reportDone = 0;
     std::pair<uint8_t, uint256> key;
     std::pair<uint8_t, uint256> prev_key = {DB_COINS, uint256()};
     while (pcursor->Valid()) {
@@ -440,7 +390,7 @@ bool CCoinsViewDB::Upgrade() {
             uint32_t high =
                 0x100 * *key.second.begin() + *(key.second.begin() + 1);
             int percentageDone = (int)(high * 100.0 / 65536.0 + 0.5);
-            uiInterface.ShowProgress(_("Upgrading UTXO database").translated,
+            uiInterface.ShowProgress(_("Upgrading UTXO database"),
                                      percentageDone, true);
             if (reportDone < percentageDone / 10) {
                 // report max. every 10% step
@@ -454,7 +404,7 @@ bool CCoinsViewDB::Upgrade() {
             return error("%s: cannot parse CCoins record", __func__);
         }
 
-        const TxId id(key.second);
+        TxId id(key.second);
         for (size_t i = 0; i < old_coins.vout.size(); ++i) {
             if (!old_coins.vout[i].IsNull() &&
                 !old_coins.vout[i].scriptPubKey.IsUnspendable()) {
@@ -468,55 +418,18 @@ bool CCoinsViewDB::Upgrade() {
 
         batch.Erase(key);
         if (batch.SizeEstimate() > batch_size) {
-            m_db->WriteBatch(batch);
+            db.WriteBatch(batch);
             batch.Clear();
-            m_db->CompactRange(prev_key, key);
+            db.CompactRange(prev_key, key);
             prev_key = key;
         }
 
         pcursor->Next();
     }
 
-    m_db->WriteBatch(batch);
-    m_db->CompactRange({DB_COINS, uint256()}, key);
+    db.WriteBatch(batch);
+    db.CompactRange({DB_COINS, uint256()}, key);
     uiInterface.ShowProgress("", 100, false);
     LogPrintf("[%s].\n", ShutdownRequested() ? "CANCELLED" : "DONE");
     return !ShutdownRequested();
-}
-
-bool CBlockTreeDB::Upgrade() {
-    // This method used to add the block size to pre-0.22.8 block index
-    // databases. This is no longer supported as of 0.25.5, but the method is
-    // kept to update the version number in the database.
-    std::unique_ptr<CDBIterator> pcursor(NewIterator());
-
-    uint64_t version = 0;
-    pcursor->Seek("version");
-    if (pcursor->Valid()) {
-        pcursor->GetValue(version);
-    }
-
-    if (version >= CLIENT_VERSION) {
-        // The DB is already up to date.
-        return true;
-    }
-
-    pcursor->Seek(std::make_pair(DB_BLOCK_INDEX, uint256()));
-
-    // The DB is not empty, and the version is either non-existent or too old.
-    // The node requires a reindex.
-    if (pcursor->Valid() && version < CDiskBlockIndex::TRACK_SIZE_VERSION) {
-        LogPrintf(
-            "\nThe database is too old. The block index cannot be upgraded "
-            "and reindexing is required.\n");
-        return false;
-    }
-
-    // The DB is empty or recent enough.
-    // Just write the new version number and consider the upgrade done.
-    CDBBatch batch(*this);
-    LogPrintf("Updating the block index database version to %d\n",
-              CLIENT_VERSION);
-    batch.Write("version", uint64_t(CLIENT_VERSION));
-    return WriteBatch(batch);
 }

@@ -1,139 +1,97 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CONSENSUS_VALIDATION_H
-#define BITCOIN_CONSENSUS_VALIDATION_H
+#pragma once
 
-#include <cassert>
+#include <dsproof/dspid.h>
+
 #include <string>
+#include <memory>
+#include <vector>
 
-/**
- * A "reason" why a transaction was invalid, suitable for determining whether
- * the provider of the transaction should be banned/ignored/disconnected/etc.
- */
-enum class TxValidationResult {
-    //! initial value. Tx has not yet been rejected
-    TX_RESULT_UNSET = 0,
-    //! invalid by consensus rules
-    TX_CONSENSUS,
-    //! inputs failed policy rules
-    TX_INPUTS_NOT_STANDARD,
-    //! otherwise didn't meet our local policy rules
-    TX_NOT_STANDARD,
-    //! transaction was missing some of its inputs
-    TX_MISSING_INPUTS,
-    //! transaction spends a coinbase too early, or violates locktime/sequence
-    //! locks
-    TX_PREMATURE_SPEND,
-    /** Tx already in mempool or in the chain. */
-    TX_DUPLICATE,
-    /**
-     * Tx conflicts with another mempool tx, i.e. spends the same coin.
-     */
-    TX_CONFLICT,
-    /**
-     * This tx outputs are already spent in the mempool. This should never
-     * happen and is a symptom of a mempool bug/corruption.
-     */
-    TX_CHILD_BEFORE_PARENT,
-    //! violated mempool's fee/size/descendant/etc limits
-    TX_MEMPOOL_POLICY,
-    //! this node does not have a mempool so can't validate the transaction
-    TX_NO_MEMPOOL,
-    //! fails some policy, but might be acceptable if submitted in a (different)
-    //! package
-    TX_PACKAGE_RECONSIDERABLE,
-    //! transaction was not validated because package failed
-    TX_UNKNOWN,
-};
+/** "reject" message codes */
+static const uint8_t REJECT_MALFORMED = 0x01;
+static const uint8_t REJECT_INVALID = 0x10;
+static const uint8_t REJECT_OBSOLETE = 0x11;
+static const uint8_t REJECT_DUPLICATE = 0x12;
+static const uint8_t REJECT_NONSTANDARD = 0x40;
+static const uint8_t REJECT_INSUFFICIENTFEE = 0x42;
+static const uint8_t REJECT_CHECKPOINT = 0x43;
 
-/**
- * A "reason" why a block was invalid, suitable for determining whether the
- * provider of the block should be banned/ignored/disconnected/etc.
- * These are much more granular than the rejection codes, which may be more
- * useful for some other use-cases.
- */
-enum class BlockValidationResult {
-    //! initial value. Block has not yet been rejected
-    BLOCK_RESULT_UNSET = 0,
-    //! invalid by consensus rules (excluding any below reasons)
-    BLOCK_CONSENSUS,
-    //! this block was cached as being invalid and we didn't store the reason
-    //! why
-    BLOCK_CACHED_INVALID,
-    //! invalid proof of work or time too old
-    BLOCK_INVALID_HEADER,
-    //! the block's data didn't match the data committed to by the PoW
-    BLOCK_MUTATED,
-    //! We don't have the previous block the checked one is built on
-    BLOCK_MISSING_PREV,
-    //! A block this one builds on is invalid
-    BLOCK_INVALID_PREV,
-    //! block timestamp was > 2 hours in the future (or our clock is bad)
-    BLOCK_TIME_FUTURE,
-    //! the block failed to meet one of our checkpoints
-    BLOCK_CHECKPOINT,
-    //! the block header may be on a too-little-work chain
-    BLOCK_HEADER_LOW_WORK
-};
-
-/**
- * Template for capturing information about block/transaction validation.
- * This is instantiated by TxValidationState and BlockValidationState for
- * validation information on transactions and blocks respectively.
- */
-template <typename Result> class ValidationState {
+/** Capture information about block/transaction validation */
+class CValidationState {
 private:
-    enum class ModeState {
-        M_VALID,   //!< everything ok
-        M_INVALID, //!< network rule violation (DoS value may be set)
-        M_ERROR,   //!< run-time error
-    } m_mode{ModeState::M_VALID};
-    Result m_result{};
-    std::string m_reject_reason;
-    std::string m_debug_message;
+    enum mode_state {
+        MODE_VALID,   //!< everything ok
+        MODE_INVALID, //!< network rule violation (DoS value may be set)
+        MODE_ERROR,   //!< run-time error
+    } mode = MODE_VALID;
+    int nDoS = 0;
+    std::string strRejectReason;
+    unsigned int chRejectCode = 0;
+    bool corruptionPossible = false;
+    std::string strDebugMessage;
+
+    //! Validation data related to DoubleSpendProof. The most common case is that *no* DSP exists. In order to minimize
+    //! the memory & CPU footprint of the DSProof facility, we wrap this hash in a tiny object for the common case.
+    DspIdPtr dspIdPtr;
 
 public:
-    bool Invalid(Result result, const std::string &reject_reason = "",
-                 const std::string &debug_message = "") {
-        m_result = result;
-        m_reject_reason = reject_reason;
-        m_debug_message = debug_message;
-        if (m_mode != ModeState::M_ERROR) {
-            m_mode = ModeState::M_INVALID;
+    CValidationState() = default;
+
+    bool DoS(int level, bool ret = false, unsigned int chRejectCodeIn = 0,
+             const std::string &strRejectReasonIn = "",
+             bool corruptionIn = false,
+             const std::string &strDebugMessageIn = "") {
+        chRejectCode = chRejectCodeIn;
+        strRejectReason = strRejectReasonIn;
+        corruptionPossible = corruptionIn;
+        strDebugMessage = strDebugMessageIn;
+        if (mode == MODE_ERROR) {
+            return ret;
+        }
+        nDoS += level;
+        mode = MODE_INVALID;
+        return ret;
+    }
+
+    bool Invalid(bool ret = false, unsigned int _chRejectCode = 0,
+                 const std::string &_strRejectReason = "",
+                 const std::string &_strDebugMessage = "") {
+        return DoS(0, ret, _chRejectCode, _strRejectReason, false,
+                   _strDebugMessage);
+    }
+    bool Error(const std::string &strRejectReasonIn) {
+        if (mode == MODE_VALID) {
+            strRejectReason = strRejectReasonIn;
+        }
+
+        mode = MODE_ERROR;
+        return false;
+    }
+
+    bool IsValid() const { return mode == MODE_VALID; }
+    bool IsInvalid() const { return mode == MODE_INVALID; }
+    bool IsError() const { return mode == MODE_ERROR; }
+    bool IsInvalid(int &nDoSOut) const {
+        if (IsInvalid()) {
+            nDoSOut = nDoS;
+            return true;
         }
         return false;
     }
 
-    bool Error(const std::string &reject_reason) {
-        if (m_mode == ModeState::M_VALID) {
-            m_reject_reason = reject_reason;
-        }
-        m_mode = ModeState::M_ERROR;
-        return false;
-    }
-    bool IsValid() const { return m_mode == ModeState::M_VALID; }
-    bool IsInvalid() const { return m_mode == ModeState::M_INVALID; }
-    bool IsError() const { return m_mode == ModeState::M_ERROR; }
-    Result GetResult() const { return m_result; }
-    std::string GetRejectReason() const { return m_reject_reason; }
-    std::string GetDebugMessage() const { return m_debug_message; }
-    std::string ToString() const {
-        if (IsValid()) {
-            return "Valid";
-        }
+    bool CorruptionPossible() const { return corruptionPossible; }
+    void SetCorruptionPossible() { corruptionPossible = true; }
+    unsigned int GetRejectCode() const { return chRejectCode; }
+    std::string GetRejectReason() const { return strRejectReason; }
+    std::string GetDebugMessage() const { return strDebugMessage; }
 
-        if (!m_debug_message.empty()) {
-            return m_reject_reason + ", " + m_debug_message;
-        }
-
-        return m_reject_reason;
-    }
+    // DoubleSpendProof getters and setters
+    bool HasDspId() const { return bool(dspIdPtr); }
+    DspId GetDspId() const { return dspIdPtr ? *dspIdPtr : DspId{}; }
+    void SetDspId(const DspId &dspId) { dspIdPtr = dspId; }
 };
-
-class TxValidationState : public ValidationState<TxValidationResult> {};
-class BlockValidationState : public ValidationState<BlockValidationResult> {};
-
-#endif // BITCOIN_CONSENSUS_VALIDATION_H

@@ -1,11 +1,12 @@
 // Copyright (c) 2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_INDIRECTMAP_H
-#define BITCOIN_INDIRECTMAP_H
+#pragma once
 
 #include <map>
+#include <utility>
 
 template <class T> struct DereferencingComparator {
     bool operator()(const T a, const T b) const { return *a < *b; }
@@ -39,6 +40,12 @@ public:
         return m.insert(value);
     }
 
+    // passthrough (pointer interface)
+    template <typename ...Args>
+    std::pair<iterator, bool> emplace(Args && ...args) {
+        return m.emplace(std::forward<Args>(args)...);
+    }
+
     // pass address (value interface)
     iterator find(const K &key) { return m.find(&key); }
     const_iterator find(const K &key) const { return m.find(&key); }
@@ -61,5 +68,3 @@ public:
     const_iterator cbegin() const { return m.cbegin(); }
     const_iterator cend() const { return m.cend(); }
 };
-
-#endif // BITCOIN_INDIRECTMAP_H

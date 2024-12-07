@@ -1,3 +1,0 @@
-# Wine occasionally deadlocks during cross-builds tests. It should be safe to
-# ignore until we're able to update wine with a version where this is fixed.
-err:ntdll:RtlpWaitForCriticalSection section \w* "\?" wait timed out in thread \w*, blocked by \w*, retrying

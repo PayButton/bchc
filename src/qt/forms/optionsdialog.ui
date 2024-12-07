@@ -121,7 +121,7 @@
          <item>
           <widget class="QLabel" name="databaseCacheUnitLabel">
            <property name="text">
-            <string>MiB</string>
+            <string>MB</string>
            </property>
            <property name="textFormat">
             <enum>Qt::PlainText</enum>
@@ -226,6 +226,16 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QCheckBox" name="allowLegacyP2PKH">
+            <property name="toolTip">
+             <string>Legacy P2PKH addresses are discouraged since their use can result in lost coins. Do not enable this option unless you understand clearly what you are doing.</string>
+            </property>
+            <property name="text">
+             <string>&amp;Allow legacy P2PKH addresses</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -262,7 +272,7 @@
        <item>
         <widget class="QCheckBox" name="mapPortNatpmp">
          <property name="toolTip">
-          <string>Automatically open the Bitcoin ABC client port on the router. This only works when your router supports NAT-PMP and it is enabled. The external port could be random.</string>
+          <string>Automatically open the Bitcoin client port on the router. This only works when your router supports NAT-PMP and it is enabled. The external port could be random.</string>
          </property>
          <property name="text">
           <string>Map port using NA&amp;T-PMP</string>
@@ -691,12 +701,9 @@
           </widget>
          </item>
          <item>
-          <widget class="QValidatedLineEdit" name="thirdPartyTxUrls">
+          <widget class="QLineEdit" name="thirdPartyTxUrls">
            <property name="toolTip">
             <string>Third party URLs (e.g. a block explorer) that appear in the transactions tab as context menu items. %s in the URL is replaced by transaction hash. Multiple URLs are separated by vertical bar |.</string>
-           </property>
-           <property name="placeholderText">
-            <string notr="true">https://example.com/tx/%s</string>
            </property>
           </widget>
          </item>
@@ -727,7 +734,7 @@
         <item>
          <widget class="QLabel" name="overriddenByCommandLineInfoLabel">
           <property name="text">
-           <string>Options set in this dialog are overridden by the command line or in the configuration file:</string>
+           <string>Active command-line options that override above options:</string>
           </property>
           <property name="textFormat">
            <enum>Qt::PlainText</enum>

@@ -235,6 +235,18 @@ impl ChronikServer {
                 routing::get(handle_plugin_utxos),
             )
             .route(
+                "/plugin/:plugin_name/:group_hex/confirmed-txs",
+                routing::get(handle_plugin_confirmed_txs),
+            )
+            .route(
+                "/plugin/:plugin_name/:group_hex/history",
+                routing::get(handle_plugin_history),
+            )
+            .route(
+                "/plugin/:plugin_name/:group_hex/unconfirmed-txs",
+                routing::get(handle_plugin_unconfirmed_txs),
+            )
+            .route(
                 "/plugin/:plugin_name/groups",
                 routing::get(handle_plugin_groups),
             )
@@ -268,7 +280,7 @@ async fn handle_blockchain_info(
 
 async fn handle_chronik_info(
 ) -> Result<Protobuf<proto::ChronikInfo>, ReportError> {
-    let this_chronik_version: String = env!("CARGO_PKG_VERSION").to_string();
+    let this_chronik_version: String = ffi::format_full_version();
     let chronik_info = proto::ChronikInfo {
         version: this_chronik_version,
     };
@@ -297,22 +309,39 @@ async fn handle_block(
 
 async fn handle_block_header(
     Path(hash_or_height): Path<String>,
+    Query(query_params): Query<HashMap<String, String>>,
     Extension(indexer): Extension<ChronikIndexerRef>,
     Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::BlockHeader>, ReportError> {
     let indexer = indexer.read().await;
-    let blocks = indexer.blocks(&node);
-    Ok(Protobuf(blocks.header(hash_or_height)?))
+    Ok(Protobuf(
+        handlers::handle_block_header(
+            hash_or_height,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
 }
 
 async fn handle_block_headers(
     Path((start_height, end_height)): Path<(i32, i32)>,
+    Query(query_params): Query<HashMap<String, String>>,
     Extension(indexer): Extension<ChronikIndexerRef>,
     Extension(node): Extension<NodeRef>,
 ) -> Result<Protobuf<proto::BlockHeaders>, ReportError> {
     let indexer = indexer.read().await;
-    let blocks = indexer.blocks(&node);
-    Ok(Protobuf(blocks.headers_by_range(start_height, end_height)?))
+    Ok(Protobuf(
+        handlers::handle_block_headers(
+            start_height,
+            end_height,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
 }
 
 async fn handle_block_txs(
@@ -607,6 +636,61 @@ async fn handle_plugin_utxos(
     let indexer = indexer.read().await;
     Ok(Protobuf(
         handlers::handle_plugin_utxos(&plugin_name, &payload, &indexer).await?,
+    ))
+}
+
+async fn handle_plugin_confirmed_txs(
+    Path((plugin_name, payload)): Path<(String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_confirmed_txs(
+            &plugin_name,
+            &payload,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_plugin_unconfirmed_txs(
+    Path((plugin_name, payload)): Path<(String, String)>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_unconfirmed_txs(
+            &plugin_name,
+            &payload,
+            &indexer,
+            &node,
+        )
+        .await?,
+    ))
+}
+
+async fn handle_plugin_history(
+    Path((plugin_name, payload)): Path<(String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
+    Extension(indexer): Extension<ChronikIndexerRef>,
+    Extension(node): Extension<NodeRef>,
+) -> Result<Protobuf<proto::TxHistoryPage>, ReportError> {
+    let indexer = indexer.read().await;
+    Ok(Protobuf(
+        handlers::handle_plugin_history(
+            &plugin_name,
+            &payload,
+            &query_params,
+            &indexer,
+            &node,
+        )
+        .await?,
     ))
 }
 

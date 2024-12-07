@@ -1,9 +1,9 @@
 // Copyright (c) 2017-2018 The Bitcoin Core developers
+// Copyright (c) 2020-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CONSENSUS_TX_CHECK_H
-#define BITCOIN_CONSENSUS_TX_CHECK_H
+#pragma once
 
 /**
  * Context-independent transaction checking code that can be called outside the
@@ -13,14 +13,12 @@
  */
 
 class CTransaction;
-class TxValidationState;
+class CValidationState;
 
 /**
  * Context-independent validity checks for coinbase and non-coinbase
  * transactions.
  */
 
-bool CheckRegularTransaction(const CTransaction &tx, TxValidationState &state);
-bool CheckCoinbase(const CTransaction &tx, TxValidationState &state);
-
-#endif // BITCOIN_CONSENSUS_TX_CHECK_H
+bool CheckRegularTransaction(const CTransaction &tx, CValidationState &state);
+bool CheckCoinbase(const CTransaction &tx, CValidationState &state);

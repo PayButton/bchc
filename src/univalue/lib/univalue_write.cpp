@@ -1,164 +1,111 @@
 // Copyright 2014 BitPay Inc.
+// Copyright (c) 2020-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/licenses/mit-license.php.
 
-#include <univalue.h>
-#include <univalue_escapes.h>
+#include <cstring>
+#include <stdio.h>
+#include "univalue.h"
+#include "univalue_escapes.h"
 
-#include <cstddef>
-#include <string>
-#include <utility>
+/* static */
+void UniValue::jsonEscape(Stream & ss, std::string_view inS)
+{
+    for (const auto ch : inS) {
+        const char * const escStr = escapes[uint8_t(ch)];
 
-namespace {
-struct UniValueStreamWriter {
-    std::string str;
-
-    UniValueStreamWriter() { str.reserve(1024); }
-
-    std::string getString() {
-#if __cplusplus >= 201103L
-        return std::move(str);
-#else
-        std::string ret;
-        std::swap(ret, str);
-        return ret;
-#endif
-    }
-
-    void put(char c) { str.push_back(c); }
-    void put(char c, size_t nFill) { str.append(nFill, c); }
-    void write(const char *s) { str.append(s); }
-    void write(const std::string &s) { str.append(s); }
-
-    void indentStr(unsigned int prettyIndent, unsigned int indentLevel) {
-        put(' ', prettyIndent * indentLevel);
-    }
-
-    void escapeJson(const std::string &inS);
-    void writeAny(unsigned int prettyIndent, unsigned int indentLevel,
-                  const UniValue &obj);
-    void writeArray(unsigned int prettyIndent, unsigned int indentLevel,
-                    const UniValue &obj);
-    void writeObject(unsigned int prettyIndent, unsigned int indentLevel,
-                     const UniValue &obj);
-};
-
-void UniValueStreamWriter::escapeJson(const std::string &inS) {
-    size_t len = inS.length();
-    for (size_t i = 0; i < len; i++) {
-        const char ch = inS[i];
-        const char *const escStr = escapes[uint8_t(ch)];
-
-        if (escStr) {
-            write(escStr);
-        } else {
-            put(ch);
-        }
+        if (escStr)
+            ss << escStr;
+        else
+            ss.put(ch);
     }
 }
 
-void UniValueStreamWriter::writeAny(unsigned int prettyIndent,
-                                    unsigned int indentLevel,
-                                    const UniValue &obj) {
-    unsigned int modIndent = indentLevel;
-    if (modIndent == 0) {
-        modIndent = 1;
-    }
-
-    switch (obj.typ) {
-        case UniValue::VNULL:
-            write("null");
-            break;
-        case UniValue::VOBJ:
-            writeObject(prettyIndent, modIndent, obj);
-            break;
-        case UniValue::VARR:
-            writeArray(prettyIndent, modIndent, obj);
-            break;
-        case UniValue::VSTR:
-            put('"');
-            escapeJson(obj.val);
-            put('"');
-            break;
-        case UniValue::VNUM:
-            write(obj.val);
-            break;
-        case UniValue::VBOOL:
-            write(obj.val == "1" ? "true" : "false");
-            break;
+/* static */
+inline void UniValue::startNewLine(Stream & ss, const unsigned int prettyIndent, const unsigned int indentLevel)
+{
+    if (prettyIndent) {
+        ss.put('\n');
+        ss.put(' ', indentLevel);
     }
 }
 
-void UniValueStreamWriter::writeArray(unsigned int prettyIndent,
-                                      unsigned int indentLevel,
-                                      const UniValue &obj) {
-    put('[');
-    if (prettyIndent) {
-        put('\n');
+/* static */
+void UniValue::stringify(Stream& ss, const UniValue& value, const unsigned int prettyIndent, const unsigned int indentLevel)
+{
+    switch (value.typ) {
+    case VNULL:
+        ss << "null";
+        break;
+    case VFALSE:
+        ss << "false";
+        break;
+    case VTRUE:
+        ss << "true";
+        break;
+    case VOBJ:
+        stringify(ss, value.entries, prettyIndent, indentLevel);
+        break;
+    case VARR:
+        stringify(ss, value.values, prettyIndent, indentLevel);
+        break;
+    case VNUM:
+        ss << value.val;
+        break;
+    case VSTR:
+        stringify(ss, value.val, prettyIndent, indentLevel);
+        break;
     }
-
-    const size_t nValues = obj.values.size();
-    for (size_t i = 0; i < nValues; ++i) {
-        if (prettyIndent) {
-            indentStr(prettyIndent, indentLevel);
-        }
-        writeAny(prettyIndent, indentLevel + 1, obj.values[i]);
-        if (i != nValues - 1) {
-            put(',');
-        }
-        if (prettyIndent) {
-            put('\n');
-        }
-    }
-
-    if (prettyIndent) {
-        indentStr(prettyIndent, indentLevel - 1);
-    }
-    put(']');
 }
 
-void UniValueStreamWriter::writeObject(unsigned int prettyIndent,
-                                       unsigned int indentLevel,
-                                       const UniValue &obj) {
-    put('{');
-    if (prettyIndent) {
-        put('\n');
-    }
-
-    // Note: if typ == VOBJ, then keys.size() == values.size() always, so we can
-    // use the non-bounds-checking operator[]() for both keys and values here
-    // safely.
-    const size_t nItems = obj.keys.size();
-    for (size_t i = 0; i < nItems; ++i) {
-        if (prettyIndent) {
-            indentStr(prettyIndent, indentLevel);
-        }
-        put('"');
-        escapeJson(obj.keys[i]);
-        write("\":");
-
-        if (prettyIndent) {
-            put(' ');
-        }
-        writeAny(prettyIndent, indentLevel + 1, obj.values[i]);
-        if (i != nItems - 1) {
-            put(',');
-        }
-        if (prettyIndent) {
-            put('\n');
+/* static */
+void UniValue::stringify(Stream & ss, const UniValue::Object& object, const unsigned int prettyIndent, const unsigned int indentLevel)
+{
+    ss.put('{');
+    if (!object.empty()) {
+        const unsigned int internalIndentLevel = indentLevel + prettyIndent;
+        for (auto entry = object.begin(), end = object.end();;) {
+            startNewLine(ss, prettyIndent, internalIndentLevel);
+            ss.put('"');
+            jsonEscape(ss, entry->first);
+            ss << "\":";
+            if (prettyIndent) {
+                ss.put(' ');
+            }
+            stringify(ss, entry->second, prettyIndent, internalIndentLevel);
+            if (++entry == end) {
+                break;
+            }
+            ss.put(',');
         }
     }
-
-    if (prettyIndent) {
-        indentStr(prettyIndent, indentLevel - 1);
-    }
-    put('}');
+    startNewLine(ss, prettyIndent, indentLevel);
+    ss.put('}');
 }
-} // namespace
 
-std::string UniValue::write(unsigned int prettyIndent,
-                            unsigned int indentLevel) const {
-    UniValueStreamWriter ss;
-    ss.writeAny(prettyIndent, indentLevel, *this);
-    return ss.getString();
+/* static */
+void UniValue::stringify(Stream & ss, const UniValue::Array& array, const unsigned int prettyIndent, const unsigned int indentLevel)
+{
+    ss.put('[');
+    if (!array.empty()) {
+        const unsigned int internalIndentLevel = indentLevel + prettyIndent;
+        for (auto value = array.begin(), end = array.end();;) {
+            startNewLine(ss, prettyIndent, internalIndentLevel);
+            stringify(ss, *value, prettyIndent, internalIndentLevel);
+            if (++value == end) {
+                break;
+            }
+            ss.put(',');
+        }
+    }
+    startNewLine(ss, prettyIndent, indentLevel);
+    ss.put(']');
+}
+
+/* static */
+void UniValue::stringify(Stream& ss, std::string_view string, const unsigned int prettyIndent, const unsigned int indentLevel)
+{
+    ss.put('"');
+    jsonEscape(ss, string);
+    ss.put('"');
 }

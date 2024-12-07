@@ -1,131 +1,87 @@
 // Copyright (c) 2015 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCHEDULER_H
-#define BITCOIN_SCHEDULER_H
+#pragma once
 
-#include <attributes.h>
 #include <sync.h>
-#include <threadsafety.h>
 
 #include <chrono>
-#include <condition_variable>
-#include <cstddef>
 #include <functional>
 #include <list>
 #include <map>
-#include <thread>
-#include <utility>
 
-/**
- * Simple class for background tasks that should be run periodically or once
- * "after a while"
- *
- * Usage:
- *
- * CScheduler* s = new CScheduler();
- *  * Assuming a: void doSomething() { }
- * s->scheduleFromNow(doSomething, std::chrono::milliseconds{11});
- * s->scheduleFromNow([=] { this->func(argument); },
- *                    std::chrono::milliseconds{3});
- * std::thread *t = new std::thread([?] { s->serviceQueue(); });
- *
- * ... then at program shutdown, make sure to call stop() to clean up the
- * thread(s) running serviceQueue:
- * s->stop();
- * t->join();
- * delete t;
- * delete s; // Must be done after thread is interrupted/joined.
- */
+//
+// Simple class for background tasks that should be run periodically or once
+// "after a while"
+//
+// Usage:
+//
+// CScheduler* s = new CScheduler();
+// s->scheduleFromNow(doSomething, 11); // Assuming a: void doSomething(int) { }
+// s->scheduleFromNow(std::bind(Class::func, this, argument), 3);
+// s->scheduleFromNow([this](int argument) { this->func(argument); }, 3);
+// std::thread t = std::thread(CScheduler::serviceQueue, s);
+//
+// ... then at program shutdown, clean up the thread running serviceQueue:
+// t.join();
+//
+
 class CScheduler {
 public:
     CScheduler();
     ~CScheduler();
 
-    std::thread m_service_thread;
+    using Function = std::function<void()>;
+    using Predicate = std::function<bool()>;
 
-    typedef std::function<void()> Function;
-    typedef std::function<bool()> Predicate;
+    // Call func at/after time t
+    void schedule(Function f, std::chrono::system_clock::time_point t = std::chrono::system_clock::now());
 
-    /** Call func at/after time t */
-    void schedule(Function f, std::chrono::steady_clock::time_point t)
-        EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex);
+    // Convenience method: call f once deltaMilliSeconds from now
+    void scheduleFromNow(Function f, int64_t deltaMilliSeconds);
 
-    /** Call f once after the delta has passed */
-    void scheduleFromNow(Function f, std::chrono::milliseconds delta)
-        EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex) {
-        schedule(std::move(f), std::chrono::steady_clock::now() + delta);
-    }
-
-    /**
-     * Repeat p until it return false. First run is after delta has passed once.
-     *
-     * The timing is not exact: Every time p is finished, it is rescheduled to
-     * run again after delta. If you need more accurate scheduling, don't use
-     * this method.
-     */
-    void scheduleEvery(Predicate p, std::chrono::milliseconds delta)
-        EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex);
+    // Another convenience method: call p approximately every deltaMilliSeconds
+    // forever, starting deltaMilliSeconds from now untill p returns false. To
+    // be more precise: every time p is finished, it is rescheduled to run
+    // deltaMilliSeconds later. If you need more accurate scheduling, don't use
+    // this method.
+    void scheduleEvery(Predicate p, int64_t deltaMilliSeconds);
 
     /**
      * Mock the scheduler to fast forward in time.
      * Iterates through items on taskQueue and reschedules them
      * to be delta_seconds sooner.
      */
-    void MockForward(std::chrono::seconds delta_seconds)
-        EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex);
+    void MockForward(std::chrono::seconds delta_seconds);
 
-    /**
-     * Services the queue 'forever'. Should be run in a thread.
-     */
-    void serviceQueue() EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex);
+    // To keep things as simple as possible, there is no unschedule.
 
-    /**
-     * Tell any threads running serviceQueue to stop as soon as the current
-     * task is done
-     */
-    void stop() EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex) {
-        WITH_LOCK(newTaskMutex, stopRequested = true);
-        newTaskScheduled.notify_all();
-        if (m_service_thread.joinable()) {
-            m_service_thread.join();
-        }
-    }
+    // Services the queue 'forever'. Should be run in a thread.
+    void serviceQueue();
 
-    /**
-     * Tell any threads running serviceQueue to stop when there is no work
-     * left to be done
-     */
-    void StopWhenDrained() EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex) {
-        WITH_LOCK(newTaskMutex, stopWhenEmpty = true);
-        newTaskScheduled.notify_all();
-        if (m_service_thread.joinable()) {
-            m_service_thread.join();
-        }
-    }
+    // Tell any threads running serviceQueue to stop as soon as they're done
+    // servicing whatever task they're currently servicing (drain=false) or when
+    // there is no work left to be done (drain=true)
+    void stop(bool drain = false);
 
-    /**
-     * Returns number of tasks waiting to be serviced,
-     * and first and last task times
-     */
-    size_t getQueueInfo(std::chrono::steady_clock::time_point &first,
-                        std::chrono::steady_clock::time_point &last) const
-        EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex);
+    // Returns number of tasks waiting to be serviced, and first and last task
+    // times
+    size_t getQueueInfo(std::chrono::system_clock::time_point &first,
+                        std::chrono::system_clock::time_point &last) const;
 
-    /** Returns true if there are threads actively running in serviceQueue() */
-    bool AreThreadsServicingQueue() const
-        EXCLUSIVE_LOCKS_REQUIRED(!newTaskMutex);
+    // Returns true if there are threads actively running in serviceQueue()
+    bool AreThreadsServicingQueue() const;
 
 private:
-    mutable Mutex newTaskMutex;
+    std::multimap<std::chrono::system_clock::time_point, Function> taskQueue;
     std::condition_variable newTaskScheduled;
-    std::multimap<std::chrono::steady_clock::time_point, Function>
-        taskQueue GUARDED_BY(newTaskMutex);
-    int nThreadsServicingQueue GUARDED_BY(newTaskMutex){0};
-    bool stopRequested GUARDED_BY(newTaskMutex){false};
-    bool stopWhenEmpty GUARDED_BY(newTaskMutex){false};
-    bool shouldStop() const EXCLUSIVE_LOCKS_REQUIRED(newTaskMutex) {
+    mutable std::mutex newTaskMutex;
+    int nThreadsServicingQueue;
+    bool stopRequested;
+    bool stopWhenEmpty;
+    bool shouldStop() const {
         return stopRequested || (stopWhenEmpty && taskQueue.empty());
     }
 };
@@ -142,20 +98,17 @@ private:
  */
 class SingleThreadedSchedulerClient {
 private:
-    CScheduler &m_scheduler;
+    CScheduler *m_pscheduler;
 
-    Mutex m_callbacks_mutex;
-    std::list<std::function<void()>>
-        m_callbacks_pending GUARDED_BY(m_callbacks_mutex);
-    bool m_are_callbacks_running GUARDED_BY(m_callbacks_mutex) = false;
+    RecursiveMutex m_cs_callbacks_pending;
+    std::list<CScheduler::Function> m_callbacks_pending GUARDED_BY(m_cs_callbacks_pending);
+    bool m_are_callbacks_running GUARDED_BY(m_cs_callbacks_pending) = false;
 
-    void MaybeScheduleProcessQueue()
-        EXCLUSIVE_LOCKS_REQUIRED(!m_callbacks_mutex);
-    void ProcessQueue() EXCLUSIVE_LOCKS_REQUIRED(!m_callbacks_mutex);
+    void MaybeScheduleProcessQueue();
+    void ProcessQueue();
 
 public:
-    explicit SingleThreadedSchedulerClient(CScheduler &scheduler LIFETIMEBOUND)
-        : m_scheduler{scheduler} {}
+    explicit SingleThreadedSchedulerClient(CScheduler *pschedulerIn) : m_pscheduler(pschedulerIn) {}
 
     /**
      * Add a callback to be executed. Callbacks are executed serially
@@ -163,17 +116,12 @@ public:
      * Practially, this means that callbacks can behave as if they are executed
      * in order by a single thread.
      */
-    void AddToProcessQueue(std::function<void()> func)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_callbacks_mutex);
+    void AddToProcessQueue(CScheduler::Function func);
 
-    /**
-     * Processes all remaining queue members on the calling thread, blocking
-     * until queue is empty.
-     * Must be called after the CScheduler has no remaining processing threads!
-     */
-    void EmptyQueue() EXCLUSIVE_LOCKS_REQUIRED(!m_callbacks_mutex);
+    // Processes all remaining queue members on the calling thread, blocking
+    // until queue is empty. Must be called after the CScheduler has no
+    // remaining processing threads!
+    void EmptyQueue();
 
-    size_t CallbacksPending() EXCLUSIVE_LOCKS_REQUIRED(!m_callbacks_mutex);
+    size_t CallbacksPending();
 };
-
-#endif // BITCOIN_SCHEDULER_H

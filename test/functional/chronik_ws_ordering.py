@@ -11,7 +11,6 @@ from test_framework.address import (
     P2SH_OP_TRUE,
     SCRIPTSIG_OP_TRUE,
 )
-from test_framework.avatools import AvaP2PInterface, can_find_inv_in_poll
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut
 from test_framework.p2p import P2PDataStore
@@ -30,12 +29,6 @@ class ChronikWsOrdering(BitcoinTestFramework):
         self.extra_args = [
             [
                 "-chronik",
-                "-avaproofstakeutxodustthreshold=1000000",
-                "-avaproofstakeutxoconfirmations=1",
-                "-avacooldown=0",
-                "-avaminquorumstake=0",
-                "-avaminavaproofsnodecount=0",
-                "-persistavapeers=0",
                 "-acceptnonstdtxn=1",
             ]
         ]
@@ -87,12 +80,15 @@ class ChronikWsOrdering(BitcoinTestFramework):
                 )
             )
 
-        def ws_block_msg(block_hash: str, block_height: int, msg_type):
+        def ws_block_msg(
+            block_hash: str, block_height: int, block_timestamp: int, msg_type
+        ):
             return pb.WsMsg(
                 block=pb.MsgBlock(
                     msg_type=msg_type,
                     block_hash=bytes.fromhex(block_hash)[::-1],
                     block_height=block_height,
+                    block_timestamp=block_timestamp,
                 )
             )
 
@@ -115,27 +111,6 @@ class ChronikWsOrdering(BitcoinTestFramework):
         # 1 non-standard script
         other_script = CScript(bytes.fromhex("deadbeef"))
 
-        # Build a fake Avalanche quorum of nodes.
-        def get_quorum():
-            return [
-                node.add_p2p_connection(AvaP2PInterface(self, node))
-                for _ in range(0, QUORUM_NODE_COUNT)
-            ]
-
-        # Pick one node from the quorum for polling.
-        quorum = get_quorum()
-
-        def is_quorum_established():
-            return node.getavalancheinfo()["ready_to_poll"] is True
-
-        def is_finalblock(blockhash):
-            can_find_inv_in_poll(quorum, int(blockhash, 16))
-            return node.isfinalblock(blockhash)
-
-        self.wait_until(is_quorum_established)
-        tip = node.getbestblockhash()
-        self.wait_until(lambda: is_finalblock(tip))
-
         # Subscribe to all scripts in the test, and to blocks
         ws = chronik.ws(timeout=240)
         chronik_sub_script(ws, node, "p2pkh", bytes.fromhex(ifp_hash))
@@ -149,27 +124,15 @@ class ChronikWsOrdering(BitcoinTestFramework):
         finalized_blockhash = self.generatetoaddress(
             node, 1, ADDRESS_ECREG_UNSPENDABLE
         )[0]
-        cb_txid = node.getblock(finalized_blockhash)["tx"][0]
-        assert not node.isfinalblock(finalized_blockhash)
-        assert not node.isfinaltransaction(cb_txid, finalized_blockhash)
         finalized_height = node.getblock(finalized_blockhash, 1)["height"]
+        block_timestamp = node.getblock(finalized_blockhash, 1)["time"]
 
         assert_equal(
             ws.recv(),
-            ws_block_msg(finalized_blockhash, finalized_height, pb.BLK_CONNECTED),
+            ws_block_msg(
+                finalized_blockhash, finalized_height, block_timestamp, pb.BLK_CONNECTED
+            ),
         )
-
-        with node.assert_debug_log(
-            [f"Avalanche finalized block {finalized_blockhash}"]
-        ):
-            self.wait_until(lambda: is_finalblock(finalized_blockhash))
-
-        assert_equal(
-            ws.recv(),
-            ws_block_msg(finalized_blockhash, finalized_height, pb.BLK_FINALIZED),
-        )
-
-        assert node.isfinaltransaction(cb_txid, finalized_blockhash)
 
         # Send 1 tx to p2pkh
         p2pkh_txid = send_to_script(p2pkh_script)
@@ -194,11 +157,14 @@ class ChronikWsOrdering(BitcoinTestFramework):
         # Mine all txs in a block
         next_blockhash = self.generatetoaddress(node, 1, ADDRESS_ECREG_UNSPENDABLE)[0]
         assert_equal(node.getblockcount(), finalized_height + 1)
+        block_timestamp = node.getblock(next_blockhash, 1)["time"]
 
         # BLK_CONNECTED always comes first
         assert_equal(
             ws.recv(),
-            ws_block_msg(next_blockhash, finalized_height + 1, pb.BLK_CONNECTED),
+            ws_block_msg(
+                next_blockhash, finalized_height + 1, block_timestamp, pb.BLK_CONNECTED
+            ),
         )
 
         # Then come the TX_CONFIRMED msgs, but in indeterministic order.
@@ -223,21 +189,6 @@ class ChronikWsOrdering(BitcoinTestFramework):
 
         assert_equal(actual_ws_msgs, expected_ws_msgs)
 
-        # Identical for finalization
-        self.wait_until(lambda: is_finalblock(next_blockhash))
-        # BLK_FINALIZED always comes first
-        assert_equal(
-            ws.recv(),
-            ws_block_msg(next_blockhash, finalized_height + 1, pb.BLK_FINALIZED),
-        )
-        # TX_FINALIZED come next
-        actual_ws_msgs = [ws.recv() for i in range(len(p2sh_txids) + 3)]
-        actual_ws_msgs = sorted(actual_ws_msgs, key=lambda m: m.tx.txid[::-1])
-
-        expected_ws_txids = sorted([p2pkh_txid, p2pk_txid, other_txid] + p2sh_txids)
-        expected_ws_msgs = [
-            ws_tx_msg(txid, pb.TX_FINALIZED) for txid in expected_ws_txids
-        ]
 
 
 if __name__ == "__main__":

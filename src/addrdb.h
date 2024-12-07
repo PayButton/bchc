@@ -1,31 +1,23 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_ADDRDB_H
-#define BITCOIN_ADDRDB_H
+#pragma once
 
-#include <net_types.h>
+#include <fs.h>
+#include <netaddress.h>
 #include <serialize.h>
-#include <util/fs.h>
-#include <util/result.h>
 
-#include <memory>
+#include <map>
 #include <string>
-#include <vector>
+#include <unordered_map>
+#include <utility>
 
-class ArgsManager;
-class AddrMan;
-class CAddress;
+class CAddrMan;
 class CDataStream;
 class CChainParams;
-
-bool DumpPeerAddresses(const CChainParams &chainParams, const ArgsManager &args,
-                       const AddrMan &addr);
-/** Only used by tests. */
-void ReadFromStream(const CChainParams &chainParams, AddrMan &addr,
-                    CDataStream &ssPeers);
 
 class CBanEntry {
 public:
@@ -42,9 +34,8 @@ public:
     }
 
     SERIALIZE_METHODS(CBanEntry, obj) {
-        //! For backward compatibility
-        uint8_t ban_reason = 2;
-        READWRITE(obj.nVersion, obj.nCreateTime, obj.nBanUntil, ban_reason);
+        uint8_t banReason = 2; //! for backward compatibility
+        READWRITE(obj.nVersion, obj.nCreateTime, obj.nBanUntil, banReason);
     }
 
     void SetNull() {
@@ -52,6 +43,91 @@ public:
         nCreateTime = 0;
         nBanUntil = 0;
     }
+};
+
+// Used by the Ban Manager singleton. We maintain two ban tables:
+// - An address-level ban table for fast address-based lookup in critical code
+//   paths. All automatically generated bans for misbehaving nodes are on the
+//   address-level and end up in this hash table.
+// - A subnet-level ban table which is for manually added bans (RPC & Qt
+//   console explicit bans).
+//
+// Note that the legacy ban table was a single std::map which presented a
+// unified view of all bans, and we support this view (for Qt UI code and
+// listbanned RPC) via the `toAggregatedMap()` method.
+struct BanTables {
+    using Addresses = std::unordered_map<CNetAddr, CBanEntry, SaltedNetAddrHasher>;
+    using SubNets = std::unordered_map<CSubNet, CBanEntry, SaltedSubNetHasher>;
+    using AggregatedMap = std::map<CSubNet, CBanEntry>;
+
+    // Per-IP address level bans; this map can grow potentially large so we
+    // should try and avoid linear searches on it in performance-critical paths
+    Addresses addresses;
+    // Subnet level bans; always manually added (usually is smaller),
+    // linear searches are usually ok.
+    SubNets subNets;
+
+    // Returns a sorted, unified "view" of the ban list with all IP-level bans
+    // mapped to subnets as: ipv4/32 ipv6/128. This is the format given to the
+    // Qt UI and to RPC clients issuing a `listbanned` RPC command.
+    AggregatedMap toAggregatedMap() const;
+
+    void clear() { addresses.clear(); subNets.clear(); }
+    size_t size() const { return addresses.size() + subNets.size(); }
+
+    // -- Serialization / Deserialization --
+    //
+    using SerPair = std::pair<CSubNet, CBanEntry>;
+
+    // Serialization to disk is done this way intentionally to support the
+    // legacy format which serialized as a single std::map<CSubNet, CBanEntry>.
+    template <typename Stream> void Serialize(Stream &s) const {
+        WriteCompactSize(s, size());
+        for (const auto &entry : subNets)
+            ::Serialize(s, entry);
+        for (const auto &entry : addresses) {
+            const SerPair pair{
+                std::piecewise_construct,
+                std::forward_as_tuple(entry.first),
+                std::forward_as_tuple(entry.second)
+            };
+            ::Serialize(s, pair);
+        }
+    }
+
+    // Deserialization is "as-if" this were a serialized std::map (support for
+    // the legacy ban table format).
+    template <typename Stream> void Unserialize(Stream &s) {
+        clear();
+        auto size = ReadCompactSize(s);
+        while (size-- > 0) {
+            SerPair entry;
+            ::Unserialize(s, entry);
+            // sub-nets that are basically single-ip's: ipv4/32 & ipv6/128 get
+            // put in the addresses table, and real actual subnets in the
+            // subNets table.
+            if (entry.first.IsSingleIP())
+                addresses.emplace(std::piecewise_construct,
+                                  std::forward_as_tuple(entry.first.Network()),
+                                  std::forward_as_tuple(entry.second));
+            else
+                subNets.insert(std::move(entry));
+        }
+    }
+};
+
+
+/** Access to the (IP) address database (peers.dat) */
+class CAddrDB {
+private:
+    fs::path pathAddr;
+    const CChainParams &chainParams;
+
+public:
+    CAddrDB(const CChainParams &chainParams);
+    bool Write(const CAddrMan &addr);
+    bool Read(CAddrMan &addr);
+    bool Read(CAddrMan &addr, CDataStream &ssPeers);
 };
 
 /** Access to the banlist database (banlist.dat) */
@@ -62,33 +138,6 @@ private:
 
 public:
     CBanDB(fs::path ban_list_path, const CChainParams &_chainParams);
-    bool Write(const banmap_t &banSet);
-    bool Read(banmap_t &banSet);
+    bool Write(const BanTables &banSet);
+    bool Read(BanTables &banSet);
 };
-
-/** Returns an error string on failure */
-util::Result<std::unique_ptr<AddrMan>>
-LoadAddrman(const CChainParams &chainparams, const std::vector<bool> &asmap,
-            const ArgsManager &args);
-
-/**
- * Dump the anchor IP address database (anchors.dat)
- *
- * Anchors are last known outgoing block-relay-only peers that are
- * tried to re-connect to on startup.
- */
-void DumpAnchors(const CChainParams &chainParams,
-                 const fs::path &anchors_db_path,
-                 const std::vector<CAddress> &anchors);
-
-/**
- * Read the anchor IP address database (anchors.dat)
- *
- * Deleting anchors.dat is intentional as it avoids renewed peering to anchors
- * after an unclean shutdown and thus potential exploitation of the anchor peer
- * policy.
- */
-std::vector<CAddress> ReadAnchors(const CChainParams &chainParams,
-                                  const fs::path &anchors_db_path);
-
-#endif // BITCOIN_ADDRDB_H

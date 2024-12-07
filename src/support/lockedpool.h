@@ -1,11 +1,11 @@
 // Copyright (c) 2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SUPPORT_LOCKEDPOOL_H
-#define BITCOIN_SUPPORT_LOCKEDPOOL_H
+#pragma once
 
-#include <cstddef>
+#include <cstdint>
 #include <list>
 #include <map>
 #include <memory>
@@ -22,7 +22,7 @@ public:
     /**
      * Allocate and lock memory pages.
      * If len is not a multiple of the system page size, it is rounded up.
-     * Returns nullptr in case of allocation failure.
+     * Returns 0 in case of allocation failure.
      *
      * If locking the memory pages could not be accomplished it will still
      * return the memory, however the lockingSuccess flag will be false.
@@ -234,8 +234,8 @@ class LockedPoolManager : public LockedPool {
 public:
     /** Return the current instance, or create it once */
     static LockedPoolManager &Instance() {
-        static std::once_flag init_flag;
-        std::call_once(init_flag, LockedPoolManager::CreateInstance);
+        std::call_once(LockedPoolManager::init_flag,
+                       LockedPoolManager::CreateInstance);
         return *LockedPoolManager::_instance;
     }
 
@@ -248,6 +248,5 @@ private:
     static bool LockingFailed();
 
     static LockedPoolManager *_instance;
+    static std::once_flag init_flag;
 };
-
-#endif // BITCOIN_SUPPORT_LOCKEDPOOL_H

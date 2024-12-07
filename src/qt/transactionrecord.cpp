@@ -1,4 +1,6 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2022 The Bitcoin Cash Node developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,14 +9,15 @@
 #include <cashaddrenc.h>
 #include <chain.h>       // For MAX_BLOCK_TIME_GAP
 #include <chainparams.h> // For Params()
+#include <consensus/consensus.h>
 #include <interfaces/wallet.h>
 #include <key_io.h>
-#include <wallet/ismine.h>
+#include <timedata.h>
+#include <validation.h>
 
 #include <QDateTime>
 
 #include <cstdint>
-#include <variant>
 
 /**
  * Return positive answer if transaction should be shown in list.
@@ -47,6 +50,7 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
             isminetype mine = wtx.txout_is_mine[i];
             if (mine) {
                 TransactionRecord sub(txid, nTime);
+                CTxDestination address;
                 sub.idx = i; // vout index
                 sub.credit = txout.nValue;
                 sub.involvesWatchAddress = mine & ISMINE_WATCH_ONLY;
@@ -93,19 +97,11 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
 
         if (fAllFromMe && fAllToMe) {
             // Payment to self
-            std::string address;
-            for (auto it = wtx.txout_address.begin();
-                 it != wtx.txout_address.end(); ++it) {
-                if (it != wtx.txout_address.begin()) {
-                    address += ", ";
-                }
-                address += EncodeCashAddr(*it, Params());
-            }
             Amount nChange = wtx.change;
-            parts.append(TransactionRecord(
-                txid, nTime, TransactionRecord::SendToSelf, address,
-                -(nDebit - nChange), nCredit - nChange));
 
+            parts.append(TransactionRecord(
+                txid, nTime, TransactionRecord::SendToSelf, "",
+                -1 * (nDebit - nChange), (nCredit - nChange)));
             // maybe pass to TransactionRecord as constructor argument
             parts.last().involvesWatchAddress = involvesWatchAddress;
         } else if (fAllFromMe) {
@@ -126,7 +122,7 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
                     continue;
                 }
 
-                if (!std::get_if<CNoDestination>(&wtx.txout_address[nOut])) {
+                if (!boost::get<CNoDestination>(&wtx.txout_address[nOut])) {
                     // Sent to Bitcoin Address
                     sub.type = TransactionRecord::SendToAddress;
                     sub.address =
@@ -157,13 +153,13 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
             parts.last().involvesWatchAddress = involvesWatchAddress;
         }
     }
+    parts.last().dsProof = wtx.dsProof;
 
     return parts;
 }
 
 void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
-                                     const BlockHash &block_hash, int numBlocks,
-                                     int64_t block_time) {
+                                     int numBlocks, int64_t block_time) {
     // Determine transaction status
 
     // Sort order, unrecorded transactions sort to the top
@@ -171,9 +167,22 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
                                wtx.is_coinbase ? 1 : 0, wtx.time_received, idx);
     status.countsForBalance = wtx.is_trusted && !(wtx.blocks_to_maturity > 0);
     status.depth = wtx.depth_in_main_chain;
-    status.m_cur_block_hash = block_hash;
+    status.cur_num_blocks = numBlocks;
 
-    if (type == TransactionRecord::Generated) {
+    const bool up_to_date =
+        (int64_t(QDateTime::currentMSecsSinceEpoch()) / 1000 - block_time <
+         MAX_BLOCK_TIME_GAP);
+    if (wtx.is_double_spent) {
+        status.status = TransactionStatus::DoubleSpent;
+    } else if (up_to_date && !wtx.is_final) {
+        if (wtx.lock_time < LOCKTIME_THRESHOLD) {
+            status.status = TransactionStatus::OpenUntilBlock;
+            status.open_for = wtx.lock_time - numBlocks;
+        } else {
+            status.status = TransactionStatus::OpenUntilDate;
+            status.open_for = wtx.lock_time;
+        }
+    } else if (type == TransactionRecord::Generated) {
         // For generated transactions, determine maturity
         if (wtx.blocks_to_maturity > 0) {
             status.status = TransactionStatus::Immature;
@@ -202,9 +211,8 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
     }
 }
 
-bool TransactionRecord::statusUpdateNeeded(const BlockHash &block_hash) const {
-    assert(!block_hash.IsNull());
-    return status.m_cur_block_hash != block_hash;
+bool TransactionRecord::statusUpdateNeeded(int numBlocks) const {
+    return status.cur_num_blocks != numBlocks;
 }
 
 QString TransactionRecord::getTxID() const {

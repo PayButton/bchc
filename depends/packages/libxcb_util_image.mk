@@ -19,7 +19,7 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  $(MAKE) -j$(JOBS)
+  $(MAKE)
 endef
 
 define $(package)_stage_cmds

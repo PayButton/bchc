@@ -1,4 +1,5 @@
-// Copyright (c) 2012-2019 The Bitcoin Core developers
+// Copyright (c) 2012-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,17 +7,18 @@
 
 #include <random.h>
 #include <script/sigcache.h>
+#include <sync.h>
 
-#include <deque>
-#include <mutex>
-#include <shared_mutex>
-#include <thread>
-#include <vector>
-
-#include <test/util/random.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
+
+#include <algorithm>
+#include <deque>
+#include <functional>
+#include <list>
+#include <thread>
+#include <vector>
 
 /**
  * Test Suite for CuckooCache
@@ -39,7 +41,7 @@ BOOST_AUTO_TEST_SUITE(cuckoocache_tests)
  */
 struct TestMapElement {
     struct KeyType {
-        std::array<uint8_t, 28> data{{0}};
+        std::array<uint8_t, 28> data = {};
 
         KeyType() = default;
         KeyType(const KeyType &rhs) = default;
@@ -48,14 +50,13 @@ struct TestMapElement {
             std::copy(k.begin() + 4, k.end(), data.begin());
         }
 
-        KeyType &operator=(const KeyType &rhs) = default;
-
         bool operator==(const KeyType &rhs) const { return rhs.data == data; }
+        KeyType &operator=(const KeyType &) noexcept = default; // prevent -Wdeprecated-copy
     };
 
 private:
     KeyType key;
-    uint32_t value;
+    uint32_t value{};
 
 public:
     TestMapElement() = default;
@@ -66,7 +67,7 @@ public:
     TestMapElement(const KeyType &keyIn, uint32_t valueIn)
         : key(keyIn), value(valueIn) {}
 
-    TestMapElement &operator=(const TestMapElement &e) = default;
+    TestMapElement &operator=(const TestMapElement &) noexcept = default; // prevent -Wdeprecated-copy
 
     const KeyType &getKey() const { return key; }
     uint32_t getValue() const { return value; }
@@ -117,7 +118,7 @@ using TestMapKey = TestMapElement::KeyType;
  * There are no repeats in the first 400000 insecure_GetRandHash calls
  */
 BOOST_AUTO_TEST_CASE(test_cuckoocache_no_fakes) {
-    SeedInsecureRand(SeedRand::ZEROS);
+    SeedInsecureRand(true);
     CuckooCacheSet cc{};
     size_t megabytes = 4;
     cc.setup_bytes(megabytes << 20);
@@ -144,7 +145,7 @@ BOOST_AUTO_TEST_CASE(test_cuckoocache_no_fakes) {
  */
 template <typename Cache>
 static double test_cache(size_t megabytes, double load) {
-    SeedInsecureRand(SeedRand::ZEROS);
+    SeedInsecureRand(true);
     std::vector<uint256> hashes;
     Cache set{};
     size_t bytes = megabytes * (1 << 20);
@@ -195,7 +196,7 @@ static double normalize_hit_rate(double hits, double load) {
     return hits * std::max(load, 1.0);
 }
 
-/** Check the hit rate on loads ranging from 0.1 to 1.6 */
+/** Check the hit rate on loads ranging from 0.1 to 2.0 */
 BOOST_AUTO_TEST_CASE(cuckoocache_hit_rate_ok) {
     /**
      * Arbitrarily selected Hit Rate threshold that happens to work for this
@@ -220,7 +221,7 @@ BOOST_AUTO_TEST_CASE(cuckoocache_hit_rate_ok) {
  */
 template <typename Cache> static void test_cache_erase(size_t megabytes) {
     double load = 1;
-    SeedInsecureRand(SeedRand::ZEROS);
+    SeedInsecureRand(true);
     std::vector<uint256> hashes;
     Cache set{};
     size_t bytes = megabytes * (1 << 20);
@@ -288,12 +289,12 @@ BOOST_AUTO_TEST_CASE(cuckoocache_erase_ok) {
 template <typename Cache>
 static void test_cache_erase_parallel(size_t megabytes) {
     double load = 1;
-    SeedInsecureRand(SeedRand::ZEROS);
+    SeedInsecureRand(true);
     std::vector<uint256> hashes;
     Cache set{};
-    size_t bytes = megabytes * (1 << 20);
+    const size_t bytes = megabytes * (1 << 20);
     set.setup_bytes(bytes);
-    uint32_t n_insert = static_cast<uint32_t>(load * (bytes / sizeof(uint256)));
+    const uint32_t n_insert = static_cast<uint32_t>(load * (bytes / sizeof(uint256)));
     hashes.resize(n_insert);
     for (uint32_t i = 0; i < n_insert; ++i) {
         hashes[i] = InsecureRand256();
@@ -304,11 +305,11 @@ static void test_cache_erase_parallel(size_t megabytes) {
      * "future proofed".
      */
     std::vector<uint256> hashes_insert_copy = hashes;
-    std::shared_mutex mtx;
+    SharedMutex mtx;
 
     {
         /** Grab lock to make sure we release inserts */
-        std::unique_lock<std::shared_mutex> l(mtx);
+        LOCK(mtx);
         /** Insert the first half */
         for (uint32_t i = 0; i < (n_insert / 2); ++i) {
             set.insert(hashes_insert_copy[i]);
@@ -319,27 +320,32 @@ static void test_cache_erase_parallel(size_t megabytes) {
      * Spin up 3 threads to run contains with erase.
      */
     std::vector<std::thread> threads;
+    std::list<bool> thread_ok_flags;  // we use a list here to avoid the strangeness of std::vector<bool>
     /** Erase the first quarter */
     for (uint32_t x = 0; x < 3; ++x) {
         /** Each thread is emplaced with x copy-by-value */
-        threads.emplace_back([&, x] {
-            std::shared_lock<std::shared_mutex> l(mtx);
+        threads.emplace_back([n_insert, &set, &mtx, &hashes](uint32_t thread_num, bool &flag) {
+            LOCK_SHARED(mtx);
             size_t ntodo = (n_insert / 4) / 3;
-            size_t start = ntodo * x;
-            size_t end = ntodo * (x + 1);
+            size_t start = ntodo * thread_num;
+            size_t end = ntodo * (thread_num + 1);
             for (uint32_t i = start; i < end; ++i) {
-                bool contains = set.contains(hashes[i], true);
-                assert(contains);
+                // cannot do BOOST_CHECK in a thread, so we just update the per-thread flag here
+                flag = set.contains(hashes[i], true) && flag;
             }
-        });
+        }, x, std::ref(thread_ok_flags.emplace_back(true)));
     }
 
     /** Wait for all threads to finish */
     for (std::thread &t : threads) {
         t.join();
     }
+
+    /** Make sure that none of the threads got a false return from set.contains() above */
+    BOOST_CHECK(std::all_of(thread_ok_flags.begin(), thread_ok_flags.end(), [](bool b) { return b; }));
+
     /** Grab lock to make sure we observe erases */
-    std::unique_lock<std::shared_mutex> l(mtx);
+    LOCK(mtx);
     /** Insert the second half */
     for (uint32_t i = (n_insert / 2); i < n_insert; ++i) {
         set.insert(hashes_insert_copy[i]);
@@ -398,7 +404,7 @@ template <typename Cache> static void test_cache_generations() {
     // iterations with non-deterministic values, so it isn't "overfit" to the
     // specific entropy in FastRandomContext(true) and implementation of the
     // cache.
-    SeedInsecureRand(SeedRand::ZEROS);
+    SeedInsecureRand(true);
 
     // block_activity models a chunk of network activity. n_insert elements are
     // added to the cache. The first and last n/4 are stored for removal later
@@ -493,7 +499,7 @@ BOOST_AUTO_TEST_CASE(cuckoocache_map_element) {
 }
 
 BOOST_AUTO_TEST_CASE(cuckoocache_map) {
-    SeedInsecureRand(SeedRand::ZEROS);
+    SeedInsecureRand(true);
 
     // 4k cache.
     CuckooCacheMap cm{};

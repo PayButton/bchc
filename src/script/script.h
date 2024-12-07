@@ -1,14 +1,17 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCRIPT_SCRIPT_H
-#define BITCOIN_SCRIPT_SCRIPT_H
+#pragma once
 
-#include <attributes.h>
 #include <crypto/common.h>
 #include <prevector.h>
+#include <script/bigint.h>
+#include <script/script_error.h>
+#include <script/script_num_encoding.h>
+#include <script/vm_limits.h> // for constants MAX_SCRIPT_SIZE, MAX_STACK_SIZE, etc
 #include <serialize.h>
 
 #include <cassert>
@@ -16,28 +19,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-// Maximum number of bytes pushable to the stack
-static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520;
-
-// Maximum number of non-push operations per script
-static const int MAX_OPS_PER_SCRIPT = 201;
-
-// Maximum number of public keys per multisig
-static const int MAX_PUBKEYS_PER_MULTISIG = 20;
-
-// Maximum script length in bytes
-static const int MAX_SCRIPT_SIZE = 10000;
-
-// Maximum number of values on script interpreter stack
-static const int MAX_STACK_SIZE = 1000;
-
-// Threshold for nLockTime: below this value it is interpreted as block number,
-// otherwise as UNIX timestamp. Thresold is Tue Nov 5 00:53:20 1985 UTC
-static const unsigned int LOCKTIME_THRESHOLD = 500000000;
 
 template <typename T> std::vector<uint8_t> ToByteVector(const T &in) {
     return std::vector<uint8_t>(in.begin(), in.end());
@@ -186,20 +171,52 @@ enum opcodetype {
     // additional byte string operations
     OP_REVERSEBYTES = 0xbc,
 
+    // Available codepoints
+    // 0xbd,
+    // 0xbe,
+    // 0xbf,
+
+    // Native Introspection opcodes
+    OP_INPUTINDEX = 0xc0,
+    OP_ACTIVEBYTECODE = 0xc1,
+    OP_TXVERSION = 0xc2,
+    OP_TXINPUTCOUNT = 0xc3,
+    OP_TXOUTPUTCOUNT = 0xc4,
+    OP_TXLOCKTIME = 0xc5,
+    OP_UTXOVALUE = 0xc6,
+    OP_UTXOBYTECODE = 0xc7,
+    OP_OUTPOINTTXHASH = 0xc8,
+    OP_OUTPOINTINDEX = 0xc9,
+    OP_INPUTBYTECODE = 0xca,
+    OP_INPUTSEQUENCENUMBER = 0xcb,
+    OP_OUTPUTVALUE = 0xcc,
+    OP_OUTPUTBYTECODE = 0xcd,
+
+    // Native Introspection of tokens (SCRIPT_ENABLE_TOKENS must be set)
+    OP_UTXOTOKENCATEGORY = 0xce,
+    OP_UTXOTOKENCOMMITMENT = 0xcf,
+    OP_UTXOTOKENAMOUNT = 0xd0,
+    OP_OUTPUTTOKENCATEGORY = 0xd1,
+    OP_OUTPUTTOKENCOMMITMENT = 0xd2,
+    OP_OUTPUTTOKENAMOUNT = 0xd3,
+
+    OP_RESERVED3 = 0xd4,
+    OP_RESERVED4 = 0xd5,
+
     // The first op_code value after all defined opcodes
     FIRST_UNDEFINED_OP_VALUE,
 
-    // multi-byte opcodes
-    OP_PREFIX_BEGIN = 0xf0,
-    OP_PREFIX_END = 0xf7,
+    // Invalid opcode if executed, but used for special token prefix if at
+    // position 0 in scriptPubKey. See: primitives/token.h
+    SPECIAL_TOKEN_PREFIX = 0xef,
 
-    OP_INVALIDOPCODE = 0xff,
+    INVALIDOPCODE = 0xff,   ///< Not a real OPCODE!
 };
 
 // Maximum value that an opcode can be
 static const unsigned int MAX_OPCODE = FIRST_UNDEFINED_OP_VALUE - 1;
 
-std::string GetOpName(opcodetype opcode);
+const char *GetOpName(opcodetype opcode);
 
 /**
  * Check whether the given stack element data would be minimally pushed using
@@ -207,168 +224,390 @@ std::string GetOpName(opcodetype opcode);
  */
 bool CheckMinimalPush(const std::vector<uint8_t> &data, opcodetype opcode);
 
-class scriptnum_error : public std::runtime_error {
-public:
-    explicit scriptnum_error(const std::string &str)
-        : std::runtime_error(str) {}
+struct scriptnum_error : std::runtime_error {
+    ScriptError scriptError;
+    explicit
+    scriptnum_error(const std::string &str, ScriptError err = ScriptError::UNKNOWN)
+        : std::runtime_error(str), scriptError(err)
+    {}
 };
 
-class CScriptNum {
+/**
+ * Base template class for CScriptNum and ScriptInt. This class implements
+ * some of the functionality common to both subclasses, and also captures
+ * some enforcement of the consensus rules related to:
+ *
+ * UsesBigInt == false:
+ *  - valid 64 bit range (INT64_MIN is forbidden)
+ *  - trapping for arithmetic operations that overflow or that produce a
+ *    result equal to INT64_MIN
+ *
+ * UsesBigInt == true:
+ *  - numbers that would exceed MAXIMUM_ELEMENT_SIZE_BIG_INT [-2^79999 + 1, 2^79999 - 1].
+ */
+template <typename Derived, bool UsesBigInt = false>
+struct ScriptIntBase {
+
+    using IntType = std::conditional_t<UsesBigInt, BigInt, int64_t>;
+
+protected:
+    IntType value_;
+
+    static
+    bool valid64BitRange(int64_t x) {
+        return x > std::numeric_limits<int64_t>::min();
+    }
+
+    /* 10KB limit or +/- 2^79999 - 1; If changing this also update script_error.cpp to denote the new valid range. */
+    static constexpr size_t MAXIMUM_ELEMENT_SIZE_BIG_INT = may2025::MAX_SCRIPT_ELEMENT_SIZE;
+
+    static
+    const BigInt &bigIntConsensusMax() {
+        constexpr size_t maxBits = MAXIMUM_ELEMENT_SIZE_BIG_INT * 8u - 1;
+        static const BigInt ret = BigInt(2).pow(maxBits) - 1u;
+        return ret;
+    }
+
+    static
+    const BigInt &bigIntConsensusMin() {
+        static const BigInt ret = -bigIntConsensusMax();
+        return ret;
+    }
+
+    // Used if UsesBigInt == true; checks that `x` is within the MAXIMUM_ELEMENT_SIZE_BIG_INT range.
+    static
+    bool validBigIntRange(BigInt const& x) {
+        return x >= bigIntConsensusMin() && x <= bigIntConsensusMax();
+    }
+
+    static
+    std::optional<Derived> derivedIfInRange(IntType x) {
+        if constexpr (UsesBigInt) {
+            if ( ! validBigIntRange(x)) {
+                return std::nullopt;
+            }
+        } else {
+            if ( ! valid64BitRange(x)) {
+                return std::nullopt;
+            }
+        }
+        return Derived(std::move(x));
+    }
+
+    explicit
+    ScriptIntBase(IntType x) noexcept(!UsesBigInt)
+        : value_(std::move(x))
+    {}
+
+public:
     /**
+     * Factory method to safely construct an instance from a raw int64_t
+     * or BigInt.
+     *
+     * If UsesBigInt==false: We enforce a strict range of
+     * [INT64_MIN+1, INT64_MAX].
+     *
+     * If UsesBigInt==true: We enforce the range that corresponds to a
+     * big integer whose serialized size does not exceed
+     * MAXIMUM_ELEMENT_SIZE_BIG_INT bytes [-2^79999 + 1, 2^79999 - 1].
+     */
+    static
+    std::optional<Derived> fromInt(IntType x) noexcept(!UsesBigInt) {
+        return derivedIfInRange(std::move(x));
+    }
+
+    /// Performance/convenience optimization: Construct an instance from a raw
+    /// int64_t or BigInt, where the caller already knows that the supplied value
+    /// is in range.
+    static
+    Derived fromIntUnchecked(IntType x) noexcept(!UsesBigInt) {
+        return Derived(std::move(x));
+    }
+
+    bool operator==(IntType const& x) const noexcept { return value_ == x; }
+    bool operator!=(IntType const& x) const noexcept { return value_ != x; }
+    bool operator<=(IntType const& x) const noexcept { return value_ <= x; }
+    bool operator< (IntType const& x) const noexcept { return value_ < x; }
+    bool operator>=(IntType const& x) const noexcept { return value_ >= x; }
+    bool operator> (IntType const& x) const noexcept { return value_ > x; }
+    bool operator==(Derived const& x) const noexcept { return operator==(x.value_); }
+    bool operator!=(Derived const& x) const noexcept { return operator!=(x.value_); }
+    bool operator<=(Derived const& x) const noexcept { return operator<=(x.value_); }
+    bool operator< (Derived const& x) const noexcept { return operator<(x.value_); }
+    bool operator>=(Derived const& x) const noexcept { return operator>=(x.value_); }
+    bool operator> (Derived const& x) const noexcept { return operator>(x.value_); }
+
+    // Arithmetic operations
+    std::optional<Derived> safeAdd(IntType const& x) const noexcept(!UsesBigInt) {
+        if constexpr (UsesBigInt) {
+            return derivedIfInRange(value_ + x);
+        } else {
+            int64_t val;
+            bool const res = __builtin_add_overflow(value_, x, &val);
+            if (res) {
+                return std::nullopt;
+            }
+
+            return derivedIfInRange(val);
+        }
+    }
+
+    std::optional<Derived> safeAdd(Derived const& x) const noexcept(!UsesBigInt) {
+        return safeAdd(x.value_);
+    }
+
+    std::optional<Derived> safeSub(IntType const& x) const noexcept(!UsesBigInt) {
+        if constexpr (UsesBigInt) {
+            return derivedIfInRange(value_ - x);
+        } else {
+            int64_t val;
+            bool const res = __builtin_sub_overflow(value_, x, &val);
+            if (res) {
+                return std::nullopt;
+            }
+            return derivedIfInRange(val);
+        }
+    }
+
+    std::optional<Derived> safeSub(Derived const& x) const noexcept(!UsesBigInt) {
+        return safeSub(x.value_);
+    }
+
+    std::optional<Derived> safeMul(IntType const& x) const noexcept(!UsesBigInt) {
+        if constexpr (UsesBigInt) {
+            return derivedIfInRange(value_ * x);
+        } else {
+            int64_t val;
+            bool const res = __builtin_mul_overflow(value_, x, &val);
+            if (res) {
+                return std::nullopt;
+            }
+            return derivedIfInRange(val);
+        }
+    }
+
+    std::optional<Derived> safeMul(Derived const& x) const noexcept(!UsesBigInt) {
+        return safeMul(x.value_);
+    }
+
+    Derived operator/(IntType const& x) const noexcept(!UsesBigInt) {
+        if constexpr ( ! UsesBigInt) {
+            if (x == -1 && ! valid64BitRange(value_)) {
+                // Guard against overflow, which can't normally happen unless class is misused
+                // by the fromIntUnchecked() factory method (may happen in tests).
+                // This will return INT64_MIN which is what ARM & x86 does anyway for INT64_MIN / -1.
+                return Derived(value_);
+            }
+        }
+        return Derived(value_ / x);
+    }
+
+    Derived operator/(Derived const& x) const noexcept(!UsesBigInt) {
+        return operator/(x.value_);
+    }
+
+    Derived operator%(IntType const& x) const noexcept(!UsesBigInt) {
+        if constexpr ( ! UsesBigInt) {
+            if (x == -1 && ! valid64BitRange(value_)) {
+                // INT64_MIN % -1 is UB in C++, but mathematically it would yield 0
+                return Derived(0);
+            }
+        }
+        return Derived(value_ % x);
+    }
+
+    Derived operator%(Derived const& x) const noexcept(!UsesBigInt) {
+        return operator%(x.value_);
+    }
+
+    // Bitwise operations
+    std::optional<Derived> safeBitwiseAnd(IntType const& x) const noexcept(!UsesBigInt) {
+        return derivedIfInRange(value_ & x);
+    }
+
+    std::optional<Derived> safeBitwiseAnd(Derived const& x) const noexcept(!UsesBigInt) {
+        return safeBitwiseAnd(x.value_);
+    }
+
+    Derived operator-() const noexcept(!UsesBigInt) {
+        if constexpr (UsesBigInt) {
+            return Derived(-value_);
+        } else {
+            // Defensive programming: -INT64_MIN is UB
+            return Derived(valid64BitRange(value_) ? -value_ : value_);
+        }
+    }
+
+    std::conditional_t<UsesBigInt, std::optional<int64_t>, int64_t>
+    getint64() const noexcept {
+        if constexpr (UsesBigInt) {
+            return value_.getInt();
+        } else {
+            return value_;
+        }
+    }
+};
+
+/**
+ * A ScriptInt is a "write-only" class designed to be used with
+ * CScript in order to tell the CScript serialization engine to
+ * represent small numbers in a more compact way.  It is
+ * interchangeable with CScriptNum for serialization purposes,
+ * except that for small numbers in the range [-1, 16] ScriptInt
+ * ends up serializing slightly smaller, saving one byte.
+ *
+ * This is because the CScript class serializes ScriptInt differently
+ * than it does CScriptNum for integers in the range [-1, 16].
+ *
+ * Whereas CScriptNum is always pushed as an encapsulated byte blob,
+ * ScriptInt instances in the range [-1, 16] are pushed as raw bytes
+ * directly (with some offsetting around OP_16 as the anchor).
+ *
+ * For numbers outside the [-1, 16] range, ScriptInt serializes
+ * identically to CScriptNum.
+ *
+ * When the resulting script is interpreted by the script interpreter,
+ * any values that are serialized in this more compact way are internally
+ * transformed and normalized into CScriptNum instances on the stack
+ * (see interpreter.cpp).  So the purpose of this class is simply as
+ * a "type tag" to tell CScript to serialize in the more compact form,
+ * if possible.
+ *
+ * In short, these two serialize differently:
+ *
+ *   CScript() << CScriptNum::fromIntUnchecked(10); // [PUSH(1) 0x0a] (2 bytes)
+ *   CScript() << ScriptInt::fromIntUnchecked(10);  // [0x5a] (1 byte)
+ *
+ * However, for integers outside the range [-1, 16], the serialization
+ * is identical:
+ *
+ *   CScript() << CScriptNum::fromIntUnchecked(42); // [PUSH(1) 0x2a] (2 bytes)
+ *   CScript() << ScriptInt::fromIntUnchecked(42);  // Same as above
+ *
+ * Note that due to quirks in how CScriptNum serializes 0, these two
+ * also serialize identically:
+ *
+ *   CScript() << CScriptNum::fromIntUnchecked(0);  // [PUSH(0)] == [0x00] (1 byte)
+ *   CScript() << ScriptInt::fromIntUnchecked(0);   // [0x00] (1 byte)
+ */
+struct ScriptInt : ScriptIntBase<ScriptInt> {
+    friend ScriptIntBase;
+
+private:
+    explicit
+    ScriptInt(int64_t x) noexcept
+        : ScriptIntBase(x)
+    {}
+};
+
+template<typename Derived, bool UsesBigInt>
+struct ScriptNumCommon : ScriptIntBase<Derived, UsesBigInt>, ScriptNumEncoding {
+
+    using Base = ScriptIntBase<Derived, UsesBigInt>;
+
+    int32_t getint32() const noexcept {
+        if (this->value_ > std::numeric_limits<int32_t>::max()) {
+            return std::numeric_limits<int32_t>::max();
+        } else if (this->value_ < std::numeric_limits<int32_t>::min()) {
+            return std::numeric_limits<int32_t>::min();
+        }
+        if constexpr (UsesBigInt) {
+            // Dereferencing the optional here is guaranteed to not throw due to the check at the top of this function.
+            return this->value_.getInt().value();
+        } else {
+            return this->value_;
+        }
+    }
+
+protected:
+    using Base::ScriptIntBase;
+    using IntType = typename Base::IntType;
+
+    static
+    IntType fromBytes(std::vector<uint8_t> const& vch, bool fRequireMinimal, size_t maxIntegerSize) {
+        if (vch.size() > maxIntegerSize) {
+            throw scriptnum_error("script number overflow",
+                                  maxIntegerSize > 8u ? ScriptError::INVALID_NUMBER_RANGE_BIG_INT
+                                                      : maxIntegerSize == 8u ? ScriptError::INVALID_NUMBER_RANGE_64_BIT
+                                                                             : ScriptError::INVALID_NUMBER_RANGE);
+        }
+        if (fRequireMinimal && ! IsMinimallyEncoded(vch, maxIntegerSize)) {
+            throw scriptnum_error("non-minimally encoded script number", ScriptError::MINIMALNUM);
+        }
+        return Derived::set_vch(vch);
+    }
+
+};
+
+/**
+ * CScriptNum is used to encapsulate signed numbers as byte blobs in a CScript.
+ * Its specified range is over [INT64_MIN+1, INT64_MAX].  Attempts to encapsulate
+ * a number outside this range are undefined behavior.
+ *
+ * Note that before Upgrade8, consensus rules forbade a CScriptNum significantly
+ * outside the 32 bit range (with some corner case exceptions for temporaries in
+ * the interpreter).
+ *
+ * After Upgrade8 we allow 64 bit numbers in the range [INT64_MIN+1, INT64_MAX].
+ * We forbid INT64_MIN, however, since this would encode to a 9 byte CScriptNum
+ * and we prefer to keep things simple and restrict CScriptNum to 8 bytes.
+ *
+ * A CScriptNum gets serialized to a non-2's complement notation, in little-endian
+ * byte order. The most significant bit (in the last, most significant byte) is
+ * the sign bit. The other bits preceeding it (little endian) are the magnitude.
+ *
+ * This means that INT64_MIN would get serialized to 9 bytes in this encoding,
+ * which is why it is forbidden (since we prefer to limit them to 8 serialized
+ * bytes, for simplicity's sake).
+ */
+struct CScriptNum : ScriptNumCommon<CScriptNum, false> {
+    /**
+     * Pre Upgrade8 Hardfork semantics:
      * Numeric opcodes (OP_1ADD, etc) are restricted to operating on 4-byte
      * integers. The semantics are subtle, though: operands must be in the range
-     * [-2^31 +1...2^31 -1], but results may overflow (and are valid as long as
+     * [-2^31 + 1, 2^31 - 1], but results may overflow (and are valid as long as
      * they are not used in a subsequent numeric operation). CScriptNum enforces
      * those semantics by storing results as an int64 and allowing out-of-range
      * values to be returned as a vector of bytes but throwing an exception if
      * arithmetic is done or the result is interpreted as an integer.
+     *
+     * Post Upgrade8 Hardfork semantics:
+     * Arithmetic opcodes (OP_1ADD, etc) are restricted to operating on 8-byte signed integers.
+     * Negative integers are encoding using sign and magnitude, so operands must be in the range
+     * [-2^63 + 1, 2^63 - 1].
+     * Arithmetic operators throw an exception if overflow is detected.
      */
+
+    friend ScriptIntBase;
+    friend ScriptNumCommon;
+
+    static constexpr size_t MAXIMUM_ELEMENT_SIZE_32_BIT = 4;
+    static constexpr size_t MAXIMUM_ELEMENT_SIZE_64_BIT = 8;
+
+private:
+    explicit
+    CScriptNum(int64_t x) noexcept
+        : ScriptNumCommon(x)
+    {}
+
 public:
-    static const size_t MAXIMUM_ELEMENT_SIZE = 4;
+    explicit
+    CScriptNum(const std::vector<uint8_t> &vch, bool fRequireMinimal, size_t maxIntegerSize)
+        : ScriptNumCommon(fromBytes(vch, fRequireMinimal, maxIntegerSize))
+    {}
 
-    explicit CScriptNum(const int64_t &n) { m_value = n; }
+    std::vector<uint8_t> getvch() const { return serialize(value_); }
 
-    explicit CScriptNum(const std::vector<uint8_t> &vch, bool fRequireMinimal,
-                        const size_t nMaxNumSize = MAXIMUM_ELEMENT_SIZE) {
-        if (vch.size() > nMaxNumSize) {
-            throw scriptnum_error("script number overflow");
-        }
-        if (fRequireMinimal && !IsMinimallyEncoded(vch, nMaxNumSize)) {
-            throw scriptnum_error("non-minimally encoded script number");
-        }
-        m_value = set_vch(vch);
-    }
-
-    static bool IsMinimallyEncoded(
-        const std::vector<uint8_t> &vch,
-        const size_t nMaxNumSize = CScriptNum::MAXIMUM_ELEMENT_SIZE);
-
-    static bool MinimallyEncode(std::vector<uint8_t> &data);
-
-    inline bool operator==(const int64_t &rhs) const { return m_value == rhs; }
-    inline bool operator!=(const int64_t &rhs) const { return m_value != rhs; }
-    inline bool operator<=(const int64_t &rhs) const { return m_value <= rhs; }
-    inline bool operator<(const int64_t &rhs) const { return m_value < rhs; }
-    inline bool operator>=(const int64_t &rhs) const { return m_value >= rhs; }
-    inline bool operator>(const int64_t &rhs) const { return m_value > rhs; }
-
-    inline bool operator==(const CScriptNum &rhs) const {
-        return operator==(rhs.m_value);
-    }
-    inline bool operator!=(const CScriptNum &rhs) const {
-        return operator!=(rhs.m_value);
-    }
-    inline bool operator<=(const CScriptNum &rhs) const {
-        return operator<=(rhs.m_value);
-    }
-    inline bool operator<(const CScriptNum &rhs) const {
-        return operator<(rhs.m_value);
-    }
-    inline bool operator>=(const CScriptNum &rhs) const {
-        return operator>=(rhs.m_value);
-    }
-    inline bool operator>(const CScriptNum &rhs) const {
-        return operator>(rhs.m_value);
-    }
-
-    inline CScriptNum operator+(const int64_t &rhs) const {
-        return CScriptNum(m_value + rhs);
-    }
-    inline CScriptNum operator-(const int64_t &rhs) const {
-        return CScriptNum(m_value - rhs);
-    }
-    inline CScriptNum operator+(const CScriptNum &rhs) const {
-        return operator+(rhs.m_value);
-    }
-    inline CScriptNum operator-(const CScriptNum &rhs) const {
-        return operator-(rhs.m_value);
-    }
-
-    inline CScriptNum operator/(const int64_t &rhs) const {
-        return CScriptNum(m_value / rhs);
-    }
-    inline CScriptNum operator/(const CScriptNum &rhs) const {
-        return operator/(rhs.m_value);
-    }
-
-    inline CScriptNum operator%(const int64_t &rhs) const {
-        return CScriptNum(m_value % rhs);
-    }
-    inline CScriptNum operator%(const CScriptNum &rhs) const {
-        return operator%(rhs.m_value);
-    }
-
-    inline CScriptNum &operator+=(const CScriptNum &rhs) {
-        return operator+=(rhs.m_value);
-    }
-    inline CScriptNum &operator-=(const CScriptNum &rhs) {
-        return operator-=(rhs.m_value);
-    }
-
-    inline CScriptNum operator&(const int64_t &rhs) const {
-        return CScriptNum(m_value & rhs);
-    }
-    inline CScriptNum operator&(const CScriptNum &rhs) const {
-        return operator&(rhs.m_value);
-    }
-
-    inline CScriptNum &operator&=(const CScriptNum &rhs) {
-        return operator&=(rhs.m_value);
-    }
-
-    inline CScriptNum operator-() const {
-        assert(m_value != std::numeric_limits<int64_t>::min());
-        return CScriptNum(-m_value);
-    }
-
-    inline CScriptNum &operator=(const int64_t &rhs) {
-        m_value = rhs;
-        return *this;
-    }
-
-    inline CScriptNum &operator+=(const int64_t &rhs) {
-        assert(
-            rhs == 0 ||
-            (rhs > 0 && m_value <= std::numeric_limits<int64_t>::max() - rhs) ||
-            (rhs < 0 && m_value >= std::numeric_limits<int64_t>::min() - rhs));
-        m_value += rhs;
-        return *this;
-    }
-
-    inline CScriptNum &operator-=(const int64_t &rhs) {
-        assert(
-            rhs == 0 ||
-            (rhs > 0 && m_value >= std::numeric_limits<int64_t>::min() + rhs) ||
-            (rhs < 0 && m_value <= std::numeric_limits<int64_t>::max() + rhs));
-        m_value -= rhs;
-        return *this;
-    }
-
-    inline CScriptNum &operator&=(const int64_t &rhs) {
-        m_value &= rhs;
-        return *this;
-    }
-
-    int getint() const {
-        if (m_value > std::numeric_limits<int>::max()) {
-            return std::numeric_limits<int>::max();
-        } else if (m_value < std::numeric_limits<int>::min()) {
-            return std::numeric_limits<int>::min();
-        }
-        return m_value;
-    }
-
-    std::vector<uint8_t> getvch() const { return serialize(m_value); }
-
-    static std::vector<uint8_t> serialize(const int64_t &value) {
+    static
+    std::vector<uint8_t> serialize(int64_t value) {
         if (value == 0) {
             return {};
         }
 
         std::vector<uint8_t> result;
         const bool neg = value < 0;
-        uint64_t absvalue = neg ? ~static_cast<uint64_t>(value) + 1
-                                : static_cast<uint64_t>(value);
+        // NB: -INT64_MIN in 2's complement is UB, so we must guard against it here.
+        uint64_t absvalue = neg && valid64BitRange(value) ? -value : value;
 
         while (absvalue) {
             result.push_back(absvalue & 0xff);
@@ -393,7 +632,17 @@ public:
     }
 
 private:
-    static int64_t set_vch(const std::vector<uint8_t> &vch) {
+    static
+    int64_t fromBytes(std::vector<uint8_t> const& vch, bool fRequireMinimal, size_t maxIntegerSize) {
+        if (maxIntegerSize > MAXIMUM_ELEMENT_SIZE_64_BIT) {
+            throw scriptnum_error("maxIntegerSize cannot be greater than 8");
+        }
+        return ScriptNumCommon::fromBytes(vch, fRequireMinimal, maxIntegerSize);
+    }
+
+    ///! Precondition: vch.size() must be <= 8.
+    static
+    int64_t set_vch(const std::vector<uint8_t> &vch) {
         if (vch.empty()) {
             return 0;
         }
@@ -411,8 +660,51 @@ private:
 
         return result;
     }
+};
 
-    int64_t m_value;
+/*
+ * A drop-in replacement for CScriptNum that can represent arbitrarily large integers,
+ * (up to a consensus limit of MAXIMUM_ELEMENT_SIZE_BIG_INT). Internally it uses the BigInt
+ * class which supports arithmetic operations for arbitrary precision integers.
+ *
+ * Aside from not overflowing when doing math beyond 64-bits, this class behaves more or less
+ * identically to the legacy CScriptNum.
+ **/
+struct ScriptBigInt : ScriptNumCommon<ScriptBigInt, true> {
+
+    friend ScriptIntBase;
+    friend ScriptNumCommon;
+
+private:
+    // Called by ScriptIntBase
+    explicit ScriptBigInt(BigInt x)
+        : ScriptNumCommon(std::move(x)) {}
+
+public:
+    explicit
+    ScriptBigInt(const std::vector<uint8_t> &vch, bool fRequireMinimal, size_t maxIntegerSize)
+        : ScriptNumCommon(fromBytes(vch, fRequireMinimal, maxIntegerSize))
+    {}
+
+    std::vector<uint8_t> getvch() const { return value_.serialize(); }
+
+    /// Returns the underlying BigInt; the returned BigInt is not guaranteed to be in valid consensus-legal range
+    /// for pushing to the stack (a situation which may occur in tests).
+    const BigInt &getBigInt() const { return value_; }
+
+    // Promote these base class static protected methods to public (for tests, etc).
+    using ScriptIntBase::validBigIntRange;
+    using ScriptIntBase::bigIntConsensusMin;
+    using ScriptIntBase::bigIntConsensusMax;
+    using ScriptIntBase::MAXIMUM_ELEMENT_SIZE_BIG_INT;
+
+private:
+    // Called by ScriptNumCommon::fromBytes
+    static BigInt set_vch(const std::vector<uint8_t> &vch) {
+        BigInt ret;
+        ret.unserialize(vch);
+        return ret;
+    }
 };
 
 /**
@@ -453,19 +745,27 @@ public:
 
     SERIALIZE_METHODS(CScript, obj) { READWRITEAS(CScriptBase, obj); }
 
-    explicit CScript(int64_t b) { operator<<(b); }
-    explicit CScript(opcodetype b) { operator<<(b); }
-    explicit CScript(const CScriptNum &b) { operator<<(b); }
-    // delete non-existent constructor to defend against future introduction
-    // e.g. via prevector
-    explicit CScript(const std::vector<uint8_t> &b) = delete;
+    CScript &operator+=(const CScript &b) {
+        reserve(size() + b.size());
+        insert(end(), b.begin(), b.end());
+        return *this;
+    }
 
-    /** Delete non-existent operator to defend against future introduction */
-    CScript &operator<<(const CScript &b) = delete;
+    friend CScript operator+(const CScript &a, const CScript &b) {
+        CScript ret = a;
+        ret += b;
+        return ret;
+    }
 
-    CScript &operator<<(int64_t b) LIFETIMEBOUND { return push_int64(b); }
+    explicit CScript(opcodetype b) {
+        operator<<(b);
+    }
+    explicit CScript(const CScriptNum &b) {
+        operator<<(b);
+    }
+    explicit CScript(const std::vector<uint8_t> &b) { operator<<(b); }
 
-    CScript &operator<<(opcodetype opcode) LIFETIMEBOUND {
+    CScript &operator<<(opcodetype opcode) {
         if (opcode < 0 || opcode > 0xff) {
             throw std::runtime_error("CScript::operator<<(): invalid opcode");
         }
@@ -473,12 +773,21 @@ public:
         return *this;
     }
 
-    CScript &operator<<(const CScriptNum &b) LIFETIMEBOUND {
+    CScript &operator<<(const CScriptNum &b) {
         *this << b.getvch();
         return *this;
     }
 
-    CScript &operator<<(const std::vector<uint8_t> &b) LIFETIMEBOUND {
+    CScript &operator<<(const ScriptBigInt &b) {
+        *this << b.getvch();
+        return *this;
+    }
+
+    CScript& operator<<(ScriptInt const& x) {
+        return push_int64(x.getint64());
+    }
+
+    CScript &operator<<(const std::vector<uint8_t> &b) {
         if (b.size() < OP_PUSHDATA1) {
             insert(end(), uint8_t(b.size()));
         } else if (b.size() <= 0xff) {
@@ -496,6 +805,15 @@ public:
             insert(end(), _data, _data + sizeof(_data));
         }
         insert(end(), b.begin(), b.end());
+        return *this;
+    }
+
+    CScript &operator<<(const CScript &b) {
+        // I'm not sure if this should push the script or concatenate scripts.
+        // If there's ever a use for pushing a script onto a script, delete this
+        // member fn.
+        assert(!"Warning: Pushing a CScript onto a CScript with << is probably "
+                "not intended, use + to concatenate!");
         return *this;
     }
 
@@ -526,7 +844,22 @@ public:
         return (opcodetype)(OP_1 + n - 1);
     }
 
-    bool IsPayToScriptHash() const;
+    /**
+     * @brief IsPayToScriptHash - Returns true if this script follows the p2sh_20 (or p2sh_32) scriptPubKey template.
+     * @param flags - If SCRIPT_ENABLE_P2SH_32 is in flags, then we will also detect p2sh_32, otherwise we will never
+     *                detect p2sh_32 and return false for any p2sh_32 scriptPubKeys.
+     * @param hash_out - Optional out param. If not nullptr, and if the return value is true, then *hash_out will
+     *                   receive a copy of the actual hash bytes embedded in the scriptPubKey. Note that *hash_out is
+     *                   not modified on false return, and is only modified on true return.
+     * @param is_p2sh_32 - Optional out param.  If not nullptr, *is_p2sh_32 is set to false always unless
+     *                     SCRIPT_ENABLE_P2SH_32 is set in `flags` and the scriptPubKey in question follows the p2sh_32,
+     *                     scriptPubKey template, in which case *is_p2sh_32 is set to true.
+     * @return true if the script is p2sh_20, or true if flags contains SCRIPT_ENABLE_P2SH_32 and the script is p2sh_32,
+     *         false otherwise.
+     */
+    bool IsPayToScriptHash(uint32_t flags, std::vector<uint8_t> *hash_out = nullptr, bool *is_p2sh_32 = nullptr) const;
+    bool IsPayToPubKeyHash() const;
+    bool IsCommitment(const std::vector<uint8_t> &data) const;
     bool IsWitnessProgram(int &version, std::vector<uint8_t> &program) const;
     bool IsWitnessProgram() const;
 
@@ -538,16 +871,20 @@ public:
     bool IsPushOnly() const;
 
     /** Check if the script contains valid OP_CODES */
-    bool HasValidOps() const;
+    bool HasValidOps(uint32_t scriptFlags) const;
 
     /**
      * Returns whether the script is guaranteed to fail at execution, regardless
      * of the initial stack. This allows outputs to be pruned instantly when
      * entering the UTXO set.
+     *
+     * Note that this function is called by Consensus::CheckTxInputs in
+     * tx_verify.cpp, so modifying this function's pre/post conditions will
+     * modify consensus!
      */
     bool IsUnspendable() const {
-        return (size() > 0 && *begin() == OP_RETURN) ||
-               (size() > MAX_SCRIPT_SIZE);
+        const auto sz = size();
+        return (sz > 0u && *begin() == OP_RETURN) || (sz > MAX_SCRIPT_SIZE);
     }
 
     void clear() {
@@ -557,4 +894,10 @@ public:
     }
 };
 
-#endif // BITCOIN_SCRIPT_SCRIPT_H
+class CReserveScript {
+public:
+    CScript reserveScript;
+    virtual void KeepScript() {}
+    CReserveScript() {}
+    virtual ~CReserveScript() {}
+};

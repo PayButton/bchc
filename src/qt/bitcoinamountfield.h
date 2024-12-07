@@ -1,11 +1,11 @@
 // Copyright (c) 2011-2015 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_BITCOINAMOUNTFIELD_H
-#define BITCOIN_QT_BITCOINAMOUNTFIELD_H
+#pragma once
 
-#include <consensus/amount.h>
+#include <amount.h>
 
 #include <QWidget>
 
@@ -26,20 +26,8 @@ class BitcoinAmountField : public QWidget {
 public:
     explicit BitcoinAmountField(QWidget *parent = nullptr);
 
-    Amount value(bool *value = nullptr) const;
+    Amount value(bool *valid = nullptr) const;
     void setValue(const Amount value);
-
-    /**
-     * If allow empty is set to false the field will be set to the minimum
-     * allowed value if left empty.
-     */
-    void SetAllowEmpty(bool allow);
-
-    /** Set the minimum value in satoshis **/
-    void SetMinValue(const Amount &value);
-
-    /** Set the maximum value in satoshis **/
-    void SetMaxValue(const Amount &value);
 
     /** Set single step in satoshis **/
     void setSingleStep(const Amount step);
@@ -72,7 +60,7 @@ Q_SIGNALS:
     void valueChanged();
 
 protected:
-    /** Intercept focus-in event and ',' key presses */
+    /** Intercept focus-in event and decimal separator key presses */
     bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
@@ -82,5 +70,3 @@ private:
 private Q_SLOTS:
     void unitChanged(int idx);
 };
-
-#endif // BITCOIN_QT_BITCOINAMOUNTFIELD_H

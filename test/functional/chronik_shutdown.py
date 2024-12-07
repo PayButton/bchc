@@ -20,6 +20,7 @@ from test_framework.messages import COutPoint, CTransaction, CTxIn, CTxOut, msg_
 from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_TRUE, CScript
 from test_framework.test_framework import BitcoinTestFramework
+from test_framework.util import wait_until
 
 
 class ChronikShutdown(BitcoinTestFramework):
@@ -37,7 +38,7 @@ class ChronikShutdown(BitcoinTestFramework):
         node = self.nodes[0]
         node.setmocktime(mocktime)
         peer = node.add_p2p_connection(P2PDataStore())
-        self.wait_until(lambda: peer.is_connected, timeout=10)
+        wait_until(lambda: peer.is_connected, timeout=10)
 
         last_block_hash = GENESIS_BLOCK_HASH
         coinbase_txs = []

@@ -25,7 +25,7 @@ include(BrewHelper)
 find_brew_prefix(_MiniUPnPc_BREW_HINT miniupnpc)
 
 find_package(PkgConfig)
-pkg_check_modules(PC_MiniUPnPc QUIET miniupnpc)
+pkg_check_modules(PC_MiniUPnPc QUIET libqrencode)
 
 find_path(MiniUPnPc_INCLUDE_DIR
 	NAMES miniupnpc.h
@@ -71,6 +71,5 @@ find_package_handle_standard_args(MiniUPnPc
 	REQUIRED_VARS
 		MiniUPnPc_INCLUDE_DIR
 	VERSION_VAR MiniUPnPc_VERSION
-	REASON_FAILURE_MESSAGE "if the UPnP feature is not required, it can be skipped by passing -DENABLE_UPNP=OFF to the cmake command line"
 	HANDLE_COMPONENTS
 )

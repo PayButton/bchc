@@ -1,34 +1,30 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_LOGGING_H
-#define BITCOIN_LOGGING_H
+#pragma once
 
-#include <threadsafety.h>
+#include <fs.h>
 #include <tinyformat.h>
-#include <util/fs.h>
-#include <util/string.h>
 
 #include <atomic>
 #include <cstdint>
-#include <functional>
 #include <list>
 #include <mutex>
 #include <string>
+#include <utility>
 
 static const bool DEFAULT_LOGTIMEMICROS = false;
 static const bool DEFAULT_LOGIPS = false;
 static const bool DEFAULT_LOGTIMESTAMPS = true;
 static const bool DEFAULT_LOGTHREADNAMES = false;
-static const bool DEFAULT_LOGSOURCELOCATIONS = false;
 
 extern bool fLogIPs;
 extern const char *const DEFAULT_DEBUGLOGFILE;
 
-struct LogCategory {
+struct CLogCategoryActive {
     std::string category;
     bool active;
 };
@@ -43,7 +39,7 @@ enum LogFlags : uint32_t {
     HTTP = (1 << 3),
     BENCH = (1 << 4),
     ZMQ = (1 << 5),
-    WALLETDB = (1 << 6),
+    DB = (1 << 6),
     RPC = (1 << 7),
     ESTIMATEFEE = (1 << 8),
     ADDRMAN = (1 << 9),
@@ -58,29 +54,29 @@ enum LogFlags : uint32_t {
     COINDB = (1 << 18),
     QT = (1 << 19),
     LEVELDB = (1 << 20),
-    VALIDATION = (1 << 21),
-    AVALANCHE = (1 << 22),
-    I2P = (1 << 23),
-    CHRONIK = (1 << 24),
-#ifdef DEBUG_LOCKCONTENTION
-    LOCK = (1 << 25),
-#endif
-    BLOCKSTORE = (1 << 26),
-    NETDEBUG = (1 << 27),
-    TXPACKAGES = (1 << 28),
-    ALL = ~uint32_t(0),
+    FINALIZATION = (1 << 21),
+    PARKING = (1 << 22),
+    DSPROOF = (1 << 23),
+
+    //! Log *all* httpserver request and response data transferred to/from the
+    //! client. Note: Unlike all the other categories, to avoid logs from
+    //! filling up (and from revealing potentially sensitive data), this is
+    //! NOT enabled automatically if using ALL. It must be enabled explicitly.
+    HTTPTRACE = (1 << 24),
+
+    //! For the adjustable blocksize limit algorithm (consensu/abla.*)
+    ABLA = (1 << 25),
+
+    CHRONIK = (1 << 26),
+
+    ALL = ~uint32_t(0) & ~uint32_t(HTTPTRACE),
 };
 
 class Logger {
 private:
-    // Can not use Mutex from sync.h because in debug mode it would cause a
-    // deadlock when a potential deadlock was detected
-    mutable StdMutex m_cs;
-
-    FILE *m_fileout GUARDED_BY(m_cs) = nullptr;
-    std::list<std::string> m_msgs_before_open GUARDED_BY(m_cs);
-    //! Buffer messages before logging can be started.
-    bool m_buffering GUARDED_BY(m_cs) = true;
+    FILE *m_fileout = nullptr;
+    std::mutex m_file_mutex;
+    std::list<std::string> m_msgs_before_open;
 
     /**
      * m_started_new_line is a state variable that will suppress printing of the
@@ -93,11 +89,7 @@ private:
      */
     std::atomic<uint32_t> m_categories{0};
 
-    std::string LogTimestampStr(const std::string &str);
-
-    /** Slots that connect to the print signal */
-    std::list<std::function<void(const std::string &)>>
-        m_print_callbacks GUARDED_BY(m_cs){};
+    void PrependTimestampStr(std::string &str);
 
 public:
     bool m_print_to_console = false;
@@ -106,7 +98,6 @@ public:
     bool m_log_timestamps = DEFAULT_LOGTIMESTAMPS;
     bool m_log_time_micros = DEFAULT_LOGTIMEMICROS;
     bool m_log_threadnames = DEFAULT_LOGTHREADNAMES;
-    bool m_log_sourcelocations = DEFAULT_LOGSOURCELOCATIONS;
 
     fs::path m_file_path;
     std::atomic<bool> m_reopen_file{false};
@@ -114,37 +105,13 @@ public:
     ~Logger();
 
     /** Send a string to the log output */
-    void LogPrintStr(const std::string &str,
-                     const std::string &logging_function,
-                     const std::string &source_file, const int source_line);
+    void LogPrintStr(std::string &&str);
+    void LogPrintStr(const std::string &str) { LogPrintStr(std::string{str}); }
 
     /** Returns whether logs will be written to any output */
-    bool Enabled() const {
-        StdLockGuard scoped_lock(m_cs);
-        return m_buffering || m_print_to_console || m_print_to_file ||
-               !m_print_callbacks.empty();
-    }
+    bool Enabled() const { return m_print_to_console || m_print_to_file; }
 
-    /** Connect a slot to the print signal and return the connection */
-    std::list<std::function<void(const std::string &)>>::iterator
-    PushBackCallback(std::function<void(const std::string &)> fun) {
-        StdLockGuard scoped_lock(m_cs);
-        m_print_callbacks.push_back(std::move(fun));
-        return --m_print_callbacks.end();
-    }
-
-    /** Delete a connection */
-    void DeleteCallback(
-        std::list<std::function<void(const std::string &)>>::iterator it) {
-        StdLockGuard scoped_lock(m_cs);
-        m_print_callbacks.erase(it);
-    }
-
-    /** Start logging (and flush all buffered messages) */
-    bool StartLogging();
-    /** Only for testing */
-    void DisconnectTestLogger();
-
+    bool OpenDebugLog();
     void ShrinkDebugFile();
 
     uint32_t GetCategoryMask() const { return m_categories.load(); }
@@ -156,14 +123,6 @@ public:
 
     /** Return true if log accepts specified category */
     bool WillLogCategory(LogFlags category) const;
-
-    /** Returns a vector of the log categories in alphabetical order. */
-    std::vector<LogCategory> LogCategoriesList() const;
-    /** Returns a string with the log categories in alphabetical order. */
-    std::string LogCategoriesString() const {
-        return Join(LogCategoriesList(), ", ",
-                    [&](const LogCategory &i) { return i.category; });
-    };
 
     /** Default for whether ShrinkDebugFile should be run */
     bool DefaultShrinkDebugFile() const;
@@ -178,6 +137,12 @@ static inline bool LogAcceptCategory(BCLog::LogFlags category) {
     return LogInstance().WillLogCategory(category);
 }
 
+/** Returns a string with the log categories. */
+std::string ListLogCategories();
+
+/** Returns a vector of the active log categories. */
+std::vector<CLogCategoryActive> ListActiveLogCategories();
+
 /** Return true if str parses as a log category and set the flag */
 bool GetLogCategory(BCLog::LogFlags &flag, const std::string &str);
 
@@ -185,9 +150,7 @@ bool GetLogCategory(BCLog::LogFlags &flag, const std::string &str);
 // unconditionally log to debug.log! It should not be the case that an inbound
 // peer can fill up a user's disk with debug.log entries.
 template <typename... Args>
-static inline void
-LogPrintf_(const std::string &logging_function, const std::string &source_file,
-           const int source_line, const char *fmt, const Args &...args) {
+static inline void LogPrintf(const char *fmt, const Args &... args) {
     if (LogInstance().Enabled()) {
         std::string log_msg;
         try {
@@ -199,12 +162,9 @@ LogPrintf_(const std::string &logging_function, const std::string &source_file,
             log_msg = "Error \"" + std::string(fmterr.what()) +
                       "\" while formatting log message: " + fmt;
         }
-        LogInstance().LogPrintStr(log_msg, logging_function, source_file,
-                                  source_line);
+        LogInstance().LogPrintStr(std::move(log_msg));
     }
 }
-
-#define LogPrintf(...) LogPrintf_(__func__, __FILE__, __LINE__, __VA_ARGS__)
 
 // Use a macro instead of a function for conditional logging to prevent
 // evaluating arguments when logging for the category is not enabled.
@@ -222,10 +182,3 @@ LogPrintf_(const std::string &logging_function, const std::string &source_file,
  */
 #define LogPrintfToBeContinued LogPrintf
 #define LogPrintToBeContinued LogPrint
-
-template <typename... Args> bool error(const char *fmt, const Args &...args) {
-    LogPrintf("ERROR: %s\n", tfm::format(fmt, args...));
-    return false;
-}
-
-#endif // BITCOIN_LOGGING_H

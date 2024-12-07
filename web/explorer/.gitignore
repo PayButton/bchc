@@ -1,8 +1,0 @@
-**/target
-*.crt
-.DS_Store
-*.sled
-*.rocksdb
-.cargo
-
-**/config.toml

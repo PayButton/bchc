@@ -1,15 +1,19 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 // NOTE: This file is intended to be customised by the end user, and includes
 // only local node policy logic
 
-#include <coins.h>
-#include <common/system.h>
 #include <policy/policy.h>
+
 #include <script/interpreter.h>
+#include <tinyformat.h>
+#include <util/strencodings.h>
+#include <util/system.h>
+#include <validation.h>
 
 Amount GetDustThreshold(const CTxOut &txout, const CFeeRate &dustRelayFeeIn) {
     /**
@@ -35,15 +39,13 @@ bool IsDust(const CTxOut &txout, const CFeeRate &dustRelayFeeIn) {
     return (txout.nValue < GetDustThreshold(txout, dustRelayFeeIn));
 }
 
-bool IsStandard(const CScript &scriptPubKey,
-                const std::optional<unsigned> &max_datacarrier_bytes,
-                TxoutType &whichType) {
+bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType, uint32_t flags) {
     std::vector<std::vector<uint8_t>> vSolutions;
-    whichType = Solver(scriptPubKey, vSolutions);
+    whichType = Solver(scriptPubKey, vSolutions, flags);
 
-    if (whichType == TxoutType::NONSTANDARD) {
+    if (whichType == TX_NONSTANDARD) {
         return false;
-    } else if (whichType == TxoutType::MULTISIG) {
+    } else if (whichType == TX_MULTISIG) {
         uint8_t m = vSolutions.front()[0];
         uint8_t n = vSolutions.back()[0];
         // Support up to x-of-3 multisig txns as standard
@@ -53,24 +55,15 @@ bool IsStandard(const CScript &scriptPubKey,
         if (m < 1 || m > n) {
             return false;
         }
-    } else if (whichType == TxoutType::NULL_DATA) {
-        if (!max_datacarrier_bytes ||
-            scriptPubKey.size() > *max_datacarrier_bytes) {
-            return false;
-        }
     }
 
     return true;
 }
 
-bool IsStandardTx(const CTransaction &tx,
-                  const std::optional<unsigned> &max_datacarrier_bytes,
-                  bool permit_bare_multisig, const CFeeRate &dust_relay_fee,
-                  std::string &reason) {
-    // Only allow these tx versions, there is no point accepting a tx that
-    // violates the consensus rules
-    if (tx.nVersion > CTransaction::MAX_VERSION ||
-        tx.nVersion < CTransaction::MIN_VERSION) {
+bool IsStandardTx(const CTransaction &tx, std::string &reason, uint32_t flags) {
+    // Note that this standardness check may be safely removed after Upgrade9 activates since at that point nVersion
+    // as 1 or 2 will be enforced via consensus, rather than relay policy.
+    if (tx.nVersion > CTransaction::MAX_STANDARD_VERSION || tx.nVersion < CTransaction::MIN_STANDARD_VERSION) {
         reason = "version";
         return false;
     }
@@ -96,30 +89,36 @@ bool IsStandardTx(const CTransaction &tx,
         }
     }
 
-    unsigned int nDataOut = 0;
-    TxoutType whichType;
+    CScript::size_type nDataSize = 0;
+    txnouttype whichType;
     for (const CTxOut &txout : tx.vout) {
-        if (!::IsStandard(txout.scriptPubKey, max_datacarrier_bytes,
-                          whichType)) {
+        if (!(flags & SCRIPT_ENABLE_TOKENS) && txout.tokenDataPtr) {
+            // Pre-token activation:
+            // Txn has token data that actually deserialized as token data, but tokens are not activated yet.
+            // Treat the txn as non-standard to keep old pre-activation mempool behavior (which would have disallowed
+            // these as non-standard).
+            reason = "txn-tokens-before-activation";
+            return false;
+        }
+
+        if (!::IsStandard(txout.scriptPubKey, whichType, flags)) {
             reason = "scriptpubkey";
             return false;
         }
 
-        if (whichType == TxoutType::NULL_DATA) {
-            nDataOut++;
-        } else if ((whichType == TxoutType::MULTISIG) &&
-                   (!permit_bare_multisig)) {
+        if (whichType == TX_NULL_DATA) {
+            nDataSize += txout.scriptPubKey.size();
+        } else if ((whichType == TX_MULTISIG) && (!fIsBareMultisigStd)) {
             reason = "bare-multisig";
             return false;
-        } else if (IsDust(txout, dust_relay_fee)) {
+        } else if (IsDust(txout, ::dustRelayFee)) {
             reason = "dust";
             return false;
         }
     }
 
-    // only one OP_RETURN txout is permitted
-    if (nDataOut > 1) {
-        reason = "multi-op-return";
+    if (nDataSize > nMaxDatacarrierBytes) {
+        reason = "oversize-op-return";
         return false;
     }
 
@@ -150,11 +149,18 @@ bool AreInputsStandard(const CTransaction &tx, const CCoinsViewCache &mapInputs,
     }
 
     for (const CTxIn &in : tx.vin) {
-        const CTxOut &prev = mapInputs.AccessCoin(in.prevout).GetTxOut();
+        const CTxOut &prev = mapInputs.GetOutputFor(in);
+
+        if (!(flags & SCRIPT_ENABLE_TOKENS) && prev.tokenDataPtr) {
+            // Input happened to have serialized token data but tokens are not activated yet. Reject this txn as
+            // non-standard -- note this input would fail to be spent anyway later on in the pipeline, but we prefer
+            // to tell the caller that the txn is non-standard so as to to emulate the behavior of unupgraded nodes.
+            return false;
+        }
 
         std::vector<std::vector<uint8_t>> vSolutions;
-        TxoutType whichType = Solver(prev.scriptPubKey, vSolutions);
-        if (whichType == TxoutType::NONSTANDARD) {
+        txnouttype whichType = Solver(prev.scriptPubKey, vSolutions, flags);
+        if (whichType == TX_NONSTANDARD) {
             return false;
         }
     }
@@ -162,19 +168,22 @@ bool AreInputsStandard(const CTransaction &tx, const CCoinsViewCache &mapInputs,
     return true;
 }
 
+CFeeRate dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
+uint32_t nBytesPerSigCheck = DEFAULT_BYTES_PER_SIGCHECK;
+
 int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigChecks,
-                                  unsigned int bytes_per_sigCheck) {
-    return std::max(nSize, nSigChecks * bytes_per_sigCheck);
+                                  unsigned int bytes_per_sigcheck) {
+    return std::max(nSize, nSigChecks * bytes_per_sigcheck);
 }
 
 int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigChecks,
-                                  unsigned int bytes_per_sigCheck) {
+                                  unsigned int bytes_per_sigcheck) {
     return GetVirtualTransactionSize(::GetSerializeSize(tx, PROTOCOL_VERSION),
-                                     nSigChecks, bytes_per_sigCheck);
+                                     nSigChecks, bytes_per_sigcheck);
 }
 
 int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigChecks,
-                                       unsigned int bytes_per_sigCheck) {
+                                       unsigned int bytes_per_sigcheck) {
     return GetVirtualTransactionSize(::GetSerializeSize(txin, PROTOCOL_VERSION),
-                                     nSigChecks, bytes_per_sigCheck);
+                                     nSigChecks, bytes_per_sigcheck);
 }

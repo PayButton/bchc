@@ -1,7 +1,0 @@
----
-extends: relaxed
-
-rules:
-  # Some YML files embed a script portion, for which the line length rule would
-  # decrease the readability.
-  line-length: disable

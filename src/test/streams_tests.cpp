@@ -1,94 +1,114 @@
-// Copyright (c) 2012-2019 The Bitcoin Core developers
+// Copyright (c) 2012-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <random.h>
+#include <fs.h>
+#include <prevector.h>
 #include <streams.h>
-#include <util/fs.h>
 
-#include <test/util/random.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(streams_tests, BasicTestingSetup)
 
-BOOST_AUTO_TEST_CASE(streams_vector_writer) {
+template <typename VecT>
+static bool test_generic_vector_writer() {
     uint8_t a(1);
     uint8_t b(2);
     uint8_t bytes[] = {3, 4, 5, 6};
-    std::vector<uint8_t> vch;
+    VecT vch;
+    using T = typename VecT::value_type;
+
+    auto ToUInt8Vec = [](const auto &v) {
+        const uint8_t *begin = reinterpret_cast<const uint8_t *>(v.data());
+        const uint8_t *end = reinterpret_cast<const uint8_t *>(v.data() + v.size());
+        return std::vector<uint8_t>(begin, end);
+    };
 
     // Each test runs twice. Serializing a second time at the same starting
     // point should yield the same results, even if the first test grew the
     // vector.
 
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{1, 2}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{1, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{1, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{1, 2}}));
     vch.clear();
 
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 1, 2}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 1, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 1, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 1, 2}}));
     vch.clear();
 
-    vch.resize(5, 0);
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 1, 2, 0}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 1, 2, 0}}));
+    vch.resize(5, T(0));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 1, 2, 0}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 1, 2, 0}}));
     vch.clear();
 
-    vch.resize(4, 0);
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 3, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 0, 1, 2}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 3, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 0, 1, 2}}));
+    vch.resize(4, T(0));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 3, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 0, 1, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 3, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 0, 1, 2}}));
     vch.clear();
 
-    vch.resize(4, 0);
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 4, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 0, 0, 1, 2}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 4, a, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{0, 0, 0, 0, 1, 2}}));
+    vch.resize(4, T(0));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 4, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 0, 0, 1, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 4, a, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{0, 0, 0, 0, 1, 2}}));
     vch.clear();
 
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, bytes);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{3, 4, 5, 6}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, bytes);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{3, 4, 5, 6}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, bytes);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{3, 4, 5, 6}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 0, bytes);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{3, 4, 5, 6}}));
     vch.clear();
 
-    vch.resize(4, 8);
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, bytes, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{8, 8, 1, 3, 4, 5, 6, 2}}));
-    CVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, bytes, b);
-    BOOST_CHECK((vch == std::vector<uint8_t>{{8, 8, 1, 3, 4, 5, 6, 2}}));
+    vch.resize(4, T(8));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, bytes, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{8, 8, 1, 3, 4, 5, 6, 2}}));
+    GenericVectorWriter(SER_NETWORK, INIT_PROTO_VERSION, vch, 2, a, bytes, b);
+    BOOST_CHECK((ToUInt8Vec(vch) == std::vector<uint8_t>{{8, 8, 1, 3, 4, 5, 6, 2}}));
     vch.clear();
+
+    return true;
 }
 
-BOOST_AUTO_TEST_CASE(streams_vector_reader) {
-    std::vector<uint8_t> vch = {1, 255, 3, 4, 5, 6};
+BOOST_AUTO_TEST_CASE(streams_vector_writer) {
+    BOOST_CHECK(test_generic_vector_writer<std::vector<uint8_t>>());
+    BOOST_CHECK(test_generic_vector_writer<std::vector<char>>());
+    BOOST_CHECK((test_generic_vector_writer<prevector<28, uint8_t>>()));
+}
 
-    SpanReader reader{SER_NETWORK, INIT_PROTO_VERSION, vch};
-    BOOST_CHECK_EQUAL(reader.size(), 6U);
+template <typename VecT>
+static bool test_generic_vector_reader() {
+    VecT vch;
+    for (auto val : {1, 255, 3, 4, 5, 6}) vch.push_back(typename VecT::value_type(val));
+
+    GenericVectorReader reader(SER_NETWORK, INIT_PROTO_VERSION, vch, 0);
+    BOOST_CHECK_EQUAL(reader.size(), 6);
     BOOST_CHECK(!reader.empty());
 
     // Read a single byte as an uint8_t.
     uint8_t a;
     reader >> a;
     BOOST_CHECK_EQUAL(a, 1);
-    BOOST_CHECK_EQUAL(reader.size(), 5U);
+    BOOST_CHECK_EQUAL(reader.size(), 5);
+    BOOST_CHECK_EQUAL(reader.GetPos(), 1);
     BOOST_CHECK(!reader.empty());
 
     // Read a single byte as a (signed) int8_t.
     int8_t b;
     reader >> b;
     BOOST_CHECK_EQUAL(b, -1);
-    BOOST_CHECK_EQUAL(reader.size(), 4U);
+    BOOST_CHECK_EQUAL(reader.size(), 4);
+    BOOST_CHECK_EQUAL(reader.GetPos(), 2);
     BOOST_CHECK(!reader.empty());
 
     // Read a 4 bytes as an unsigned uint32_t.
@@ -96,7 +116,8 @@ BOOST_AUTO_TEST_CASE(streams_vector_reader) {
     reader >> c;
     // 100992003 = 3,4,5,6 in little-endian base-256
     BOOST_CHECK_EQUAL(c, 100992003);
-    BOOST_CHECK_EQUAL(reader.size(), 0U);
+    BOOST_CHECK_EQUAL(reader.size(), 0);
+    BOOST_CHECK_EQUAL(reader.GetPos(), 6);
     BOOST_CHECK(reader.empty());
 
     // Reading after end of byte vector throws an error.
@@ -104,16 +125,41 @@ BOOST_AUTO_TEST_CASE(streams_vector_reader) {
     BOOST_CHECK_THROW(reader >> d, std::ios_base::failure);
 
     // Read a 4 bytes as a (signed) int32_t from the beginning of the buffer.
-    SpanReader new_reader{SER_NETWORK, INIT_PROTO_VERSION, vch};
+    GenericVectorReader new_reader(SER_NETWORK, INIT_PROTO_VERSION, vch, 0);
     new_reader >> d;
     // 67370753 = 1,255,3,4 in little-endian base-256
     BOOST_CHECK_EQUAL(d, 67370753);
-    BOOST_CHECK_EQUAL(new_reader.size(), 2U);
+    BOOST_CHECK_EQUAL(new_reader.size(), 2);
+    BOOST_CHECK_EQUAL(new_reader.GetPos(), 4);
     BOOST_CHECK(!new_reader.empty());
 
     // Reading after end of byte vector throws an error even if the reader is
     // not totally empty.
     BOOST_CHECK_THROW(new_reader >> d, std::ios_base::failure);
+
+    // Read a 4 bytes as a (signed) int32_t from offset 1 of the buffer.
+    GenericVectorReader new_reader2(SER_NETWORK, INIT_PROTO_VERSION, vch, 1);
+    BOOST_CHECK_EQUAL(new_reader2.size(), 5);
+    BOOST_CHECK_EQUAL(new_reader2.GetPos(), 1);
+    new_reader2 >> d;
+    // 84149247 = 255,3,4,5 in little-endian base-256
+    BOOST_CHECK_EQUAL(d, 84149247);
+    BOOST_CHECK_EQUAL(new_reader2.size(), 1);
+    BOOST_CHECK_EQUAL(new_reader2.GetPos(), 5);
+    BOOST_CHECK(!new_reader2.empty());
+    new_reader2 >> a;
+    BOOST_CHECK_EQUAL(a, 0x06u);
+    BOOST_CHECK_EQUAL(new_reader2.size(), 0);
+    BOOST_CHECK_EQUAL(new_reader2.GetPos(), 6);
+    BOOST_CHECK(new_reader2.empty());
+
+    return true;
+}
+
+BOOST_AUTO_TEST_CASE(streams_vector_reader) {
+    BOOST_CHECK(test_generic_vector_reader<std::vector<uint8_t>>());
+    BOOST_CHECK(test_generic_vector_reader<std::vector<char>>());
+    BOOST_CHECK((test_generic_vector_reader<prevector<28, uint8_t>>()));
 }
 
 BOOST_AUTO_TEST_CASE(bitstream_reader_writer) {
@@ -141,19 +187,19 @@ BOOST_AUTO_TEST_CASE(bitstream_reader_writer) {
     BOOST_CHECK_EQUAL(serialized_int2, (uint16_t)0x1072);
 
     BitStreamReader<CDataStream> bit_reader(data_copy);
-    BOOST_CHECK_EQUAL(bit_reader.Read(1), 0U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(2), 2U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(3), 6U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(4), 11U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(5), 1U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(6), 32U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(7), 7U);
-    BOOST_CHECK_EQUAL(bit_reader.Read(16), 30497U);
+    BOOST_CHECK_EQUAL(bit_reader.Read(1), 0);
+    BOOST_CHECK_EQUAL(bit_reader.Read(2), 2);
+    BOOST_CHECK_EQUAL(bit_reader.Read(3), 6);
+    BOOST_CHECK_EQUAL(bit_reader.Read(4), 11);
+    BOOST_CHECK_EQUAL(bit_reader.Read(5), 1);
+    BOOST_CHECK_EQUAL(bit_reader.Read(6), 32);
+    BOOST_CHECK_EQUAL(bit_reader.Read(7), 7);
+    BOOST_CHECK_EQUAL(bit_reader.Read(16), 30497);
     BOOST_CHECK_THROW(bit_reader.Read(8), std::ios_base::failure);
 }
 
 BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
-    std::vector<std::byte> in;
+    std::vector<char> in;
     std::vector<char> expected_xor;
     std::vector<uint8_t> key;
     CDataStream ds(in, 0, 0);
@@ -164,10 +210,10 @@ BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
     key.push_back('\x00');
     ds.Xor(key);
     BOOST_CHECK_EQUAL(std::string(expected_xor.begin(), expected_xor.end()),
-                      ds.str());
+                      std::string(ds.begin(), ds.end()));
 
-    in.push_back(std::byte{0x0f});
-    in.push_back(std::byte{0xf0});
+    in.push_back('\x0f');
+    in.push_back('\xf0');
     expected_xor.push_back('\xf0');
     expected_xor.push_back('\x0f');
 
@@ -180,14 +226,14 @@ BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
     key.push_back('\xff');
     ds.Xor(key);
     BOOST_CHECK_EQUAL(std::string(expected_xor.begin(), expected_xor.end()),
-                      ds.str());
+                      std::string(ds.begin(), ds.end()));
 
     // Multi character key
 
     in.clear();
     expected_xor.clear();
-    in.push_back(std::byte{0xf0});
-    in.push_back(std::byte{0x0f});
+    in.push_back('\xf0');
+    in.push_back('\x0f');
     expected_xor.push_back('\x0f');
     expected_xor.push_back('\x00');
 
@@ -200,340 +246,89 @@ BOOST_AUTO_TEST_CASE(streams_serializedata_xor) {
 
     ds.Xor(key);
     BOOST_CHECK_EQUAL(std::string(expected_xor.begin(), expected_xor.end()),
-                      ds.str());
+                      std::string(ds.begin(), ds.end()));
 }
 
 BOOST_AUTO_TEST_CASE(streams_empty_vector) {
-    std::vector<uint8_t> in;
+    std::vector<char> in;
     CDataStream ds(in, 0, 0);
 
     // read 0 bytes used to cause a segfault on some older systems.
-    BOOST_CHECK_NO_THROW(ds.read({}));
+    BOOST_CHECK_NO_THROW(ds.read(nullptr, 0));
 
     // Same goes for writing 0 bytes from a vector ...
-    const std::vector<std::byte> vdata{std::byte{'f'}, std::byte{'o'},
-                                       std::byte{'o'}, std::byte{'b'},
-                                       std::byte{'a'}, std::byte{'r'}};
+    const std::vector<char> vdata{'f', 'o', 'o', 'b', 'a', 'r'};
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), vdata.begin(), vdata.begin()));
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), vdata.begin(), vdata.end()));
 
     // ... or an array.
-    const std::byte adata[6] = {std::byte{'f'}, std::byte{'o'}, std::byte{'o'},
-                                std::byte{'b'}, std::byte{'a'}, std::byte{'r'}};
+    const char adata[6] = {'f', 'o', 'o', 'b', 'a', 'r'};
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), &adata[0], &adata[0]));
     BOOST_CHECK_NO_THROW(ds.insert(ds.begin(), &adata[0], &adata[6]));
 }
 
-BOOST_AUTO_TEST_CASE(streams_buffered_file) {
-    FILE *file = fsbridge::fopen("streams_test_tmp", "w+b");
-    // The value at each offset is the offset.
-    for (uint8_t j = 0; j < 40; ++j) {
-        fwrite(&j, 1, 1, file);
-    }
-    rewind(file);
+// Test move-assign and move-construct for CAutoFile
+BOOST_AUTO_TEST_CASE(autofile_move) {
+    auto dataDir = SetDataDir("autofile_move");
+    FILE *f1 = fsbridge::fopen(dataDir / "data.bin", "wb+");
+    FILE *f2 = fsbridge::fopen(dataDir / "data2.bin", "wb+");
+    BOOST_REQUIRE(f1 && f2);
+    BOOST_REQUIRE(f1 != f2);
+    const int t1 = SER_DISK, t2 = SER_NETWORK;
+    const int v1 = INIT_PROTO_VERSION, v2 = INIT_PROTO_VERSION + 1;
+    CAutoFile af1(f1, t1, v1), af2(f2, t2, v2);
+    BOOST_REQUIRE(af1.Get() == f1 && af2.Get() == f2);
+    BOOST_REQUIRE(af1.GetType() == t1 && af1.GetVersion() == v1);
+    BOOST_REQUIRE(af2.GetType() == t2 && af2.GetVersion() == v2);
 
-    // The buffer size (second arg) must be greater than the rewind
-    // amount (third arg).
-    try {
-        CBufferedFile bfbad(file, 25, 25, 222, 333);
-        BOOST_CHECK(false);
-    } catch (const std::exception &e) {
-        BOOST_CHECK(
-            strstr(e.what(), "Rewind limit must be less than buffer size") !=
-            nullptr);
-    }
+    // write data to files
+    af1 << uint32_t(42);
+    af2 << uint32_t(43);
 
-    // The buffer is 25 bytes, allow rewinding 10 bytes.
-    CBufferedFile bf(file, 25, 10, 222, 333);
-    BOOST_CHECK(!bf.eof());
-
-    // These two members have no functional effect.
-    BOOST_CHECK_EQUAL(bf.GetType(), 222);
-    BOOST_CHECK_EQUAL(bf.GetVersion(), 333);
-
-    uint8_t i;
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 0);
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 1);
-
-    // After reading bytes 0 and 1, we're positioned at 2.
-    BOOST_CHECK_EQUAL(bf.GetPos(), 2U);
-
-    // Rewind to offset 0, ok (within the 10 byte window).
-    BOOST_CHECK(bf.SetPos(0));
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 0);
-
-    // We can go forward to where we've been, but beyond may fail.
-    BOOST_CHECK(bf.SetPos(2));
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 2);
-
-    // If you know the maximum number of bytes that should be
-    // read to deserialize the variable, you can limit the read
-    // extent. The current file offset is 3, so the following
-    // SetLimit() allows zero bytes to be read.
-    BOOST_CHECK(bf.SetLimit(3));
-    try {
-        bf >> i;
-        BOOST_CHECK(false);
-    } catch (const std::exception &e) {
-        BOOST_CHECK(strstr(e.what(), "Attempt to position past buffer limit") !=
-                    nullptr);
-    }
-    // The default argument removes the limit completely.
-    BOOST_CHECK(bf.SetLimit());
-    // The read position should still be at 3 (no change).
-    BOOST_CHECK_EQUAL(bf.GetPos(), 3U);
-
-    // Read from current offset, 3, forward until position 10.
-    for (uint8_t j = 3; j < 10; ++j) {
-        bf >> i;
-        BOOST_CHECK_EQUAL(i, j);
-    }
-    BOOST_CHECK_EQUAL(bf.GetPos(), 10U);
-
-    // We're guaranteed (just barely) to be able to rewind to zero.
-    BOOST_CHECK(bf.SetPos(0));
-    BOOST_CHECK_EQUAL(bf.GetPos(), 0U);
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 0);
-
-    // We can set the position forward again up to the farthest
-    // into the stream we've been, but no farther. (Attempting
-    // to go farther may succeed, but it's not guaranteed.)
-    BOOST_CHECK(bf.SetPos(10));
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 10);
-    BOOST_CHECK_EQUAL(bf.GetPos(), 11U);
-
-    // Now it's only guaranteed that we can rewind to offset 1
-    // (current read position, 11, minus rewind amount, 10).
-    BOOST_CHECK(bf.SetPos(1));
-    BOOST_CHECK_EQUAL(bf.GetPos(), 1U);
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 1);
-
-    // We can stream into large variables, even larger than
-    // the buffer size.
-    BOOST_CHECK(bf.SetPos(11));
-    {
-        uint8_t a[40 - 11];
-        bf >> a;
-        for (uint8_t j = 0; j < sizeof(a); ++j) {
-            BOOST_CHECK_EQUAL(a[j], 11 + j);
+    // Test contents
+    auto TestContents = [](const std::vector<CAutoFile *> &files, const std::vector<uint32_t> &vals) {
+        BOOST_REQUIRE(files.size() == vals.size());
+        for (size_t i = 0; i < files.size(); ++i) {
+            CAutoFile *paf = files[i];
+            BOOST_REQUIRE(paf != nullptr);
+            BOOST_REQUIRE(!paf->IsNull());
+            const auto tstval = vals[i];
+            std::fseek(paf->Get(), 0, SEEK_SET);
+            uint32_t v;
+            *paf >> v;
+            BOOST_REQUIRE_EQUAL(v, tstval);
         }
-    }
-    BOOST_CHECK_EQUAL(bf.GetPos(), 40U);
+    };
 
-    // We've read the entire file, the next read should throw.
-    try {
-        bf >> i;
-        BOOST_CHECK(false);
-    } catch (const std::exception &e) {
-        BOOST_CHECK(strstr(e.what(), "CBufferedFile::Fill: end of file") !=
-                    nullptr);
-    }
-    // Attempting to read beyond the end sets the EOF indicator.
-    BOOST_CHECK(bf.eof());
+    TestContents({&af1, &af2}, {42, 43});
 
-    // Still at offset 40, we can go back 10, to 30.
-    BOOST_CHECK_EQUAL(bf.GetPos(), 40U);
-    BOOST_CHECK(bf.SetPos(30));
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 30);
-    BOOST_CHECK_EQUAL(bf.GetPos(), 31U);
+    // Test move-construct
+    BOOST_REQUIRE(!af2.IsNull() && f2 == af2.Get()); // sanity check
+    CAutoFile af3(std::move(af2)); // move-construct
+    BOOST_REQUIRE(af2.IsNull() && af2.GetType() == 0 && af2.GetVersion() == 0);  // moved-from is now null and empty
+    BOOST_REQUIRE(!af3.IsNull() && f2 == af3.Get()); // moved-to is not null and is same FILE * as what af2 was
+    BOOST_REQUIRE(af3.GetType() == t2 && af3.GetVersion() == v2); // ensure inherits type and version
+    TestContents({&af1, &af3}, {42, 43});
 
-    // We're too far to rewind to position zero.
-    BOOST_CHECK(!bf.SetPos(0));
-    // But we should now be positioned at least as far back as allowed
-    // by the rewind window (relative to our farthest read position, 40).
-    BOOST_CHECK(bf.GetPos() <= 30U);
+    // Test move-assign
+    af2 = std::move(af3);
+    BOOST_REQUIRE(af3.IsNull() && af3.GetType() == 0 && af3.GetVersion() == 0);  // moved-from is now null and empty
+    BOOST_REQUIRE(!af2.IsNull() && f2 == af2.Get()); // moved-to is not null and is same FILE * as what af2 was
+    BOOST_REQUIRE(af2.GetType() == t2 && af2.GetVersion() == v2); // version should be also what we expect
+    TestContents({&af1, &af2}, {42, 43});
 
-    // We can explicitly close the file, or the destructor will do it.
-    bf.fclose();
-
-    fs::remove("streams_test_tmp");
-}
-
-BOOST_AUTO_TEST_CASE(streams_buffered_file_skip) {
-    fs::path streams_test_filename =
-        m_args.GetDataDirBase() / "streams_test_tmp";
-    FILE *file = fsbridge::fopen(streams_test_filename, "w+b");
-    // The value at each offset is the byte offset (e.g. byte 1 in the file has
-    // the value 0x01).
-    for (uint8_t j = 0; j < 40; ++j) {
-        fwrite(&j, 1, 1, file);
-    }
-    rewind(file);
-
-    // The buffer is 25 bytes, allow rewinding 10 bytes.
-    CBufferedFile bf(file, 25, 10, 222, 333);
-
-    uint8_t i;
-    // This is like bf >> (7-byte-variable), in that it will cause data
-    // to be read from the file into memory, but it's not copied to us.
-    bf.SkipTo(7);
-    BOOST_CHECK_EQUAL(bf.GetPos(), 7U);
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 7);
-
-    // The bytes in the buffer up to offset 7 are valid and can be read.
-    BOOST_CHECK(bf.SetPos(0));
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 0);
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 1);
-
-    bf.SkipTo(11);
-    bf >> i;
-    BOOST_CHECK_EQUAL(i, 11);
-
-    // SkipTo() honors the transfer limit; we can't position beyond the limit.
-    bf.SetLimit(13);
-    try {
-        bf.SkipTo(14);
-        BOOST_CHECK(false);
-    } catch (const std::exception &e) {
-        BOOST_CHECK(strstr(e.what(), "Attempt to position past buffer limit") !=
-                    nullptr);
-    }
-
-    // We can position exactly to the transfer limit.
-    bf.SkipTo(13);
-    BOOST_CHECK_EQUAL(bf.GetPos(), 13U);
-
-    bf.fclose();
-    fs::remove(streams_test_filename);
-}
-
-BOOST_AUTO_TEST_CASE(streams_buffered_file_rand) {
-    // Make this test deterministic.
-    SeedInsecureRand(SeedRand::ZEROS);
-
-    for (int rep = 0; rep < 50; ++rep) {
-        FILE *file = fsbridge::fopen("streams_test_tmp", "w+b");
-        size_t fileSize = InsecureRandRange(256);
-        for (uint8_t i = 0; i < fileSize; ++i) {
-            fwrite(&i, 1, 1, file);
-        }
-        rewind(file);
-
-        size_t bufSize = InsecureRandRange(300) + 1;
-        size_t rewindSize = InsecureRandRange(bufSize);
-        CBufferedFile bf(file, bufSize, rewindSize, 222, 333);
-        size_t currentPos = 0;
-        size_t maxPos = 0;
-        for (int step = 0; step < 100; ++step) {
-            if (currentPos >= fileSize) {
-                break;
-            }
-
-            // We haven't read to the end of the file yet.
-            BOOST_CHECK(!bf.eof());
-            BOOST_CHECK_EQUAL(bf.GetPos(), currentPos);
-
-            // Pretend the file consists of a series of objects of varying
-            // sizes; the boundaries of the objects can interact arbitrarily
-            // with the CBufferFile's internal buffer. These first three
-            // cases simulate objects of various sizes (1, 2, 5 bytes).
-            switch (InsecureRandRange(6)) {
-                case 0: {
-                    uint8_t a[1];
-                    if (currentPos + 1 > fileSize) {
-                        continue;
-                    }
-                    bf.SetLimit(currentPos + 1);
-                    bf >> a;
-                    for (uint8_t i = 0; i < 1; ++i) {
-                        BOOST_CHECK_EQUAL(a[i], currentPos);
-                        currentPos++;
-                    }
-                    break;
-                }
-                case 1: {
-                    uint8_t a[2];
-                    if (currentPos + 2 > fileSize) {
-                        continue;
-                    }
-                    bf.SetLimit(currentPos + 2);
-                    bf >> a;
-                    for (uint8_t i = 0; i < 2; ++i) {
-                        BOOST_CHECK_EQUAL(a[i], currentPos);
-                        currentPos++;
-                    }
-                    break;
-                }
-                case 2: {
-                    uint8_t a[5];
-                    if (currentPos + 5 > fileSize) {
-                        continue;
-                    }
-                    bf.SetLimit(currentPos + 5);
-                    bf >> a;
-                    for (uint8_t i = 0; i < 5; ++i) {
-                        BOOST_CHECK_EQUAL(a[i], currentPos);
-                        currentPos++;
-                    }
-                    break;
-                }
-                case 3: {
-                    // SkipTo is similar to the "read" cases above, except
-                    // we don't receive the data.
-                    size_t skip_length{
-                        static_cast<size_t>(InsecureRandRange(5))};
-                    if (currentPos + skip_length > fileSize) {
-                        continue;
-                    }
-                    bf.SetLimit(currentPos + skip_length);
-                    bf.SkipTo(currentPos + skip_length);
-                    currentPos += skip_length;
-                    break;
-                }
-                case 4: {
-                    // Find a byte value (that is at or ahead of the current
-                    // position).
-                    size_t find = currentPos + InsecureRandRange(8);
-                    if (find >= fileSize) {
-                        find = fileSize - 1;
-                    }
-                    bf.FindByte(std::byte(find));
-                    // The value at each offset is the offset.
-                    BOOST_CHECK_EQUAL(bf.GetPos(), find);
-                    currentPos = find;
-
-                    bf.SetLimit(currentPos + 1);
-                    uint8_t i;
-                    bf >> i;
-                    BOOST_CHECK_EQUAL(i, currentPos);
-                    currentPos++;
-                    break;
-                }
-                case 5: {
-                    size_t requestPos = InsecureRandRange(maxPos + 4);
-                    bool okay = bf.SetPos(requestPos);
-                    // The new position may differ from the requested position
-                    // because we may not be able to rewind beyond the rewind
-                    // window, and we may not be able to move forward beyond the
-                    // farthest position we've reached so far.
-                    currentPos = bf.GetPos();
-                    BOOST_CHECK_EQUAL(okay, currentPos == requestPos);
-                    // Check that we can position within the rewind window.
-                    if (requestPos <= maxPos && maxPos > rewindSize &&
-                        requestPos >= maxPos - rewindSize) {
-                        // We requested a position within the rewind window.
-                        BOOST_CHECK(okay);
-                    }
-                    break;
-                }
-            }
-            if (maxPos < currentPos) {
-                maxPos = currentPos;
-            }
-        }
-    }
-    fs::remove("streams_test_tmp");
+    // Swap af1 and af2 via move-assign, and test they preserve everything after swap
+    BOOST_REQUIRE(!af1.IsNull() && af1.GetType() == t1 && af1.GetVersion() == v1 && af1.Get() == f1);
+    BOOST_REQUIRE(!af2.IsNull() && af2.GetType() == t2 && af2.GetVersion() == v2 && af2.Get() == f2);
+    // do swap
+    af3 = std::move(af2);
+    af2 = std::move(af1);
+    af1 = std::move(af3);
+    // test that everything swapped and is what we expect
+    BOOST_REQUIRE(!af1.IsNull() && af1.GetType() == t2 && af1.GetVersion() == v2 && af1.Get() == f2);
+    BOOST_REQUIRE(!af2.IsNull() && af2.GetType() == t1 && af2.GetVersion() == v1 && af2.Get() == f1);
+    BOOST_REQUIRE(af3.IsNull() && af3.GetType() == 0 && af3.GetVersion() == 0);
+    TestContents({&af1, &af2}, {43, 42});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

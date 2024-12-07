@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2017 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -16,9 +17,8 @@ only succeeds past a given node once its nMinimumChainWork has been exceeded.
 
 import time
 
-from test_framework.p2p import P2PInterface, msg_getheaders
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, connect_nodes
 
 # 2 hashes required per regtest block (with no difficulty adjustment)
 REGTEST_WORK_PER_BLOCK = 2
@@ -28,7 +28,8 @@ class MinimumChainWorkTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 3
-        self.extra_args = [[], ["-minimumchainwork=0x65"], ["-minimumchainwork=0x65"]]
+        self.extra_args = [[], ["-minimumchainwork=0x65"],
+                           ["-minimumchainwork=0x65"]]
         self.node_min_work = [0, 101, 101]
 
     def setup_network(self):
@@ -39,64 +40,49 @@ class MinimumChainWorkTest(BitcoinTestFramework):
         # block relay to inbound peers.
         self.setup_nodes()
         for i in range(self.num_nodes - 1):
-            self.connect_nodes(i + 1, i)
-
-        # Set clock of node2 2 days ahead, to keep it in IBD during this test.
-        self.nodes[2].setmocktime(int(time.time()) + 48 * 60 * 60)
+            connect_nodes(self.nodes[i + 1], self.nodes[i])
 
     def run_test(self):
         # Start building a chain on node0.  node2 shouldn't be able to sync until node1's
         # minchainwork is exceeded
         starting_chain_work = REGTEST_WORK_PER_BLOCK  # Genesis block's work
         self.log.info(
-            f"Testing relay across node 1 (minChainWork = {self.node_min_work[1]})"
-        )
+            "Testing relay across node {} (minChainWork = {})".format(
+                1, self.node_min_work[1]))
 
         starting_blockcount = self.nodes[2].getblockcount()
 
         num_blocks_to_generate = int(
-            (self.node_min_work[1] - starting_chain_work) / REGTEST_WORK_PER_BLOCK
-        )
-        self.log.info(f"Generating {num_blocks_to_generate} blocks on node0")
-        hashes = self.generate(
-            self.nodes[0], num_blocks_to_generate, sync_fun=self.no_op
-        )
+            (self.node_min_work[1] - starting_chain_work) / REGTEST_WORK_PER_BLOCK)
+        self.log.info("Generating {} blocks on node0".format(
+                      num_blocks_to_generate))
+        hashes = self.generatetoaddress(self.nodes[0], num_blocks_to_generate,
+                                                 self.nodes[0].get_deterministic_priv_key().address)
 
-        self.log.info(
-            "Node0 current chain work: "
-            f"{self.nodes[0].getblockheader(hashes[-1])['chainwork']}"
-        )
+        self.log.info("Node0 current chain work: {}".format(
+                      self.nodes[0].getblockheader(hashes[-1])['chainwork']))
 
         # Sleep a few seconds and verify that node2 didn't get any new blocks
-        # or headers.  We sleep, rather than sync_blocks(node0, node1) because
+        # or headers.  We sleep, rather than sync_blocks() because
         # it's reasonable either way for node1 to get the blocks, or not get
         # them (since they're below node1's minchainwork).
         time.sleep(3)
 
         self.log.info("Verifying node 2 has no more blocks than before")
-        self.log.info(f"Blockcounts: {[n.getblockcount() for n in self.nodes]}")
+        self.log.info("Blockcounts: {}".format(
+                      [n.getblockcount() for n in self.nodes]))
         # Node2 shouldn't have any new headers yet, because node1 should not
         # have relayed anything.
         assert_equal(len(self.nodes[2].getchaintips()), 1)
-        assert_equal(self.nodes[2].getchaintips()[0]["height"], 0)
+        assert_equal(self.nodes[2].getchaintips()[0]['height'], 0)
 
-        assert self.nodes[1].getbestblockhash() != self.nodes[0].getbestblockhash()
+        assert self.nodes[1].getbestblockhash(
+        ) != self.nodes[0].getbestblockhash()
         assert_equal(self.nodes[2].getblockcount(), starting_blockcount)
 
-        self.log.info("Check that getheaders requests to node2 are ignored")
-        peer = self.nodes[2].add_p2p_connection(P2PInterface())
-        msg = msg_getheaders()
-        msg.locator.vHave = [int(self.nodes[2].getbestblockhash(), 16)]
-        msg.hashstop = 0
-        peer.send_and_ping(msg)
-        time.sleep(5)
-        assert (
-            "headers" not in peer.last_message
-            or len(peer.last_message["headers"].headers) == 0
-        )
-
         self.log.info("Generating one more block")
-        self.generate(self.nodes[0], 1)
+        self.generatetoaddress(self.nodes[0],
+            1, self.nodes[0].get_deterministic_priv_key().address)
 
         self.log.info("Verifying nodes are all synced")
 
@@ -107,16 +93,9 @@ class MinimumChainWorkTest(BitcoinTestFramework):
         # continue the test.
 
         self.sync_all()
-        self.log.info(f"Blockcounts: {[n.getblockcount() for n in self.nodes]}")
-
-        self.log.info("Test that getheaders requests to node2 are not ignored")
-        peer.send_and_ping(msg)
-        assert "headers" in peer.last_message
-
-        # Verify that node2 is in fact still in IBD (otherwise this test may
-        # not be exercising the logic we want!)
-        assert_equal(self.nodes[2].getblockchaininfo()["initialblockdownload"], True)
+        self.log.info("Blockcounts: {}".format(
+                      [n.getblockcount() for n in self.nodes]))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     MinimumChainWorkTest().main()

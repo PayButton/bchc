@@ -1,25 +1,21 @@
-# Copyright (c) 2017 The Bitcoin developers
+# Copyright (c) 2017-2024 The Bitcoin developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.13)
 
 set(CMAKE_USER_MAKE_RULES_OVERRIDE
 	"${CMAKE_SOURCE_DIR}/cmake/modules/OverrideInitFlags.cmake"
 )
 
-project(bitcoin-abc
-	VERSION 0.29.10
-	DESCRIPTION "Bitcoin ABC is a full node implementation of the eCash protocol."
-	HOMEPAGE_URL "https://www.bitcoinabc.org"
-)
-
-add_custom_target(print-version
-  COMMENT "Print the current ${PROJECT_NAME} version"
-  COMMAND "${CMAKE_COMMAND}" -E echo "${PROJECT_VERSION}"
+project(bitcoin-cash-node
+	VERSION 28.0.0
+	DESCRIPTION "Bitcoin Cash Node is a full node implementation of the Bitcoin Cash protocol."
+	HOMEPAGE_URL "https://www.bitcoincashnode.org"
 )
 
 # Package information
-set(PACKAGE_NAME "Bitcoin ABC")
-set(PACKAGE_BUGREPORT "https://github.com/Bitcoin-ABC/bitcoin-abc/issues")
+set(PACKAGE_NAME "Bitcoin Cash Node")
 
 # Copyright
 set(COPYRIGHT_YEAR 2024)
@@ -40,8 +36,10 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(__NO_USER_CMAKE_BUILD_TYPE ON CACHE BOOL "True if the user didn't set a build type on the command line")
 endif()
 
+set(BITCOIN_QT_OSX_BUNDLE_NAME "BitcoinCashNode-Qt")
+
 # Find the python interpreter. This is required for several targets.
-find_package(Python 3.9 COMPONENTS Interpreter REQUIRED)
+find_package(Python 3.6 COMPONENTS Interpreter REQUIRED)
 
 # Add the magic targets `check-*`
 add_custom_target(check-all)
@@ -49,11 +47,7 @@ add_custom_target(check)
 add_custom_target(check-extended)
 add_custom_target(check-upgrade-activated)
 add_custom_target(check-upgrade-activated-extended)
-
-# Add the global install targets
-add_custom_target(install-all)
-add_custom_target(install-debug)
-add_custom_target(install-all-debug)
+add_custom_target(symbol-check)
 
 include(PackageHelper)
 exclude_git_ignored_files_from_source_package()
@@ -75,14 +69,7 @@ exclude_from_source_package(
 
 	# Files
 	"[^.]+[.]md$"
-
-	# GUIX
-	"var/"
-	"output/"
-	"distsrc-.*/"
-
-	# CI
-	"abc-ci-builds/"
+	"Dockerfile-doxygen"
 )
 
 option(ENABLE_COVERAGE "Enable coverage" OFF)
@@ -128,17 +115,17 @@ if(ENABLE_COVERAGE)
 	add_custom_target_coverage(check-upgrade-activated-extended)
 endif()
 
-add_subdirectory(src)
-
 option(BUILD_BITCOIN_CHRONIK "Activate the Chronik indexer" OFF)
 option(BUILD_BITCOIN_CHRONIK_PLUGINS "Activate the plugin system for Chronik" OFF)
+add_subdirectory(src)
+
 if(BUILD_BITCOIN_CHRONIK)
 	add_subdirectory(chronik)
 endif()
 
-add_subdirectory(test)
-
-add_subdirectory(electrum)
+if(ENABLE_TEST)
+    add_subdirectory(test)
+endif()
 
 add_subdirectory(contrib)
 add_subdirectory(doc)

@@ -1,4 +1,5 @@
 // Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,16 +9,16 @@
 
 #include <timedata.h>
 
-#include <common/args.h>
-#include <logging.h>
 #include <netaddress.h>
-#include <node/ui_interface.h>
 #include <sync.h>
-#include <util/translation.h>
+#include <threadsafety.h>
+#include <ui_interface.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <warnings.h>
 
-static GlobalMutex g_timeoffset_mutex;
-static int64_t nTimeOffset GUARDED_BY(g_timeoffset_mutex) = 0;
+static RecursiveMutex cs_nTimeOffset;
+static int64_t nTimeOffset GUARDED_BY(cs_nTimeOffset) = 0;
 
 /**
  * "Never go to sea with two chronometers; take one or three."
@@ -28,45 +29,43 @@ static int64_t nTimeOffset GUARDED_BY(g_timeoffset_mutex) = 0;
  * disagree)
  */
 int64_t GetTimeOffset() {
-    LOCK(g_timeoffset_mutex);
+    LOCK(cs_nTimeOffset);
     return nTimeOffset;
 }
 
-NodeClock::time_point GetAdjustedTime() {
-    return NodeClock::now() + std::chrono::seconds{GetTimeOffset()};
+int64_t GetAdjustedTime() {
+    return GetTime() + GetTimeOffset();
 }
 
 #define BITCOIN_TIMEDATA_MAX_SAMPLES 200
 
-static std::set<CNetAddr> g_sources;
-static CMedianFilter<int64_t> g_time_offsets(BITCOIN_TIMEDATA_MAX_SAMPLES, 0);
-static bool g_warning_emitted;
-
 void AddTimeData(const CNetAddr &ip, int64_t nOffsetSample) {
-    LOCK(g_timeoffset_mutex);
+    LOCK(cs_nTimeOffset);
     // Ignore duplicates
-    if (g_sources.size() == BITCOIN_TIMEDATA_MAX_SAMPLES) {
+    static std::set<CNetAddr> setKnown GUARDED_BY(cs_nTimeOffset);
+    if (setKnown.size() == BITCOIN_TIMEDATA_MAX_SAMPLES) {
         return;
     }
-    if (!g_sources.insert(ip).second) {
+    if (!setKnown.insert(ip).second) {
         return;
     }
 
     // Add data
-    g_time_offsets.input(nOffsetSample);
+    static CMedianFilter<int64_t> vTimeOffsets GUARDED_BY(cs_nTimeOffset) {BITCOIN_TIMEDATA_MAX_SAMPLES, 0};
+    vTimeOffsets.input(nOffsetSample);
     LogPrint(BCLog::NET,
              "added time data, samples %d, offset %+d (%+d minutes)\n",
-             g_time_offsets.size(), nOffsetSample, nOffsetSample / 60);
+             vTimeOffsets.size(), nOffsetSample, nOffsetSample / 60);
 
     // There is a known issue here (see issue #4521):
     //
-    // - The structure g_time_offsets contains up to 200 elements, after which
-    // any new element added to it will not increase its size, replacing the
-    // oldest element.
+    // - The structure vTimeOffsets contains up to 200 elements, after which any
+    // new element added to it will not increase its size, replacing the oldest
+    // element.
     //
     // - The condition to update nTimeOffset includes checking whether the
-    // number of elements in g_time_offsets is odd, which will never happen
-    // after there are 200 elements.
+    // number of elements in vTimeOffsets is odd, which will never happen after
+    // there are 200 elements.
     //
     // But in this case the 'bug' is protective against some attacks, and may
     // actually explain why we've never seen attacks which manipulate the clock
@@ -75,32 +74,31 @@ void AddTimeData(const CNetAddr &ip, int64_t nOffsetSample) {
     // So we should hold off on fixing this and clean it up as part of a timing
     // cleanup that strengthens it in a number of other ways.
     //
-    if (g_time_offsets.size() >= 5 && g_time_offsets.size() % 2 == 1) {
-        int64_t nMedian = g_time_offsets.median();
-        std::vector<int64_t> vSorted = g_time_offsets.sorted();
+    if (vTimeOffsets.size() >= 5 && vTimeOffsets.size() % 2 == 1) {
+        const int64_t nMedian = vTimeOffsets.median();
+        const auto & vSorted = vTimeOffsets.sorted();
         // Only let other nodes change our time by so much
-
-        int64_t max_adjustment =
-            std::max<int64_t>(0, gArgs.GetIntArg("-maxtimeadjustment",
-                                                 DEFAULT_MAX_TIME_ADJUSTMENT));
+        int64_t max_adjustment = std::max<int64_t>(0, gArgs.GetArg("-maxtimeadjustment", DEFAULT_MAX_TIME_ADJUSTMENT));
         if (nMedian >= -max_adjustment && nMedian <= max_adjustment) {
             nTimeOffset = nMedian;
         } else {
             nTimeOffset = 0;
 
-            if (!g_warning_emitted) {
+            static bool fDone;
+            if (!fDone) {
                 // If nobody has a time different than ours but within 5 minutes
                 // of ours, give a warning
                 bool fMatch = false;
                 for (const int64_t nOffset : vSorted) {
                     if (nOffset != 0 && nOffset > -5 * 60 && nOffset < 5 * 60) {
                         fMatch = true;
+                        break;
                     }
                 }
 
                 if (!fMatch) {
-                    g_warning_emitted = true;
-                    bilingual_str strMessage =
+                    fDone = true;
+                    std::string strMessage =
                         strprintf(_("Please check that your computer's date "
                                     "and time are correct! If your clock is "
                                     "wrong, %s will not work properly."),
@@ -122,12 +120,4 @@ void AddTimeData(const CNetAddr &ip, int64_t nOffsetSample) {
                      nTimeOffset, nTimeOffset / 60);
         }
     }
-}
-
-void TestOnlyResetTimeData() {
-    LOCK(g_timeoffset_mutex);
-    nTimeOffset = 0;
-    g_sources.clear();
-    g_time_offsets = CMedianFilter<int64_t>(BITCOIN_TIMEDATA_MAX_SAMPLES, 0);
-    g_warning_emitted = false;
 }

@@ -1,5 +1,0 @@
-{
-    "entryPoints": ["./index.ts"],
-    "excludePrivate": true,
-    "sourceLinkTemplate": "https://github.com/Bitcoin-ABC/bitcoin-abc/blob/master/{path}#L{line}"
-}

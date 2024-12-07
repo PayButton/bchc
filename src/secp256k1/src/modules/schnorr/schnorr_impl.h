@@ -1,11 +1,11 @@
 /***********************************************************************
  * Copyright (c) 2017 Amaury SÉCHET                                    *
  * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php. *
  ***********************************************************************/
 
-#ifndef SECP256K1_MODULE_SCHNORR_IMPL_H
-#define SECP256K1_MODULE_SCHNORR_IMPL_H
+#ifndef _SECP256K1_SCHNORR_IMPL_H_
+#define _SECP256K1_SCHNORR_IMPL_H_
 
 #include <string.h>
 
@@ -59,7 +59,9 @@ static int secp256k1_schnorr_sig_verify(
     secp256k1_scalar e, s;
     int overflow;
 
-    VERIFY_CHECK(!secp256k1_ge_is_infinity(pubkey));
+    if (secp256k1_ge_is_infinity(pubkey)) {
+        return 0;
+    }
 
     /* Extract s */
     overflow = 0;
@@ -128,7 +130,7 @@ static int secp256k1_schnorr_compute_e(
 }
 
 static int secp256k1_schnorr_sig_sign(
-    const secp256k1_context* ctx,
+    const secp256k1_ecmult_gen_context* ctx,
     unsigned char *sig64,
     const unsigned char *msg32,
     const secp256k1_scalar *privkey,
@@ -137,50 +139,85 @@ static int secp256k1_schnorr_sig_sign(
     const void *ndata
 ) {
     secp256k1_ge R;
-    secp256k1_gej Rj;
-    secp256k1_scalar k, e, s;
-    ARG_CHECK(secp256k1_ecmult_gen_context_is_built(&ctx->ecmult_gen_ctx));
+    secp256k1_scalar k;
+    int ret;
 
-    VERIFY_CHECK(!secp256k1_scalar_is_zero(privkey));
-    VERIFY_CHECK(!secp256k1_ge_is_infinity(pubkey));
-
-    if (!secp256k1_schnorr_sig_generate_k(ctx, &k, msg32, privkey, noncefp, ndata)) {
+    if (secp256k1_scalar_is_zero(privkey)) {
         return 0;
     }
 
-    /* Compute R */
-    secp256k1_ecmult_gen(&ctx->ecmult_gen_ctx, &Rj, &k);
-    secp256k1_ge_set_gej(&R, &Rj);
+    if (!secp256k1_schnorr_compute_k_R(ctx, &k, &R, msg32, privkey, noncefp, ndata)) {
+        return 0;
+    }
 
-    /*
-     * We declassify R to allow using it as a branch point.
-     * This is fine because R is not a secret.
-     */
-    secp256k1_declassify(ctx, &R, sizeof(R));
-    /** Negate the nonce if R.y is not a quadratic residue. */
-    secp256k1_scalar_cond_negate(&k, !secp256k1_fe_is_quad_var(&R.y));
+    ret = secp256k1_schnorr_compute_sig(sig64, msg32, &k, &R, privkey, pubkey);
+    secp256k1_scalar_clear(&k);
+    return ret;
+}
 
-    /* Compute the signature. */
-    secp256k1_fe_normalize(&R.x);
-    secp256k1_fe_get_b32(sig64, &R.x);
+static int secp256k1_schnorr_compute_k_R(
+    const secp256k1_ecmult_gen_context* ctx,
+    secp256k1_scalar *k,
+    secp256k1_ge *R,
+    const unsigned char *msg32,
+    const secp256k1_scalar *privkey,
+    secp256k1_nonce_function noncefp,
+    const void *ndata
+) {
+    secp256k1_gej Rj;
+
+    if (!secp256k1_schnorr_sig_generate_k(k, msg32, privkey, noncefp, ndata)) {
+        return 0;
+    }
+
+    secp256k1_ecmult_gen(ctx, &Rj, k);
+    secp256k1_ge_set_gej(R, &Rj);
+    return 1;
+}
+
+static int secp256k1_schnorr_compute_sig(
+    unsigned char *sig64,
+    const unsigned char *msg32,
+    secp256k1_scalar *k,
+    secp256k1_ge *R,
+    const secp256k1_scalar *privkey,
+    secp256k1_ge *pubkey
+) {
+    secp256k1_scalar e, s;
+
+    if (secp256k1_scalar_is_zero(privkey) || secp256k1_scalar_is_zero(k)) {
+        return 0;
+    }
+
+    if (secp256k1_ge_is_infinity(pubkey)) {
+        return 0;
+    }
+
+    if (!secp256k1_fe_is_quad_var(&R->y)) {
+        /**
+         * R's y coordinate is not a quadratic residue, which is not allowed.
+         * Negate the nonce to ensure it is.
+         */
+        secp256k1_scalar_negate(k, k);
+    }
+
+    secp256k1_fe_normalize(&R->x);
+    secp256k1_fe_get_b32(sig64, &R->x);
     secp256k1_schnorr_compute_e(&e, sig64, pubkey, msg32);
     secp256k1_scalar_mul(&s, &e, privkey);
-    secp256k1_scalar_add(&s, &s, &k);
+    secp256k1_scalar_add(&s, &s, k);
     secp256k1_scalar_get_b32(sig64 + 32, &s);
-
-    /* Cleanup locals that may contain private data. */
-    secp256k1_scalar_clear(&k);
     return 1;
 }
 
 static int secp256k1_schnorr_sig_generate_k(
-    const secp256k1_context* ctx,
     secp256k1_scalar *k,
     const unsigned char *msg32,
     const secp256k1_scalar *privkey,
     secp256k1_nonce_function noncefp,
     const void *ndata
 ) {
+    int overflow = 0;
     int ret = 0;
     unsigned int count = 0;
     unsigned char nonce32[32], seckey[32];
@@ -194,24 +231,19 @@ static int secp256k1_schnorr_sig_generate_k(
 
     secp256k1_scalar_get_b32(seckey, privkey);
     while (1) {
-        int overflow;
         ret = noncefp(nonce32, msg32, seckey, secp256k1_schnorr_algo16, (void*)ndata, count++);
         if (!ret) {
             break;
         }
 
         secp256k1_scalar_set_b32(k, nonce32, &overflow);
-        overflow |= secp256k1_scalar_is_zero(k);
-        /* The nonce is still secret here, but it overflowing or being zero is is less likely than 1:2^255. */
-        secp256k1_declassify(ctx, &overflow, sizeof(overflow));
-        if (!overflow) {
+        if (!overflow && !secp256k1_scalar_is_zero(k)) {
             break;
         }
 
         secp256k1_scalar_clear(k);
     }
 
-    /* Cleanup locals that may contain private data. */
     memset(seckey, 0, 32);
     memset(nonce32, 0, 32);
     return ret;

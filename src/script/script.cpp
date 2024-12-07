@@ -1,17 +1,18 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/script.h>
 
 #include <script/script_flags.h>
+#include <tinyformat.h>
 #include <util/strencodings.h>
 
 #include <algorithm>
-#include <string>
 
-std::string GetOpName(opcodetype opcode) {
+const char *GetOpName(opcodetype opcode) {
     switch (opcode) {
         // push value
         case OP_0:
@@ -257,8 +258,58 @@ std::string GetOpName(opcodetype opcode) {
         case OP_NOP10:
             return "OP_NOP10";
 
-        case OP_INVALIDOPCODE:
-            return "OP_INVALIDOPCODE";
+        // Native Introspection opcodes
+        case OP_INPUTINDEX:
+            return "OP_INPUTINDEX";
+        case OP_ACTIVEBYTECODE:
+            return "OP_ACTIVEBYTECODE";
+        case OP_TXVERSION:
+            return "OP_TXVERSION";
+        case OP_TXINPUTCOUNT:
+            return "OP_TXINPUTCOUNT";
+        case OP_TXOUTPUTCOUNT:
+            return "OP_TXOUTPUTCOUNT";
+        case OP_TXLOCKTIME:
+            return "OP_TXLOCKTIME";
+        case OP_UTXOVALUE:
+            return "OP_UTXOVALUE";
+        case OP_UTXOBYTECODE:
+            return "OP_UTXOBYTECODE";
+        case OP_OUTPOINTTXHASH:
+            return "OP_OUTPOINTTXHASH";
+        case OP_OUTPOINTINDEX:
+            return "OP_OUTPOINTINDEX";
+        case OP_INPUTBYTECODE:
+            return "OP_INPUTBYTECODE";
+        case OP_INPUTSEQUENCENUMBER:
+            return "OP_INPUTSEQUENCENUMBER";
+        case OP_OUTPUTVALUE:
+            return "OP_OUTPUTVALUE";
+        case OP_OUTPUTBYTECODE:
+            return "OP_OUTPUTBYTECODE";
+
+        // Token introspection
+        case OP_UTXOTOKENCATEGORY:
+            return "OP_UTXOTOKENCATEGORY";
+        case OP_UTXOTOKENCOMMITMENT:
+            return "OP_UTXOTOKENCOMMITMENT";
+        case OP_UTXOTOKENAMOUNT:
+            return "OP_UTXOTOKENAMOUNT";
+        case OP_OUTPUTTOKENCATEGORY:
+            return "OP_OUTPUTTOKENCATEGORY";
+        case OP_OUTPUTTOKENCOMMITMENT:
+            return "OP_OUTPUTTOKENCOMMITMENT";
+        case OP_OUTPUTTOKENAMOUNT:
+            return "OP_OUTPUTTOKENAMOUNT";
+
+        // Token prefix byte
+        case SPECIAL_TOKEN_PREFIX:
+            return "SPECIAL_TOKEN_PREFIX";
+
+        case OP_RESERVED3:
+            return "OP_RESERVED3";
+        case OP_RESERVED4:
+            return "OP_RESERVED4";
 
         default:
             return "OP_UNKNOWN";
@@ -296,84 +347,63 @@ bool CheckMinimalPush(const std::vector<uint8_t> &data, opcodetype opcode) {
     return true;
 }
 
-bool CScriptNum::IsMinimallyEncoded(const std::vector<uint8_t> &vch,
-                                    const size_t nMaxNumSize) {
-    if (vch.size() > nMaxNumSize) {
-        return false;
+bool CScript::IsPayToScriptHash(uint32_t flags, std::vector<uint8_t> *hash_out, bool *is_p2sh_32) const {
+    // If caller wants to know if it was p2sh_32, default the boolean to false (common case)
+    if (is_p2sh_32) {
+        *is_p2sh_32 = false;
     }
-
-    if (vch.size() > 0) {
-        // Check that the number is encoded with the minimum possible number
-        // of bytes.
-        //
-        // If the most-significant-byte - excluding the sign bit - is zero
-        // then we're not minimal. Note how this test also rejects the
-        // negative-zero encoding, 0x80.
-        if ((vch.back() & 0x7f) == 0) {
-            // One exception: if there's more than one byte and the most
-            // significant bit of the second-most-significant-byte is set it
-            // would conflict with the sign bit. An example of this case is
-            // +-255, which encode to 0xff00 and 0xff80 respectively.
-            // (big-endian).
-            if (vch.size() <= 1 || (vch[vch.size() - 2] & 0x80) == 0) {
-                return false;
-            }
+    // Extra-fast test for pay-to-script-hash CScripts:
+    // - Legacy p2sh uses 160-bit hash:   OP_HASH160 20 [20 byte hash] OP_EQUAL
+    // - Newer p2sh_32 uses 256-bit hash: OP_HASH256 32 [32 byte hash] OP_EQUAL
+    if (size() == 23 && (*this)[0] == OP_HASH160 && (*this)[1] == 0x14 && (*this)[22] == OP_EQUAL) {
+        /* 160 bit */
+        if (hash_out) {
+            hash_out->assign(&(*this)[2], &(*this)[22]);
         }
-    }
-
-    return true;
-}
-
-bool CScriptNum::MinimallyEncode(std::vector<uint8_t> &data) {
-    if (data.size() == 0) {
-        return false;
-    }
-
-    // If the last byte is not 0x00 or 0x80, we are minimally encoded.
-    uint8_t last = data.back();
-    if (last & 0x7f) {
-        return false;
-    }
-
-    // If the script is one byte long, then we have a zero, which encodes as an
-    // empty array.
-    if (data.size() == 1) {
-        data = {};
+        return true;
+    } else if ((flags & SCRIPT_ENABLE_P2SH_32)
+               && size() == 35 && (*this)[0] == OP_HASH256 && (*this)[1] == 0x20 && (*this)[34] == OP_EQUAL) {
+        /* 256 bit */
+        if (hash_out) {
+            hash_out->assign(&(*this)[2], &(*this)[34]);
+        }
+        // Set is_p2sh_32 pointer if specified.  Caller could deduce this from size of hash_out vector, however caller
+        // may not want the overhead of the vector but may just want this bool flag instead (such as in interpreter.cpp
+        // VerifyScript())
+        if (is_p2sh_32) {
+            *is_p2sh_32 = true;
+        }
         return true;
     }
+    return false;
+}
 
-    // If the next byte has it sign bit set, then we are minimaly encoded.
-    if (data[data.size() - 2] & 0x80) {
+bool CScript::IsPayToPubKeyHash() const {
+    // Extra-fast test for P2PKH CScripts:
+    return size() == 25 && (*this)[0] == OP_DUP && (*this)[1] == OP_HASH160
+            && (*this)[2] == 20 && (*this)[23] == OP_EQUALVERIFY
+            && (*this)[24] == OP_CHECKSIG;
+}
+
+bool CScript::IsCommitment(const std::vector<uint8_t> &data) const {
+    // To ensure we have an immediate push, we limit the commitment size to 64
+    // bytes. In addition to the data themselves, we have 2 extra bytes:
+    // OP_RETURN and the push opcode itself.
+    if (data.size() > 64 || this->size() != data.size() + 2) {
         return false;
     }
 
-    // We are not minimally encoded, we need to figure out how much to trim.
-    for (size_t i = data.size() - 1; i > 0; i--) {
-        // We found a non zero byte, time to encode.
-        if (data[i - 1] != 0) {
-            if (data[i - 1] & 0x80) {
-                // We found a byte with it sign bit set so we need one more
-                // byte.
-                data[i++] = last;
-            } else {
-                // the sign bit is clear, we can use it.
-                data[i - 1] |= last;
-            }
+    if ((*this)[0] != OP_RETURN || (*this)[1] != data.size()) {
+        return false;
+    }
 
-            data.resize(i);
-            return true;
+    for (size_t i = 0; i < data.size(); i++) {
+        if ((*this)[i + 2] != data[i]) {
+            return false;
         }
     }
 
-    // If we the whole thing is zeros, then we have a zero.
-    data = {};
     return true;
-}
-
-bool CScript::IsPayToScriptHash() const {
-    // Extra-fast test for pay-to-script-hash CScripts:
-    return (this->size() == 23 && (*this)[0] == OP_HASH160 &&
-            (*this)[1] == 0x14 && (*this)[22] == OP_EQUAL);
 }
 
 // A witness program is any valid CScript that consists of a 1-byte push opcode
@@ -426,7 +456,7 @@ bool CScript::IsPushOnly() const {
 bool GetScriptOp(CScriptBase::const_iterator &pc,
                  CScriptBase::const_iterator end, opcodetype &opcodeRet,
                  std::vector<uint8_t> *pvchRet) {
-    opcodeRet = OP_INVALIDOPCODE;
+    opcodeRet = INVALIDOPCODE;
     if (pvchRet) {
         pvchRet->clear();
     }
@@ -477,13 +507,14 @@ bool GetScriptOp(CScriptBase::const_iterator &pc,
     return true;
 }
 
-bool CScript::HasValidOps() const {
+bool CScript::HasValidOps(uint32_t scriptFlags) const {
+    const size_t maxElemSize = scriptFlags & SCRIPT_ENABLE_MAY2025 ? may2025::MAX_SCRIPT_ELEMENT_SIZE
+                                                                   : MAX_SCRIPT_ELEMENT_SIZE_LEGACY;
     CScript::const_iterator it = begin();
     while (it < end()) {
         opcodetype opcode;
         std::vector<uint8_t> item;
-        if (!GetOp(it, opcode, item) || opcode > MAX_OPCODE ||
-            item.size() > MAX_SCRIPT_ELEMENT_SIZE) {
+        if (!GetOp(it, opcode, item) || opcode > MAX_OPCODE || item.size() > maxElemSize) {
             return false;
         }
     }

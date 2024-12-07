@@ -1,12 +1,11 @@
 // Copyright (c) 2017 Pieter Wuille
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <cashaddr.h>
 
-#include <test/util/setup_common.h>
-#include <test/util/str.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -16,6 +15,28 @@ CashAddrDecode(const std::string &str) {
 }
 
 BOOST_FIXTURE_TEST_SUITE(cashaddr_tests, BasicTestingSetup)
+
+bool CaseInsensitiveEqual(const std::string &s1, const std::string &s2) {
+    if (s1.size() != s2.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < s1.size(); ++i) {
+        char c1 = s1[i];
+        if (c1 >= 'A' && c1 <= 'Z') {
+            c1 -= ('A' - 'a');
+        }
+        char c2 = s2[i];
+        if (c2 >= 'A' && c2 <= 'Z') {
+            c2 -= ('A' - 'a');
+        }
+        if (c1 != c2) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 BOOST_AUTO_TEST_CASE(cashaddr_testvectors_valid) {
     static const std::string CASES[] = {
@@ -28,9 +49,9 @@ BOOST_AUTO_TEST_CASE(cashaddr_testvectors_valid) {
     };
 
     for (const std::string &str : CASES) {
-        auto [prefix, payload] = CashAddrDecode(str);
-        BOOST_CHECK_MESSAGE(!prefix.empty(), str);
-        std::string recode = cashaddr::Encode(prefix, payload);
+        auto ret = CashAddrDecode(str);
+        BOOST_CHECK_MESSAGE(!ret.first.empty(), str);
+        std::string recode = cashaddr::Encode(ret.first, ret.second);
         BOOST_CHECK_MESSAGE(!recode.empty(), str);
         BOOST_CHECK_MESSAGE(CaseInsensitiveEqual(str, recode), str);
     }
@@ -51,21 +72,24 @@ BOOST_AUTO_TEST_CASE(cashaddr_testvectors_invalid) {
     };
 
     for (const std::string &str : CASES) {
-        auto [prefix, payload] = CashAddrDecode(str);
-        BOOST_CHECK_MESSAGE(prefix.empty(), str);
+        auto ret = CashAddrDecode(str);
+        BOOST_CHECK_MESSAGE(ret.first.empty(), str);
     }
 }
 
 BOOST_AUTO_TEST_CASE(cashaddr_rawencode) {
-    std::string prefix = "helloworld";
-    std::vector<uint8_t> payload = {0x1f, 0x0d};
+    typedef std::pair<std::string, std::vector<uint8_t>> raw;
 
-    std::string encoded = cashaddr::Encode(prefix, payload);
-    auto [decoded_prefix, decoded_payload] = CashAddrDecode(encoded);
+    raw toEncode;
+    toEncode.first = "helloworld";
+    toEncode.second = {0x1f, 0x0d};
 
-    BOOST_CHECK_EQUAL(prefix, decoded_prefix);
-    BOOST_CHECK_EQUAL_COLLECTIONS(begin(payload), end(payload),
-                                  begin(decoded_payload), end(decoded_payload));
+    std::string encoded = cashaddr::Encode(toEncode.first, toEncode.second);
+    raw decoded = CashAddrDecode(encoded);
+
+    BOOST_CHECK_EQUAL(toEncode.first, decoded.first);
+    BOOST_CHECK_EQUAL_COLLECTIONS(begin(toEncode.second), end(toEncode.second),
+                                  begin(decoded.second), end(decoded.second));
 }
 
 BOOST_AUTO_TEST_CASE(cashaddr_testvectors_noprefix) {
@@ -79,12 +103,13 @@ BOOST_AUTO_TEST_CASE(cashaddr_testvectors_noprefix) {
         {"bchreg", "555555555555555555555555555555555555555555555udxmlmrz"},
     };
 
-    for (const auto &[prefix, payload] : CASES) {
+    for (const std::pair<std::string, std::string> &c : CASES) {
+        std::string prefix = c.first;
+        std::string payload = c.second;
         std::string addr = prefix + ":" + payload;
-        auto [decoded_prefix, decoded_payload] =
-            cashaddr::Decode(payload, prefix);
-        BOOST_CHECK_MESSAGE(CaseInsensitiveEqual(decoded_prefix, prefix), addr);
-        std::string recode = cashaddr::Encode(decoded_prefix, decoded_payload);
+        auto ret = cashaddr::Decode(payload, prefix);
+        BOOST_CHECK_MESSAGE(CaseInsensitiveEqual(ret.first, prefix), addr);
+        std::string recode = cashaddr::Encode(ret.first, ret.second);
         BOOST_CHECK_MESSAGE(!recode.empty(), addr);
         BOOST_CHECK_MESSAGE(CaseInsensitiveEqual(addr, recode), addr);
     }

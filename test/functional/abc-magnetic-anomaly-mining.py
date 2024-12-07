@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -24,7 +25,7 @@ class CTORMiningTest(BitcoinTestFramework):
         self.blocks = {}
         self.mocktime = int(time.time()) - 600 * 100
 
-        extra_arg = ["-spendzeroconfchange=0", "-whitelist=noban@127.0.0.1"]
+        extra_arg = ['-spendzeroconfchange=0', '-whitelist=127.0.0.1']
         self.extra_args = [extra_arg, extra_arg]
 
     def skip_test_if_missing_module(self):
@@ -42,9 +43,9 @@ class CTORMiningTest(BitcoinTestFramework):
 
         # Generate some unspent utxos and also
         # activate magnetic anomaly
-        for _ in range(150):
+        for x in range(150):
             update_time()
-            self.generate(mining_node, 1, sync_fun=self.no_op)
+            self.generate(mining_node, 1)
 
         update_time()
         unspent = mining_node.listunspent()
@@ -56,15 +57,22 @@ class CTORMiningTest(BitcoinTestFramework):
             # Grab a random number of inputs
             for _ in range(random.randrange(1, 5)):
                 txin = unspent.pop()
-                inputs.append({"txid": txin["txid"], "vout": 0})  # This is a coinbase
+                inputs.append({
+                    'txid': txin['txid'],
+                    'vout': 0  # This is a coinbase
+                })
                 if len(unspent) == 0:
                     break
 
             outputs = {}
             # Calculate a unique fee for this transaction
-            fee = decimal.Decimal(random.randint(1000, 2000)) / decimal.Decimal(1e2)
-
-            # NOTE: There will be 1 sigCheck per output (which equals the number
+            fee = decimal.Decimal(random.randint(
+                1000, 2000)) / decimal.Decimal(1e8)
+            # Spend to the same number of outputs as inputs, so we can leave
+            # the amounts unchanged and avoid rounding errors. This also ensures
+            # the number of sigops == number of sigchecks.
+            #
+            # NOTE: There will be 1 sigop per output (which equals the number
             # of inputs now).  We need this randomization to ensure the
             # numbers are properly following the transactions in the block
             # template metadata
@@ -72,8 +80,8 @@ class CTORMiningTest(BitcoinTestFramework):
             for _ in range(len(inputs)):
                 addr = mining_node.getnewaddress()
                 output = {
-                    # 50,000,000 XEC per coinbase
-                    addr: decimal.Decimal(50000000)
+                    # 50 BCH per coinbase
+                    addr: decimal.Decimal(50)
                 }
                 outputs.update(output)
 
@@ -83,31 +91,32 @@ class CTORMiningTest(BitcoinTestFramework):
 
             rawtx = mining_node.createrawtransaction(inputs, outputs)
             signedtx = mining_node.signrawtransactionwithwallet(rawtx)
-            txid = mining_node.sendrawtransaction(signedtx["hex"])
-            # number of outputs is the same as the number of sigCheck in this
+            txid = mining_node.sendrawtransaction(signedtx['hex'])
+            # number of outputs is the same as the number of sigops in this
             # case
-            transactions.update({txid: {"fee": fee, "sigchecks": len(outputs)}})
+            transactions.update({txid: {'fee': fee, 'sigops': len(outputs)}})
 
         tmpl = mining_node.getblocktemplate()
-        assert "proposal" in tmpl["capabilities"]
+        assert 'proposal' in tmpl['capabilities']
+        assert 'coinbasetxn' not in tmpl
 
         # Check the template transaction metadata and ordering
         last_txid = 0
-        for txn in tmpl["transactions"][1:]:
-            txid = txn["txid"]
+        for txn in tmpl['transactions'][1:]:
+            txid = txn['txid']
             txnMetadata = transactions[txid]
-            expectedFeeSats = int(txnMetadata["fee"] * 10**2)
-            expectedSigChecks = txnMetadata["sigchecks"]
+            expectedFeeSats = int(txnMetadata['fee'] * 10**8)
+            expectedSigOps = txnMetadata['sigops']
 
             txid_decoded = int(txid, 16)
 
             # Assert we got the expected metadata
-            assert expectedFeeSats == txn["fee"]
-            assert expectedSigChecks == txn["sigchecks"]
+            assert expectedFeeSats == txn['fee']
+            assert expectedSigOps == txn['sigops']
             # Assert transaction ids are in order
             assert last_txid == 0 or last_txid < txid_decoded
             last_txid = txid_decoded
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     CTORMiningTest().main()

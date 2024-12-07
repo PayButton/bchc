@@ -17,6 +17,13 @@ _bitcoin_rpc() {
     $bitcoin_cli "${rpcargs[@]}" "$@"
 }
 
+# Add wallet accounts to COMPREPLY
+_bitcoin_accounts() {
+    local accounts
+    accounts=$(_bitcoin_rpc listaccounts | awk -F '"' '{ print $2 }')
+    COMPREPLY=( "${COMPREPLY[@]}" $( compgen -W "$accounts" -- "$cur" ) )
+}
+
 _bitcoin_cli() {
     local cur prev words=() cword
     local bitcoin_cli
@@ -43,7 +50,7 @@ _bitcoin_cli() {
                 COMPREPLY=( $( compgen -W "true false" -- "$cur" ) )
                 return 0
                 ;;
-            signrawtransactionwithkey|signrawtransactionwithwallet)
+            signrawtransaction)
                 COMPREPLY=( $( compgen -W "ALL NONE SINGLE ALL|ANYONECANPAY NONE|ANYONECANPAY SINGLE|ANYONECANPAY" -- "$cur" ) )
                 return 0
                 ;;
@@ -53,9 +60,10 @@ _bitcoin_cli() {
     if ((cword > 3)); then
         case ${words[cword-3]} in
             addmultisigaddress)
+                _bitcoin_accounts
                 return 0
                 ;;
-            getbalance|gettxout|importaddress|importpubkey|importprivkey|listreceivedbyaddress|listsinceblock)
+            getbalance|gettxout|importaddress|importpubkey|importprivkey|listreceivedbyaccount|listreceivedbyaddress|listsinceblock)
                 COMPREPLY=( $( compgen -W "true false" -- "$cur" ) )
                 return 0
                 ;;
@@ -72,8 +80,12 @@ _bitcoin_cli() {
                 COMPREPLY=( $( compgen -W "add remove" -- "$cur" ) )
                 return 0
                 ;;
-            fundrawtransaction|getblock|getblockheader|getmempoolancestors|getmempooldescendants|getrawtransaction|gettransaction|listreceivedbyaddress|sendrawtransaction)
+            fundrawtransaction|getblock|getblockheader|getmempoolancestors|getmempooldescendants|getrawtransaction|gettransaction|listaccounts|listreceivedbyaccount|listreceivedbyaddress|sendrawtransaction)
                 COMPREPLY=( $( compgen -W "true false" -- "$cur" ) )
+                return 0
+                ;;
+            move|setaccount)
+                _bitcoin_accounts
                 return 0
                 ;;
         esac
@@ -84,11 +96,12 @@ _bitcoin_cli() {
             _filedir
             return 0
             ;;
-        getaddednodeinfo|getrawmempool|lockunspent)
+        getaddednodeinfo|getrawmempool|lockunspent|setgenerate)
             COMPREPLY=( $( compgen -W "true false" -- "$cur" ) )
             return 0
             ;;
-        getbalance|getnewaddress|listtransactions|sendmany)
+        getaccountaddress|getaddressesbyaccount|getbalance|getnewaddress|getreceivedbyaccount|listtransactions|move|sendfrom|sendmany)
+            _bitcoin_accounts
             return 0
             ;;
     esac

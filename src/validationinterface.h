@@ -1,48 +1,59 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_VALIDATIONINTERFACE_H
-#define BITCOIN_VALIDATIONINTERFACE_H
+#pragma once
 
-#include <kernel/cs_main.h>
+#include <dsproof/dspid.h>
+#include <net_nodeid.h>
 #include <primitives/transaction.h> // CTransaction(Ref)
 #include <sync.h>
 
 #include <functional>
 #include <memory>
+#include <vector>
 
-class BlockValidationState;
+extern RecursiveMutex cs_main;
+class Coin;
 class CBlock;
 class CBlockIndex;
 struct CBlockLocator;
-class Coin;
+class CBlockIndex;
+class CConnman;
+class CReserveScript;
 class CValidationInterface;
+class CValidationState;
+class uint256;
 class CScheduler;
+class CTxMemPool;
 enum class MemPoolRemovalReason;
 
-/** Register subscriber */
-void RegisterValidationInterface(CValidationInterface *callbacks);
+// These functions dispatch to one or all registered wallets
+
 /**
- * Unregister subscriber. DEPRECATED. This is not safe to use when the RPC
- * server or main message handler thread is running.
+ *  Register a wallet to receive updates from core.
+ *  WARNING: Do not call this after the app has initialized and threads are started.  It is not thread-safe.
  */
-void UnregisterValidationInterface(CValidationInterface *callbacks);
-/** Unregister all subscribers */
+void RegisterValidationInterface(CValidationInterface *pwalletIn);
+/**
+ *  Unregister a wallet from core.
+ *  WARNING: Do not call this after the app has initialized and threads are started.  It is not thread-safe.
+ *           It may, however, be called by the "shutdown" code.
+ */
+void UnregisterValidationInterface(CValidationInterface *pwalletIn);
+/**
+ *  Unregister all wallets from core
+ *  WARNING: Do not call this after the app has initialized and threads are started.  It is not thread-safe.
+ *           It may, however, be called by the "shutdown" code.
+ */
 void UnregisterAllValidationInterfaces();
-
-// Alternate registration functions that release a shared_ptr after the last
-// notification is sent. These are useful for race-free cleanup, since
-// unregistration is nonblocking and can return before the last notification is
-// processed.
-/** Register subscriber */
-void RegisterSharedValidationInterface(
-    std::shared_ptr<CValidationInterface> callbacks);
-/** Unregister subscriber */
-void UnregisterSharedValidationInterface(
-    std::shared_ptr<CValidationInterface> callbacks);
-
+/**
+ *  Called from the init process to indicate that future calls to Register/UnregisterValidationInterface()
+ *  are no longer safe (this is for debug log purposes only).
+ */
+void SetValidationInterfaceRegistrationsUnsafe(bool unsafe);
 /**
  * Pushes a function to callback onto the notification queue, guaranteeing any
  * callbacks generated prior to now are finished when the function is called.
@@ -96,69 +107,59 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void UpdatedBlockTip(const CBlockIndex *pindexNew,
-                                 const CBlockIndex *pindexFork,
-                                 bool fInitialDownload) {}
+    virtual void UpdatedBlockTip(const CBlockIndex *pindexNew, const CBlockIndex *pindexFork, bool fInitialDownload) {}
     /**
      * Notifies listeners of a transaction having been added to mempool.
      *
      * Called on a background thread.
      */
-    virtual void TransactionAddedToMempool(
-        const CTransactionRef &tx,
-        std::shared_ptr<const std::vector<Coin>> spent_coins,
-        uint64_t mempool_sequence) {}
+    virtual void TransactionAddedToMempool(const CTransactionRef &ptxn,
+                                           std::shared_ptr<const std::vector<Coin>> spent_coins) {}
+
+    /**
+     * Notifies listeners of a new valid double-spend proof having been
+     * created or received from peers, and having been just associated
+     * with a transaction.
+     *
+     * Called on a background thread.
+     */
+    virtual void TransactionDoubleSpent(const CTransactionRef &ptxn, const DspId &dspId) {}
+
+    /**
+     * Notifies listeners that a received double-spend proof turned out to be
+     * bad or invalid. The nodeIds are (possibly already-disconnected) peer(s)
+     * from which the invalid dsproofs originated.
+     *
+     * Called on a background thread.
+     */
+    virtual void BadDSProofsDetectedFromNodeIds(const std::vector<NodeId> &nodeIds) {}
 
     /**
      * Notifies listeners of a transaction leaving mempool.
      *
-     * This notification fires for transactions that are removed from the
-     * mempool for the following reasons:
-     *
-     * - EXPIRY (expired from mempool after -mempoolexpiry hours)
-     * - SIZELIMIT (removed in size limiting if the mempool exceeds -maxmempool
-     *   megabytes)
-     * - REORG (removed during a reorg)
-     * - CONFLICT (removed because it conflicts with in-block transaction)
-     *
-     * This does not fire for transactions that are removed from the mempool
-     * because they have been included in a block. Any client that is interested
-     * in transactions removed from the mempool for inclusion in a block can
-     * learn about those transactions from the BlockConnected notification.
-     *
-     * Transactions that are removed from the mempool because they conflict
-     * with a transaction in the new block will have
-     * TransactionRemovedFromMempool events fired *before* the BlockConnected
-     * event is fired. If multiple blocks are connected in one step, then the
-     * ordering could be:
-     *
-     * - TransactionRemovedFromMempool(tx1 from block A)
-     * - TransactionRemovedFromMempool(tx2 from block A)
-     * - TransactionRemovedFromMempool(tx1 from block B)
-     * - TransactionRemovedFromMempool(tx2 from block B)
-     * - BlockConnected(A)
-     * - BlockConnected(B)
+     * This only fires for transactions which leave mempool because of expiry,
+     * size limiting, reorg (changes in lock times/coinbase maturity), or
+     * replacement. This does not include any transactions which are included
+     * in BlockConnectedDisconnected either in block->vtx or in txnConflicted.
      *
      * Called on a background thread.
      */
-    virtual void TransactionRemovedFromMempool(const CTransactionRef &tx,
-                                               MemPoolRemovalReason reason,
-                                               uint64_t mempool_sequence) {}
+    virtual void TransactionRemovedFromMempool(const CTransactionRef &ptx) {}
+
     /**
      * Notifies listeners of a block being connected.
      * Provides a vector of transactions evicted from the mempool as a result.
      *
      * Called on a background thread.
      */
-    virtual void BlockConnected(const std::shared_ptr<const CBlock> &block,
-                                const CBlockIndex *pindex) {}
+    virtual void BlockConnected(const std::shared_ptr<const CBlock> &block, const CBlockIndex *pindex,
+                                const std::vector<CTransactionRef> &txnConflicted) {}
     /**
      * Notifies listeners of a block being disconnected
      *
      * Called on a background thread.
      */
-    virtual void BlockDisconnected(const std::shared_ptr<const CBlock> &block,
-                                   const CBlockIndex *pindex) {}
+    virtual void BlockDisconnected(const std::shared_ptr<const CBlock> &block, const CBlockIndex *pindex) {}
     /**
      * Notifies listeners of the new active block chain on-disk.
      *
@@ -176,38 +177,37 @@ protected:
      * Called on a background thread.
      */
     virtual void ChainStateFlushed(const CBlockLocator &locator) {}
+    /** Tells listeners to broadcast their data. */
+    virtual void ResendWalletTransactions(int64_t nBestBlockTime, CConnman *connman) {}
     /**
      * Notifies listeners of a block validation result.
-     * If the provided BlockValidationState IsValid, the provided block
+     * If the provided CValidationState IsValid, the provided block
      * is guaranteed to be the current best block at the time the
      * callback was generated (not necessarily now)
      */
-    virtual void BlockChecked(const CBlock &, const BlockValidationState &) {}
+    virtual void BlockChecked(const CBlock &, const CValidationState &) {}
     /**
      * Notifies listeners that a block which builds directly on our current tip
      * has been received and connected to the headers tree, though not validated
      * yet.
      */
-    virtual void NewPoWValidBlock(const CBlockIndex *pindex,
-                                  const std::shared_ptr<const CBlock> &block){};
-
-    virtual void BlockFinalized(const CBlockIndex *pindex){};
-
-    friend class CMainSignals;
-    friend class ValidationInterfaceTest;
-};
-
-class MainSignalsImpl;
-class CMainSignals {
-private:
-    std::unique_ptr<MainSignalsImpl> m_internals;
-
-    friend void ::RegisterSharedValidationInterface(
-        std::shared_ptr<CValidationInterface>);
+    virtual void NewPoWValidBlock(const CBlockIndex *pindex, const std::shared_ptr<const CBlock> &block){};
+    friend void ::RegisterValidationInterface(CValidationInterface *);
     friend void ::UnregisterValidationInterface(CValidationInterface *);
     friend void ::UnregisterAllValidationInterfaces();
-    friend void ::CallFunctionInValidationInterfaceQueue(
-        std::function<void()> func);
+};
+
+struct MainSignalsInstance;
+class CMainSignals {
+private:
+    std::unique_ptr<MainSignalsInstance> m_internals;
+
+    friend void ::RegisterValidationInterface(CValidationInterface *);
+    friend void ::UnregisterValidationInterface(CValidationInterface *);
+    friend void ::UnregisterAllValidationInterfaces();
+    friend void ::CallFunctionInValidationInterfaceQueue(std::function<void()> func);
+
+    void MempoolEntryRemoved(CTransactionRef tx, MemPoolRemovalReason reason);
 
 public:
     /**
@@ -225,25 +225,22 @@ public:
 
     size_t CallbacksPending();
 
-    void UpdatedBlockTip(const CBlockIndex *, const CBlockIndex *,
-                         bool fInitialDownload);
-    void TransactionAddedToMempool(const CTransactionRef &,
-                                   std::shared_ptr<const std::vector<Coin>>,
-                                   uint64_t mempool_sequence);
-    void TransactionRemovedFromMempool(const CTransactionRef &,
-                                       MemPoolRemovalReason,
-                                       uint64_t mempool_sequence);
-    void BlockConnected(const std::shared_ptr<const CBlock> &,
-                        const CBlockIndex *pindex);
-    void BlockDisconnected(const std::shared_ptr<const CBlock> &,
-                           const CBlockIndex *pindex);
+    /** Register with mempool to call TransactionRemovedFromMempool callbacks */
+    void RegisterWithMempoolSignals(CTxMemPool &pool);
+    /** Unregister with mempool */
+    void UnregisterWithMempoolSignals(CTxMemPool &pool);
+
+    void UpdatedBlockTip(const CBlockIndex *, const CBlockIndex *, bool fInitialDownload);
+    void TransactionAddedToMempool(const CTransactionRef &, std::shared_ptr<const std::vector<Coin>>);
+    void TransactionDoubleSpent(const CTransactionRef &, const DspId &);
+    void BadDSProofsDetectedFromNodeIds(const std::vector<NodeId> &);
+    void BlockConnected(const std::shared_ptr<const CBlock> &, const CBlockIndex *pindex,
+                        const std::shared_ptr<const std::vector<CTransactionRef>> &);
+    void BlockDisconnected(const std::shared_ptr<const CBlock> &, const CBlockIndex *);
     void ChainStateFlushed(const CBlockLocator &);
-    void BlockChecked(const CBlock &, const BlockValidationState &);
-    void NewPoWValidBlock(const CBlockIndex *,
-                          const std::shared_ptr<const CBlock> &);
-    void BlockFinalized(const CBlockIndex *);
+    void Broadcast(int64_t nBestBlockTime, CConnman *connman);
+    void BlockChecked(const CBlock &, const CValidationState &);
+    void NewPoWValidBlock(const CBlockIndex *, const std::shared_ptr<const CBlock> &);
 };
 
 CMainSignals &GetMainSignals();
-
-#endif // BITCOIN_VALIDATIONINTERFACE_H

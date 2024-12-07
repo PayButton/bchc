@@ -1,43 +1,20 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_OPTIONSMODEL_H
-#define BITCOIN_QT_OPTIONSMODEL_H
+#pragma once
 
-#include <qt/guiconstants.h>
+#include <amount.h>
 
 #include <QAbstractListModel>
-
-#include <cassert>
-#include <cstdint>
 
 namespace interfaces {
 class Node;
 }
 
-QT_BEGIN_NAMESPACE
-class QNetworkProxy;
-QT_END_NAMESPACE
-
 extern const char *DEFAULT_GUI_PROXY_HOST;
-static constexpr uint16_t DEFAULT_GUI_PROXY_PORT = 9050;
-
-/**
- * Convert configured prune target MiB to displayed GB. Round up to avoid
- * underestimating max disk usage.
- */
-static inline int PruneMiBtoGB(int64_t mib) {
-    return (mib * 1024 * 1024 + GB_BYTES - 1) / GB_BYTES;
-}
-
-/**
- * Convert displayed prune target GB to configured MiB. Round down so roundtrip
- * GB -> MiB -> GB conversion is stable.
- */
-static inline int64_t PruneGBtoMiB(int gb) {
-    return gb * GB_BYTES / 1024 / 1024;
-}
+static constexpr unsigned short DEFAULT_GUI_PROXY_PORT = 9050;
 
 /** Interface from Qt to configuration data structure for Bitcoin client.
    To Qt, the options are presented as a list with the different options
@@ -49,7 +26,7 @@ class OptionsModel : public QAbstractListModel {
     Q_OBJECT
 
 public:
-    explicit OptionsModel(QObject *parent = nullptr,
+    explicit OptionsModel(interfaces::Node &node, QObject *parent = nullptr,
                           bool resetSettings = false);
 
     enum OptionID {
@@ -75,7 +52,9 @@ public:
         DatabaseCache,       // int
         SpendZeroConfChange, // bool
         Listen,              // bool
-        OptionIDRowCount,
+        AllowLegacyP2PKH,    // bool
+        AllowLegacyP2SH,     // bool
+        OptionIDRowCount,    // Keep as final entry
     };
 
     void Init(bool resetSettings = false);
@@ -96,31 +75,22 @@ public:
     bool getMinimizeOnClose() const { return fMinimizeOnClose; }
     int getDisplayUnit() const { return nDisplayUnit; }
     QString getThirdPartyTxUrls() const { return strThirdPartyTxUrls; }
-    bool getProxySettings(QNetworkProxy &proxy) const;
     bool getCoinControlFeatures() const { return fCoinControlFeatures; }
     const QString &getOverriddenByCommandLine() {
         return strOverriddenByCommandLine;
     }
 
-    /* Explicit setters */
-    void SetPruneEnabled(bool prune, bool force = false);
-    void SetPruneTargetGB(int prune_target_gb, bool force = false);
-
     /* Restart flag helper */
     void setRestartRequired(bool fRequired);
     bool isRestartRequired() const;
 
-    interfaces::Node &node() const {
-        assert(m_node);
-        return *m_node;
-    }
-    void setNode(interfaces::Node &node) {
-        assert(!m_node);
-        m_node = &node;
-    }
+    // Returns false if this URL is invalid (malformed or not HTTP/HTTPS)
+    static bool isValidThirdPartyTxUrlString(QString value);
+
+    interfaces::Node &node() const { return m_node; }
 
 private:
-    interfaces::Node *m_node = nullptr;
+    interfaces::Node &m_node;
     /* Qt-only settings */
     bool fHideTrayIcon;
     bool fMinimizeToTray;
@@ -143,5 +113,3 @@ Q_SIGNALS:
     void coinControlFeaturesChanged(bool);
     void hideTrayIconChanged(bool);
 };
-
-#endif // BITCOIN_QT_OPTIONSMODEL_H

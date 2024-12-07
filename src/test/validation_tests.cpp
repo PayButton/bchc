@@ -1,5 +1,5 @@
 // Copyright (c) 2011-2019 The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,17 +7,14 @@
 
 #include <chainparams.h>
 #include <clientversion.h>
-#include <common/system.h>
 #include <config.h>
-#include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <net.h>
 #include <primitives/transaction.h>
 #include <streams.h>
-#include <uint256.h>
-#include <validation.h>
+#include <util/system.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/signals2/signal.hpp>
 #include <boost/test/unit_test.hpp>
@@ -55,8 +52,7 @@ static void TestBlockSubsidyHalvings(int nSubsidyHalvingInterval) {
 }
 
 BOOST_AUTO_TEST_CASE(block_subsidy_test) {
-    const auto chainParams =
-        CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto chainParams = CreateChainParams(CBaseChainParams::MAIN);
     // As in main
     TestBlockSubsidyHalvings(chainParams->GetConsensus());
     // As in regtest
@@ -66,8 +62,7 @@ BOOST_AUTO_TEST_CASE(block_subsidy_test) {
 }
 
 BOOST_AUTO_TEST_CASE(subsidy_limit_test) {
-    const auto chainParams =
-        CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto chainParams = CreateChainParams(CBaseChainParams::MAIN);
     Amount nSum = Amount::zero();
     for (int nHeight = 0; nHeight < 14000000; nHeight += 1000) {
         Amount nSubsidy = GetBlockSubsidy(nHeight, chainParams->GetConsensus());
@@ -82,9 +77,8 @@ static CBlock makeLargeDummyBlock(const size_t num_tx) {
     CBlock block;
     block.vtx.reserve(num_tx);
 
-    CTransaction tx;
     for (size_t i = 0; i < num_tx; i++) {
-        block.vtx.push_back(MakeTransactionRef(tx));
+        block.vtx.push_back(MakeTransactionRef());
     }
     return block;
 }
@@ -96,13 +90,15 @@ static CBlock makeLargeDummyBlock(const size_t num_tx) {
  * 10 * MAX_TX_SIZE.
  */
 BOOST_AUTO_TEST_CASE(validation_load_external_block_file) {
-    fs::path tmpfile_name = gArgs.GetDataDirNet() / "block.dat";
+    fs::path tmpfile_name =
+        SetDataDir("validation_load_external_block_file") / "block.dat";
 
-    FILE *fp = fopen(fs::PathToString(tmpfile_name).c_str(), "wb+");
+    FILE *fp = fopen(tmpfile_name.string().c_str(), "wb+");
 
     BOOST_CHECK(fp != nullptr);
 
-    const CChainParams &chainparams = m_node.chainman->GetParams();
+    const Config &config = GetConfig();
+    const CChainParams &chainparams = config.GetChainParams();
 
     // serialization format is:
     // message start magic, size of block, block
@@ -112,7 +108,7 @@ BOOST_AUTO_TEST_CASE(validation_load_external_block_file) {
 
     BOOST_CHECK_EQUAL(nwritten, 1UL);
 
-    CTransaction empty_tx;
+    const auto &empty_tx = CTransaction::null;
     size_t empty_tx_size = GetSerializeSize(empty_tx, CLIENT_VERSION);
 
     size_t num_tx = (10 * MAX_TX_SIZE) / empty_tx_size;
@@ -130,35 +126,7 @@ BOOST_AUTO_TEST_CASE(validation_load_external_block_file) {
     }
 
     fseek(fp, 0, SEEK_SET);
-    BOOST_CHECK_NO_THROW(
-        { m_node.chainman->ActiveChainstate().LoadExternalBlockFile(fp, 0); });
-}
-
-//! Test retrieval of valid assumeutxo values.
-BOOST_AUTO_TEST_CASE(test_assumeutxo) {
-    const auto params =
-        CreateChainParams(*m_node.args, CBaseChainParams::REGTEST);
-
-    // These heights don't have assumeutxo configurations associated, per the
-    // contents of chainparams.cpp.
-    std::vector<int> bad_heights{0, 100, 111, 115, 209, 211};
-
-    for (auto empty : bad_heights) {
-        const auto out = ExpectedAssumeutxo(empty, *params);
-        BOOST_CHECK(!out);
-    }
-
-    const auto out110 = *ExpectedAssumeutxo(110, *params);
-    BOOST_CHECK_EQUAL(
-        out110.hash_serialized.ToString(),
-        "d754ca97ef24c5132f8d2147c19310b7a6bd136766430304735a73372fe36213");
-    BOOST_CHECK_EQUAL(out110.nChainTx, (unsigned int)110);
-
-    const auto out210 = *ExpectedAssumeutxo(210, *params);
-    BOOST_CHECK_EQUAL(
-        out210.hash_serialized.ToString(),
-        "73b4bc8dd69649c6e9ede39b156713109bf044d2466661a3fe8a8b91ba601849");
-    BOOST_CHECK_EQUAL(out210.nChainTx, (unsigned int)210);
+    BOOST_CHECK_NO_THROW({ LoadExternalBlockFile(config, fp, 0); });
 }
 
 BOOST_AUTO_TEST_SUITE_END()

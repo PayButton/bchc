@@ -142,6 +142,7 @@ function(_internal_custom_check_linker_flag RESULT FLAG)
 
 	# Save the current linker flags
 	set(SAVED_CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
+	set(SAVE_CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
 
 	# Append the flag under test to the linker flags
 	string(APPEND CMAKE_EXE_LINKER_FLAGS " ${FLAG} ${ARGN}")

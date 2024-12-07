@@ -1,13 +1,18 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/platformstyle.h>
 
+#include <qt/guiconstants.h>
+
 #include <QApplication>
 #include <QColor>
+#include <QIcon>
 #include <QImage>
 #include <QPalette>
+#include <QPixmap>
 
 static const struct {
     const char *platformId;
@@ -21,6 +26,8 @@ static const struct {
                        {"windows", true, false, false},
                        /* Other: linux, unix, ... */
                        {"other", true, true, false}};
+static const unsigned platform_styles_count =
+    sizeof(platform_styles) / sizeof(*platform_styles);
 
 namespace {
 
@@ -106,16 +113,21 @@ QIcon PlatformStyle::SingleColorIcon(const QIcon &icon) const {
     return ColorizeIcon(icon, SingleColor());
 }
 
+QIcon PlatformStyle::TextColorIcon(const QString &filename) const {
+    return ColorizeIcon(filename, TextColor());
+}
+
 QIcon PlatformStyle::TextColorIcon(const QIcon &icon) const {
     return ColorizeIcon(icon, TextColor());
 }
 
 const PlatformStyle *PlatformStyle::instantiate(const QString &platformId) {
-    for (const auto &platform_style : platform_styles) {
-        if (platformId == platform_style.platformId) {
-            return new PlatformStyle(
-                platform_style.platformId, platform_style.imagesOnButtons,
-                platform_style.colorizeIcons, platform_style.useExtraSpacing);
+    for (unsigned x = 0; x < platform_styles_count; ++x) {
+        if (platformId == platform_styles[x].platformId) {
+            return new PlatformStyle(platform_styles[x].platformId,
+                                     platform_styles[x].imagesOnButtons,
+                                     platform_styles[x].colorizeIcons,
+                                     platform_styles[x].useExtraSpacing);
         }
     }
     return nullptr;

@@ -1,4 +1,5 @@
-# Bitcoin ABC 0.14.5 Release Notes
+Bitcoin ABC 0.14.5
+==================
 
 Bitcoin ABC version 0.14.5 is now available from:
 
@@ -15,5 +16,6 @@ This release includes the following features and fixes:
 - Various refactoring and cleanups
 
 NOTE: Change in default value:
+
 - 'forcednsseed' is enabled by default to increase
   chance of good connection to UAHF network (see D360)

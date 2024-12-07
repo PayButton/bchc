@@ -1,9 +1,9 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2019-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_BITCOIN_H
-#define BITCOIN_QT_BITCOIN_H
+#pragma once
 
 #if defined(HAVE_CONFIG_H)
 #include <config/bitcoin-config.h>
@@ -11,10 +11,8 @@
 
 #include <QApplication>
 
-#include <cassert>
 #include <memory>
-
-#include <interfaces/node.h>
+#include <vector>
 
 class BitcoinGUI;
 class ClientModel;
@@ -25,18 +23,22 @@ class OptionsModel;
 class PaymentServer;
 class PlatformStyle;
 class RPCServer;
-class SplashScreen;
 class WalletController;
 class WalletModel;
 
+namespace interfaces {
+class Handler;
+class Node;
+} // namespace interfaces
+
 /**
- * Class encapsulating Bitcoin ABC startup and shutdown.
+ * Class encapsulating Bitcoin Cash Node startup and shutdown.
  * Allows running startup and shutdown in a different thread from the UI thread.
  */
-class BitcoinABC : public QObject {
+class BitcoinCashNode : public QObject {
     Q_OBJECT
 public:
-    explicit BitcoinABC(interfaces::Node &node);
+    explicit BitcoinCashNode(interfaces::Node &node);
 
 public Q_SLOTS:
     void initialize(Config *config, RPCServer *rpcServer,
@@ -44,8 +46,7 @@ public Q_SLOTS:
     void shutdown();
 
 Q_SIGNALS:
-    void initializeResult(bool success,
-                          interfaces::BlockAndHeaderTipInfo tip_info);
+    void initializeResult(bool success);
     void shutdownResult();
     void runawayException(const QString &message);
 
@@ -60,7 +61,7 @@ private:
 class BitcoinApplication : public QApplication {
     Q_OBJECT
 public:
-    explicit BitcoinApplication();
+    explicit BitcoinApplication(interfaces::Node &node, int &argc, char **argv);
     ~BitcoinApplication();
 
 #ifdef ENABLE_WALLET
@@ -71,8 +72,6 @@ public:
     void parameterSetup();
     /// Create options model
     void createOptionsModel(bool resetSettings);
-    /// Initialize prune setting
-    void InitializePruneSetting(bool prune);
     /// Create main window
     void createWindow(const Config *, const NetworkStyle *networkStyle);
     /// Create splash screen
@@ -96,15 +95,8 @@ public:
     /// Setup platform style
     void setupPlatformStyle();
 
-    interfaces::Node &node() const {
-        assert(m_node);
-        return *m_node;
-    }
-    void setNode(interfaces::Node &node);
-
 public Q_SLOTS:
-    void initializeResult(bool success,
-                          interfaces::BlockAndHeaderTipInfo tip_info);
+    void initializeResult(bool success);
     void shutdownResult();
     /// Handle runaway exceptions. Shows a message box with the problem and
     /// quits the program.
@@ -114,11 +106,13 @@ Q_SIGNALS:
     void requestedInitialize(Config *config, RPCServer *rpcServer,
                              HTTPRPCRequestProcessor *httpRPCRequestProcessor);
     void requestedShutdown();
-    void splashFinished();
+    void stopThread();
+    void splashFinished(QWidget *window);
     void windowShown(BitcoinGUI *window);
 
 private:
     QThread *coreThread;
+    interfaces::Node &m_node;
     OptionsModel *optionsModel;
     ClientModel *clientModel;
     BitcoinGUI *window;
@@ -130,12 +124,8 @@ private:
     int returnValue;
     const PlatformStyle *platformStyle;
     std::unique_ptr<QWidget> shutdownWindow;
-    SplashScreen *m_splash = nullptr;
-    interfaces::Node *m_node = nullptr;
 
     void startThread();
 };
 
 int GuiMain(int argc, char *argv[]);
-
-#endif // BITCOIN_QT_BITCOIN_H

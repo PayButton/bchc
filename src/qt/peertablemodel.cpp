@@ -1,15 +1,19 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/peertablemodel.h>
 
+#include <qt/clientmodel.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 
 #include <interfaces/node.h>
+#include <sync.h>
+#include <validation.h> // for cs_main
 
-#include <utility>
+#include <algorithm>
 
 #include <QDebug>
 #include <QList>
@@ -28,17 +32,15 @@ bool NodeLessThan::operator()(const CNodeCombinedStats &left,
         case PeerTableModel::NetNodeId:
             return pLeft->nodeid < pRight->nodeid;
         case PeerTableModel::Address:
-            return pLeft->m_addr_name.compare(pRight->m_addr_name) < 0;
-        case PeerTableModel::Network:
-            return pLeft->m_network < pRight->m_network;
+            return pLeft->addrName.compare(pRight->addrName) < 0;
+        case PeerTableModel::Subversion:
+            return pLeft->cleanSubVer.compare(pRight->cleanSubVer) < 0;
         case PeerTableModel::Ping:
-            return pLeft->m_min_ping_time < pRight->m_min_ping_time;
+            return pLeft->dMinPing < pRight->dMinPing;
         case PeerTableModel::Sent:
             return pLeft->nSendBytes < pRight->nSendBytes;
         case PeerTableModel::Received:
             return pLeft->nRecvBytes < pRight->nRecvBytes;
-        case PeerTableModel::Subversion:
-            return pLeft->cleanSubVer.compare(pRight->cleanSubVer) < 0;
     }
 
     return false;
@@ -100,8 +102,11 @@ public:
     }
 };
 
-PeerTableModel::PeerTableModel(interfaces::Node &node, QObject *parent)
-    : QAbstractTableModel(parent), m_node(node), timer(nullptr) {
+PeerTableModel::PeerTableModel(interfaces::Node &node, ClientModel *parent)
+    : QAbstractTableModel(parent), m_node(node), clientModel(parent),
+      timer(nullptr) {
+    columns << tr("NodeId") << tr("Node/Service") << tr("Ping") << tr("Sent")
+            << tr("Received") << tr("User Agent");
     priv.reset(new PeerTablePriv());
 
     // set up timer for auto refresh
@@ -148,25 +153,18 @@ QVariant PeerTableModel::data(const QModelIndex &index, int role) const {
             case NetNodeId:
                 return (qint64)rec->nodeStats.nodeid;
             case Address:
-                // prepend to peer address down-arrow symbol for inbound
-                // connection and up-arrow for outbound connection
-                return QString(rec->nodeStats.fInbound ? "↓ " : "↑ ") +
-                       QString::fromStdString(rec->nodeStats.m_addr_name);
-            case Network:
-                return GUIUtil::NetworkToQString(rec->nodeStats.m_network);
+                return QString::fromStdString(rec->nodeStats.addrName);
+            case Subversion:
+                return QString::fromStdString(rec->nodeStats.cleanSubVer);
             case Ping:
-                return GUIUtil::formatPingTime(rec->nodeStats.m_min_ping_time);
+                return GUIUtil::formatPingTime(rec->nodeStats.dMinPing);
             case Sent:
                 return GUIUtil::formatBytes(rec->nodeStats.nSendBytes);
             case Received:
                 return GUIUtil::formatBytes(rec->nodeStats.nRecvBytes);
-            case Subversion:
-                return QString::fromStdString(rec->nodeStats.cleanSubVer);
         }
     } else if (role == Qt::TextAlignmentRole) {
         switch (index.column()) {
-            case Network:
-                return QVariant(Qt::AlignCenter);
             case Ping:
             case Sent:
             case Received:

@@ -42,9 +42,8 @@ final class LogLinter extends ArcanistLinter {
     $fileContent = Filesystem::readFile($absPath);
 
     /* Recursive patterns to match balanced parenthesis and quotes content. */
-    $logFnNamesPattern = 'WalletLogPrintf?|LogPrintf?|log!|log_chronik!';
-    $logPrintPattern = '/(?:'.$logFnNamesPattern.')(\((?>[^()]|(?1))*\));/';
-    $logPrintContentPattern = '/("(?>[^"]|(?1))*")\s*(?:,|\))/U';
+    $logPrintPattern = '/(?:Wallet)?LogPrintf?(\((?>[^()]|(?1))*\));/';
+    $logPrintContentPattern = '/("(?>[^"]|(?1))*")(?:,|\))/U';
 
     if (preg_match_all($logPrintPattern, $fileContent, $logPrints,
       PREG_OFFSET_CAPTURE)) {

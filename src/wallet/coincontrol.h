@@ -1,21 +1,14 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_WALLET_COINCONTROL_H
-#define BITCOIN_WALLET_COINCONTROL_H
+#pragma once
 
-#include <outputtype.h>
 #include <primitives/transaction.h>
-#include <script/standard.h>
+#include <wallet/wallet.h>
 
 #include <optional>
-
-const int DEFAULT_MIN_DEPTH = 0;
-const int DEFAULT_MAX_DEPTH = 9999999;
-
-//! Default for -avoidpartialspends
-static constexpr bool DEFAULT_AVOIDPARTIALSPENDS = false;
 
 /** Coin Control Features. */
 class CCoinControl {
@@ -23,10 +16,8 @@ public:
     CTxDestination destChange;
     //! Override the default change type if set, ignored if destChange is set
     std::optional<OutputType> m_change_type;
-    //! If false, only selected inputs are used
-    bool m_add_inputs;
-    //! If false, only safe inputs will be used (confirmed or self transfers)
-    bool m_include_unsafe_inputs = false;
+    //! If false, only safe (confirmed) inputs will be used
+    bool m_include_unsafe_inputs = DEFAULT_INCLUDE_UNSAFE_INPUTS;
     //! If false, allows unselected inputs, but requires all selected inputs be
     //! used
     bool fAllowOtherInputs;
@@ -40,12 +31,10 @@ public:
     std::optional<unsigned int> m_confirm_target;
     //! Avoid partial use of funds sent to a given address
     bool m_avoid_partial_spends;
-    //! Forbids inclusion of dirty (previously used) addresses
-    bool m_avoid_address_reuse;
-    //! Minimum chain depth value for coin availability
-    int m_min_depth = DEFAULT_MIN_DEPTH;
-    //! Maximum chain depth value for coin availability
-    int m_max_depth = DEFAULT_MAX_DEPTH;
+    //! Allow spending of coins that have tokens on them
+    bool m_allow_tokens;
+    //! Only select coins that have tokens on them (requires m_allow_tokens == true)
+    bool m_tokens_only;
 
     CCoinControl() { SetNull(); }
 
@@ -70,5 +59,3 @@ public:
 private:
     std::set<COutPoint> setSelected;
 };
-
-#endif // BITCOIN_WALLET_COINCONTROL_H

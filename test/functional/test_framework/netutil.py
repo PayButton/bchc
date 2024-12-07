@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -7,11 +8,11 @@ Roughly based on http://voorloopnul.com/blog/a-python-netstat-in-less-than-100-l
 """
 
 import array
+from binascii import unhexlify
 import os
 import socket
 import struct
 import sys
-from errno import EINVAL, ENOENT
 
 # STATE_ESTABLISHED = '01'
 # STATE_SYN_SENT = '02'
@@ -22,63 +23,52 @@ from errno import EINVAL, ENOENT
 # STATE_CLOSE = '07'
 # STATE_CLOSE_WAIT = '08'
 # STATE_LAST_ACK = '09'
-STATE_LISTEN = "0A"
+STATE_LISTEN = '0A'
 # STATE_CLOSING = '0B'
 
 
 def get_socket_inodes(pid):
-    """
+    '''
     Get list of socket inodes for process pid.
-    """
-    base = f"/proc/{pid}/fd"
+    '''
+    base = '/proc/{}/fd'.format(pid)
     inodes = []
     for item in os.listdir(base):
-        try:
-            target = os.readlink(os.path.join(base, item))
-        except OSError as err:
-            if err.errno == ENOENT:
-                # The file which is gone in the meantime
-                continue
-            elif err.errno == EINVAL:
-                # Not a link
-                continue
-            else:
-                raise
-        else:
-            if target.startswith("socket:"):
-                inodes.append(int(target[8:-1]))
+        target = os.readlink(os.path.join(base, item))
+        if target.startswith('socket:'):
+            inodes.append(int(target[8:-1]))
     return inodes
 
 
 def _remove_empty(array):
-    return [x for x in array if x != ""]
+    return [x for x in array if x != '']
 
 
 def _convert_ip_port(array):
-    host, port = array.split(":")
+    host, port = array.split(':')
     # convert host from mangled-per-four-bytes form as used by kernel
-    host = bytes.fromhex(host)
-    host_out = ""
+    host = unhexlify(host)
+    host_out = ''
     for x in range(0, len(host) // 4):
-        (val,) = struct.unpack("=I", host[x * 4 : (x + 1) * 4])
-        host_out += f"{val:08x}"
+        (val,) = struct.unpack('=I', host[x * 4:(x + 1) * 4])
+        host_out += '{:08x}'.format(val)
 
     return host_out, int(port, 16)
 
 
-def netstat(typ="tcp"):
-    """
+def netstat(typ='tcp'):
+    '''
     Function to return a list with status of tcp connections at linux systems
     To get pid of all network process running on system, you must run this script
     as superuser
-    """
-    with open(f"/proc/net/{typ}", "r", encoding="utf8") as f:
+    '''
+    with open('/proc/net/' + typ, 'r', encoding='utf8') as f:
         content = f.readlines()
         content.pop(0)
     result = []
     for line in content:
         # Split lines and remove empty spaces.
-        line_array = _remove_empty(line.split(" "))
+        line_array = _remove_empty(line.split(' '))
         tcp_id = line_array[0]
         l_addr = _convert_ip_port(line_array[1])
         r_addr = _convert_ip_port(line_array[2])
@@ -91,24 +81,23 @@ def netstat(typ="tcp"):
 
 
 def get_bind_addrs(pid):
-    """
+    '''
     Get bind addresses as (host,port) tuples for process pid.
-    """
+    '''
     inodes = get_socket_inodes(pid)
     bind_addrs = []
-    for conn in netstat("tcp") + netstat("tcp6"):
+    for conn in netstat('tcp') + netstat('tcp6'):
         if conn[3] == STATE_LISTEN and conn[4] in inodes:
             bind_addrs.append(conn[1])
     return bind_addrs
-
 
 # from: http://code.activestate.com/recipes/439093/
 
 
 def all_interfaces():
-    """
+    '''
     Return all interfaces that are up
-    """
+    '''
     # Linux only, so only import when required
     import fcntl
 
@@ -117,44 +106,37 @@ def all_interfaces():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     max_possible = 8  # initial value
     while True:
-        inbytes = max_possible * struct_size
-        names = array.array("B", b"\0" * inbytes)
-        outbytes = struct.unpack(
-            "iL",
-            fcntl.ioctl(
-                s.fileno(),
-                0x8912,  # SIOCGIFCONF
-                struct.pack("iL", inbytes, names.buffer_info()[0]),
-            ),
-        )[0]
-        if outbytes == inbytes:
+        bytes = max_possible * struct_size
+        names = array.array('B', b'\0' * bytes)
+        outbytes = struct.unpack('iL', fcntl.ioctl(
+            s.fileno(),
+            0x8912,  # SIOCGIFCONF
+            struct.pack('iL', bytes, names.buffer_info()[0])
+        ))[0]
+        if outbytes == bytes:
             max_possible *= 2
         else:
             break
     namestr = names.tobytes()
-    return [
-        (
-            namestr[i : i + 16].split(b"\0", 1)[0],
-            socket.inet_ntoa(namestr[i + 20 : i + 24]),
-        )
-        for i in range(0, outbytes, struct_size)
-    ]
+    return [(namestr[i:i + 16].split(b'\0', 1)[0],
+             socket.inet_ntoa(namestr[i + 20:i + 24]))
+            for i in range(0, outbytes, struct_size)]
 
 
 def addr_to_hex(addr):
-    """
+    '''
     Convert string IPv4 or IPv6 address to binary address as returned by
     get_bind_addrs.
     Very naive implementation that certainly doesn't work for all IPv6 variants.
-    """
-    if "." in addr:  # IPv4
-        addr = [int(x) for x in addr.split(".")]
-    elif ":" in addr:  # IPv6
+    '''
+    if '.' in addr:  # IPv4
+        addr = [int(x) for x in addr.split('.')]
+    elif ':' in addr:  # IPv6
         sub = [[], []]  # prefix, suffix
         x = 0
-        addr = addr.split(":")
+        addr = addr.split(':')
         for i, comp in enumerate(addr):
-            if comp == "":
+            if comp == '':
                 # skip empty component at beginning or end
                 if i == 0 or i == (len(addr) - 1):
                     continue
@@ -163,27 +145,26 @@ def addr_to_hex(addr):
             else:  # two bytes per component
                 val = int(comp, 16)
                 sub[x].append(val >> 8)
-                sub[x].append(val & 0xFF)
+                sub[x].append(val & 0xff)
         nullbytes = 16 - len(sub[0]) - len(sub[1])
         assert (x == 0 and nullbytes == 0) or (x == 1 and nullbytes > 0)
         addr = sub[0] + ([0] * nullbytes) + sub[1]
     else:
-        raise ValueError(f"Could not parse address {addr}")
+        raise ValueError('Could not parse address {}'.format(addr))
     return bytearray(addr).hex()
 
 
 def test_ipv6_local():
-    """
+    '''
     Check for (local) IPv6 support.
-    """
+    '''
     import socket
-
     # By using SOCK_DGRAM this will not actually make a connection, but it will
     # fail if there is no route to IPv6 localhost.
     have_ipv6 = True
     try:
-        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        s.connect(("::1", 0))
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.connect(('::1', 0))
     except socket.error:
         have_ipv6 = False
     return have_ipv6

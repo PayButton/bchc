@@ -6,6 +6,8 @@ FORMS += \
     ../src/qt/forms/editaddressdialog.ui \
     ../src/qt/forms/helpmessagedialog.ui \
     ../src/qt/forms/intro.ui \
+    ../src/qt/forms/legacyaddressstopdialog.ui \
+    ../src/qt/forms/legacyaddresswarndialog.ui \
     ../src/qt/forms/openuridialog.ui \
     ../src/qt/forms/optionsdialog.ui \
     ../src/qt/forms/overviewpage.ui \
@@ -16,7 +18,6 @@ FORMS += \
     ../src/qt/forms/sendcoinsentry.ui \
     ../src/qt/forms/signverifymessagedialog.ui \
     ../src/qt/forms/transactiondescdialog.ui \
-    ../src/qt/forms/createwalletdialog.ui
 
 RESOURCES += \
     ../src/qt/bitcoin.qrc

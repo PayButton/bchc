@@ -2181,7 +2181,7 @@ Var vänlig och försök igen.</translation>
     <name>WalletView</name>
     </context>
 <context>
-    <name>bitcoin-abc</name>
+    <name>bitcoin-cash-node</name>
     <message>
         <source>Options:</source>
         <translation>Inställningar:</translation>
@@ -2239,8 +2239,8 @@ Var vänlig och försök igen.</translation>
         <translation>Kunde inte starta HTTP-server. Se avlusningsloggen för detaljer.</translation>
     </message>
     <message>
-        <source>Bitcoin ABC</source>
-        <translation>Bitcoin ABC</translation>
+        <source>Bitcoin Cash Node</source>
+        <translation>Bitcoin Cash Node</translation>
     </message>
     <message>
         <source>The %s developers</source>
@@ -2795,8 +2795,8 @@ Var vänlig och försök igen.</translation>
         <translation>Håll inte transaktioner i minnespoolen längre än &lt;n&gt; timmar (förvalt: %u)</translation>
     </message>
     <message>
-        <source>Equivalent bytes per sigop in transactions for relay and mining (default: %u)</source>
-        <translation>Samma antal byte per sigop i transaktioner som vi reläar och bryter (förvalt: %u)</translation>
+        <source>Equivalent bytes per sigcheck in transactions for relay and mining (default: %u)</source>
+        <translation>Samma antal byte per sigcheck i transaktioner som vi reläar och bryter (förvalt: %u)</translation>
     </message>
     <message>
         <source>Fees (in %s/kB) smaller than this are considered zero fee for transaction creation (default: %s)</source>

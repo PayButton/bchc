@@ -6,14 +6,14 @@
 #define BITCOIN_UTIL_RESULT_H
 
 #include <attributes.h>
-#include <util/translation.h>
 
 #include <variant>
+#include <string>
 
 namespace util {
 
 struct Error {
-    bilingual_str message;
+    std::string message;
 };
 
 //! The util::Result class provides a standard way for functions to return
@@ -38,10 +38,10 @@ template <class M> class Result {
 private:
     using T = std::conditional_t<std::is_same_v<M, void>, std::monostate, M>;
 
-    std::variant<bilingual_str, T> m_variant;
+    std::variant<std::string, T> m_variant;
 
     template <typename FT>
-    friend bilingual_str ErrorString(const Result<FT> &result);
+    friend std::string ErrorString(const Result<FT> &result);
 
 public:
     // constructor for void
@@ -53,11 +53,11 @@ public:
     //! std::optional methods, so functions returning optional<T> can change to
     //! return Result<T> with minimal changes to existing code, and vice versa.
     bool has_value() const noexcept { return m_variant.index() == 1; }
-    const T &value() const LIFETIMEBOUND {
+    const T &value() const {
         assert(has_value());
         return std::get<1>(m_variant);
     }
-    T &value() LIFETIMEBOUND {
+    T &value() {
         assert(has_value());
         return std::get<1>(m_variant);
     }
@@ -69,14 +69,14 @@ public:
                            : std::forward<U>(default_value);
     }
     explicit operator bool() const noexcept { return has_value(); }
-    const T *operator->() const LIFETIMEBOUND { return &value(); }
-    const T &operator*() const LIFETIMEBOUND { return value(); }
-    T *operator->() LIFETIMEBOUND { return &value(); }
-    T &operator*() LIFETIMEBOUND { return value(); }
+    const T *operator->() const { return &value(); }
+    const T &operator*() const { return value(); }
+    T *operator->() { return &value(); }
+    T &operator*() { return value(); }
 };
 
-template <typename T> bilingual_str ErrorString(const Result<T> &result) {
-    return result ? bilingual_str{} : std::get<0>(result.m_variant);
+template <typename T> std::string ErrorString(const Result<T> &result) {
+    return result ? std::string{} : std::get<0>(result.m_variant);
 }
 } // namespace util
 

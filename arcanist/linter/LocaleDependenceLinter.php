@@ -4,38 +4,6 @@
  * Check for locale dependent functions.
  * Unnecessary locale dependence can cause bugs that are very tricky to isolate
  * and fix.
- *
- * Be aware that bitcoind and bitcoin-qt differ in terms of localization: Qt
- * opts in to POSIX localization by running setlocale(LC_ALL, "") on startup,
- * whereas no such call is made in bitcoind.
- *
- * Qt runs setlocale(LC_ALL, "") on initialization. This installs the locale
- * specified by the user's LC_ALL (or LC_*) environment variable as the new
- * C locale.
- *
- * In contrast, bitcoind does not opt in to localization -- no call to
- * setlocale(LC_ALL, "") is made and the environment variables LC_* are
- * thus ignored.
- *
- * This results in situations where bitcoind is guaranteed to be running
- * with the classic locale ("C") whereas the locale of bitcoin-qt will vary
- * depending on the user's environment variables.
- *
- * An example: Assuming the environment variable LC_ALL=de_DE then the
- * call std::to_string(1.23) will return "1.230000" in bitcoind but
- * "1,230000" in bitcoin-qt.
- *
- * From the Qt documentation:
- * "On Unix/Linux Qt is configured to use the system locale settings by default.
- *  This can cause a conflict when using POSIX functions, for instance, when
- *  converting between data types such as floats and strings, since the notation
- *  may differ between locales. To get around this problem, call the POSIX
- *  function setlocale(LC_NUMERIC,"C") right after initializing QApplication,
- *  QGuiApplication or QCoreApplication to reset the locale that is used for
- *  number formatting to "C"-locale."
- *
- * See https://doc.qt.io/qt-5/qcoreapplication.html#locale-settings and
- * https://stackoverflow.com/a/34878283 for more details.
  */
 final class LocaleDependenceLinter extends ArcanistLinter {
 
@@ -49,7 +17,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
         "vsnprintf"
     ],
     "src/httprpc.cpp" => ["trim"],
-    "src/node/blockstorage.cpp" => ["atoi"],
+    "src/init.cpp" => ["atoi"],
     "src/netbase.cpp" => ["to_lower"],
     "src/qt/rpcconsole.cpp" => [
       "atoi",
@@ -61,22 +29,11 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "split",
       "is_space",
     ],
-    "src/seeder/main.cpp" => [
-        "strtoull",
-        "strcasecmp",
-        "strftime",
-    ],
-    "src/seeder/dns.cpp" => ["strcasecmp"],
     "src/torcontrol.cpp" => [
       "atoi",
       "strtol",
     ],
-    "src/test/fuzz/locale.cpp" => [
-      "atoi",
-      "setlocale",
-    ],
-    "src/test/fuzz/parse_numbers.cpp" => ["atoi"],
-    "src/common/args.cpp" => ["atoi"],
+    "src/util/system.cpp" => ["atoi"],
     "src/util/strencodings.cpp" => [
       "atoi",
       "strtol",
@@ -85,10 +42,6 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "strtoull",
     ],
     "src/util/strencodings.h" => ["atoi"],
-    // False positive DbEnv::strerror
-    "src/wallet/bdb.cpp" => ["strerror"],
-    // Outside this function use `SysErrorString`
-    "src/util/syserror.cpp" => ["strerror"],
   );
 
   const LOCALE_DEPENDENT_FUNCTIONS = array(
@@ -106,7 +59,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
     "fgetwc",
     "fgetws",
     "fold_case",   // boost::locale::fold_case
-    "fprintf",     // (via vfprintf)
+    //"fprintf"      // (via vfprintf)
     "fputwc",
     "fputws",
     "fscanf",      // (via __vfscanf)
@@ -153,7 +106,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
     "mbtowc",      // LC_CTYPE
     "mktime",
     "normalize",   // boost::locale::normalize
-    "printf",      // LC_NUMERIC
+    //"printf"       // LC_NUMERIC
     "putwc",
     "putwchar",
     "scanf",       // LC_NUMERIC
@@ -161,8 +114,6 @@ final class LocaleDependenceLinter extends ArcanistLinter {
     "snprintf",
     "sprintf",
     "sscanf",
-    "std::locale::global",
-    "std::to_string",
     "stod",
     "stof",
     "stoi",
@@ -174,7 +125,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
     "strcasecmp",
     "strcasestr",
     "strcoll",     // LC_COLLATE
-    "strerror",
+    //"strerror"
     "strfmon",
     "strftime",    // LC_TIME
     "strncasecmp",
@@ -300,7 +251,7 @@ ADVICE;
     }
 
     $anyFunction = implode("|", self::LOCALE_DEPENDENT_FUNCTIONS);
-    $pattern = "/[^\w`'\"<>](?P<function>".$anyFunction.")(_r|_s)?[^\w`'\"<>]/";
+    $pattern = "/[^\w`'\"<>](?P<function>".$anyFunction."(_r|_s)?)[^\w`'\"<>]/";
 
     foreach ($fileContent as $lineNumber => $lineContent) {
       // Filter comments and string constants

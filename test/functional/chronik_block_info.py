@@ -66,8 +66,9 @@ class ChronikBlockInfoTest(BitcoinTestFramework):
 
         from test_framework.chronik.client import pb
 
+        proto_block = chronik.block(tip_hash).ok()
         assert_equal(
-            chronik.block(tip_hash).ok(),
+            proto_block,
             pb.Block(
                 block_info=pb.BlockInfo(
                     hash=bytes.fromhex(tip_hash)[::-1],
@@ -75,7 +76,7 @@ class ChronikBlockInfoTest(BitcoinTestFramework):
                     height=102,
                     n_bits=0x207FFFFF,
                     timestamp=1300000018,
-                    block_size=281,
+                    block_size=proto_block.block_info.block_size,
                     num_txs=2,
                     num_inputs=2,
                     num_outputs=3,

@@ -38,23 +38,21 @@ final class ClangFormatLinter extends ArcanistExternalLinter {
     list($stdout) = execx('%C -version', $this->getExecutableCommand());
 
     $matches = array();
-    $regex = '/clang-format version (?P<version>\d+\.\d+)\./';
+    $regex = '/^clang-format version (?P<version>\d+\.\d+)\./';
     if (preg_match($regex, $stdout, $matches)) {
       $version = $matches['version'];
     } else {
-      throw new Exception(pht('Unable to read clang-format version. Please '.
-                              'make sure clang-format version 12.x is '.
-                              'installed and in the PATH.'));
+      return false;
     }
 
     /*
-     * FIXME: This is a hack to only allow for clang-format version 12.x.
+     * FIXME: This is a hack to only allow for clang-format version 8.x.
      * The .arclint `version` field only allow to filter versions using `=`,
      * `>`, `<`, `>=` or `<=`. There is no facility to define that the required
-     * version should be >= 12.0 and < 13.0.
+     * version should be >= 8.0 and < 9.0.
      */
-    if (substr($version, 0, 2) != '12') {
-      throw new Exception(pht('Linter %s requires clang-format version 12.x. '.
+    if ($version[0] != '8') {
+      throw new Exception(pht('Linter %s requires clang-format version 8.x. '.
                               'You have version %s.',
                               ClangFormatLinter::class,
                               $version));

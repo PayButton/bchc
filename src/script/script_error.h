@@ -1,12 +1,10 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCRIPT_SCRIPT_ERROR_H
-#define BITCOIN_SCRIPT_SCRIPT_ERROR_H
-
-#include <string>
+#pragma once
 
 enum class ScriptError {
     OK = 0,
@@ -67,6 +65,7 @@ enum class ScriptError {
     CLEANSTACK,
     MINIMALIF,
     SIG_NULLFAIL,
+    MINIMALNUM,
 
     /* Schnorr */
     SIG_BADLENGTH,
@@ -82,12 +81,27 @@ enum class ScriptError {
     /* Auxiliary errors (unused by interpreter) */
     SIGCHECKS_LIMIT_EXCEEDED,
 
+    /* Operands checks Bigger Integers (64-bit) */
+    INVALID_NUMBER_RANGE_64_BIT,
+
+    /* Native Introspection */
+    CONTEXT_NOT_PRESENT,
+    LIMITED_CONTEXT_NO_SIBLING_INFO,
+    INVALID_TX_INPUT_INDEX,
+    INVALID_TX_OUTPUT_INDEX,
+
+    /* Targeted VM Limits Chip */
+    OP_COST,
+    TOO_MANY_HASH_ITERS,
+    CONDITIONAL_STACK_DEPTH,
+
+    /* Big Integers */
+    INVALID_NUMBER_RANGE_BIG_INT,
+
     ERROR_COUNT,
 };
 
-#define SCRIPT_ERR_LAST ScriptError::ERROR_COUNT
-
-std::string ScriptErrorString(const ScriptError error);
+const char *ScriptErrorString(const ScriptError error);
 
 namespace {
 
@@ -106,5 +120,3 @@ inline bool set_error(ScriptError *ret, const ScriptError serror) {
 }
 
 } // namespace
-
-#endif // BITCOIN_SCRIPT_SCRIPT_ERROR_H

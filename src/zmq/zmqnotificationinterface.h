@@ -1,14 +1,14 @@
 // Copyright (c) 2015-2018 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_ZMQ_ZMQNOTIFICATIONINTERFACE_H
-#define BITCOIN_ZMQ_ZMQNOTIFICATIONINTERFACE_H
+#pragma once
 
 #include <validationinterface.h>
 
-#include <functional>
 #include <list>
+#include <map>
 #include <memory>
 
 class CBlockIndex;
@@ -20,27 +20,23 @@ public:
 
     std::list<const CZMQAbstractNotifier *> GetActiveNotifiers() const;
 
-    static std::unique_ptr<CZMQNotificationInterface> Create(
-        std::function<bool(CBlock &, const CBlockIndex &)> get_block_by_index);
+    static CZMQNotificationInterface *Create();
 
 protected:
     bool Initialize();
     void Shutdown();
 
     // CValidationInterface
-    void TransactionAddedToMempool(const CTransactionRef &tx,
-                                   std::shared_ptr<const std::vector<Coin>>,
-                                   uint64_t mempool_sequence) override;
-    void TransactionRemovedFromMempool(const CTransactionRef &tx,
-                                       MemPoolRemovalReason reason,
-                                       uint64_t mempool_sequence) override;
+    void TransactionAddedToMempool(const CTransactionRef &tx, std::shared_ptr<const std::vector<Coin>>) override;
     void BlockConnected(const std::shared_ptr<const CBlock> &pblock,
-                        const CBlockIndex *pindexConnected) override;
-    void BlockDisconnected(const std::shared_ptr<const CBlock> &pblock,
-                           const CBlockIndex *pindexDisconnected) override;
+                        const CBlockIndex *pindexConnected,
+                        const std::vector<CTransactionRef> &vtxConflicted) override;
+    void BlockDisconnected(const std::shared_ptr<const CBlock> &pblock, const CBlockIndex *pindex) override;
     void UpdatedBlockTip(const CBlockIndex *pindexNew,
                          const CBlockIndex *pindexFork,
                          bool fInitialDownload) override;
+    void TransactionDoubleSpent(const CTransactionRef &ptxn,
+                                const DspId &dspId) override;
 
 private:
     CZMQNotificationInterface();
@@ -49,6 +45,4 @@ private:
     std::list<std::unique_ptr<CZMQAbstractNotifier>> notifiers;
 };
 
-extern std::unique_ptr<CZMQNotificationInterface> g_zmq_notification_interface;
-
-#endif // BITCOIN_ZMQ_ZMQNOTIFICATIONINTERFACE_H
+extern CZMQNotificationInterface *g_zmq_notification_interface;

@@ -1,16 +1,16 @@
-// Copyright (c) 2012-2018 The Bitcoin Core developers
+// Copyright (c) 2012-2021 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CHECKQUEUE_H
-#define BITCOIN_CHECKQUEUE_H
+#pragma once
 
 #include <sync.h>
 #include <tinyformat.h>
 #include <util/threadnames.h>
 
 #include <algorithm>
-#include <iterator>
+#include <utility>
 #include <vector>
 
 template <typename T> class CCheckQueueControl;
@@ -18,7 +18,8 @@ template <typename T> class CCheckQueueControl;
 /**
  * Queue for verifications that have to be performed.
  * The verifications are represented by a type T, which must provide an
- * operator(), returning a bool.
+ * operator(), returning a bool. For optimal performance, T should be
+ * efficiently move-constructible and move-assignable.
  *
  * One thread (the master) is assumed to push batches of verifications onto the
  * queue, where they are processed by N-1 worker threads. When the master is
@@ -63,8 +64,8 @@ private:
     bool m_request_stop GUARDED_BY(m_mutex){false};
 
     /** Internal function that does bulk of the verification work. */
-    bool Loop(bool fMaster) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex) {
-        std::condition_variable &cond = fMaster ? m_master_cv : m_worker_cv;
+    bool Loop(bool fMaster) {
+        std::condition_variable& cond = fMaster ? m_master_cv : m_worker_cv;
         std::vector<T> vChecks;
         vChecks.reserve(nBatchSize);
         unsigned int nNow = 0;
@@ -115,10 +116,13 @@ private:
                 nNow = std::max(
                     1U, std::min(nBatchSize, (unsigned int)queue.size() /
                                                  (nTotal + nIdle + 1)));
-                auto start_it = queue.end() - nNow;
-                vChecks.assign(std::make_move_iterator(start_it),
-                               std::make_move_iterator(queue.end()));
-                queue.erase(start_it, queue.end());
+                for (unsigned int i = 0; i < nNow; i++) {
+                    // We want the lock on the mutex to be as short as possible,
+                    // move jobs from the global queue to the local batch
+                    // vector.  Assumption: moving is fast.
+                    vChecks.push_back(std::move(queue.back()));
+                    queue.pop_back();
+                }
                 // Check whether we need to do work at all
                 fOk = fAllOk;
             }
@@ -142,33 +146,32 @@ public:
 
     //! Create a pool of new worker threads.
     void StartWorkerThreads(const int threads_num)
-        EXCLUSIVE_LOCKS_REQUIRED(!m_mutex) {
+    {
         {
-            LOCK(m_mutex);
-            nIdle = 0;
-            nTotal = 0;
-            fAllOk = true;
-        }
-        assert(m_worker_threads.empty());
-        for (int n = 0; n < threads_num; ++n) {
-            m_worker_threads.emplace_back([this, n]() {
-                util::ThreadRename(strprintf("scriptch.%i", n));
-                Loop(false /* worker thread */);
-            });
-        }
+             LOCK(m_mutex);
+             nIdle = 0;
+             nTotal = 0;
+             fAllOk = true;
+         }
+         assert(m_worker_threads.empty());
+         for (int n = 0; n < threads_num; ++n) {
+             m_worker_threads.emplace_back([this, n]() {
+                 util::ThreadRename(strprintf("scriptch.%i", n));
+                 Loop(false /* worker thread */);
+             });
+         }
     }
 
     //! Wait until execution finishes, and return whether all evaluations were
     //! successful.
-    bool Wait() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex) {
-        return Loop(true /* master thread */);
-    }
+    bool Wait() { return Loop(true /* master thread */); }
 
     //! Add a batch of checks to the queue
-    void Add(std::vector<T> &&vChecks) EXCLUSIVE_LOCKS_REQUIRED(!m_mutex) {
+    void Add(std::vector<T> &vChecks) {
         LOCK(m_mutex);
-        queue.insert(queue.end(), std::make_move_iterator(vChecks.begin()),
-                     std::make_move_iterator(vChecks.end()));
+        for (T &check : vChecks) {
+            queue.push_back(std::move(check));
+        }
         nTodo += vChecks.size();
         if (vChecks.size() == 1) {
             m_worker_cv.notify_one();
@@ -178,10 +181,11 @@ public:
     }
 
     //! Stop all of the worker threads.
-    void StopWorkerThreads() EXCLUSIVE_LOCKS_REQUIRED(!m_mutex) {
+    void StopWorkerThreads()
+    {
         WITH_LOCK(m_mutex, m_request_stop = true);
         m_worker_cv.notify_all();
-        for (std::thread &t : m_worker_threads) {
+        for (std::thread& t : m_worker_threads) {
             t.join();
         }
         m_worker_threads.clear();
@@ -221,9 +225,9 @@ public:
         return fRet;
     }
 
-    void Add(std::vector<T> &&vChecks) {
+    void Add(std::vector<T> &vChecks) {
         if (pqueue != nullptr) {
-            pqueue->Add(std::move(vChecks));
+            pqueue->Add(vChecks);
         }
     }
 
@@ -236,5 +240,3 @@ public:
         }
     }
 };
-
-#endif // BITCOIN_CHECKQUEUE_H

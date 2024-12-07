@@ -1,11 +1,10 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2020 The Bitcoin developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCRIPT_SCRIPT_FLAGS_H
-#define BITCOIN_SCRIPT_SCRIPT_FLAGS_H
+#pragma once
 
 /** Script verification flags */
 enum {
@@ -84,10 +83,6 @@ enum {
     //
     SCRIPT_ENABLE_SIGHASH_FORKID = (1U << 16),
 
-    // Do we accept activate replay protection using a different fork id.
-    //
-    SCRIPT_ENABLE_REPLAY_PROTECTION = (1U << 17),
-
     // The exception to CLEANSTACK and P2SH for the recovery of coins sent
     // to p2sh segwit addresses is not allowed.
     SCRIPT_DISALLOW_SEGWIT_RECOVERY = (1U << 20),
@@ -102,8 +97,30 @@ enum {
     // VERIFY_INPUT_SIGCHECKS
     SCRIPT_VERIFY_INPUT_SIGCHECKS = (1U << 22),
 
-    // A utility flag to decide whether we must enforce sigcheck limits.
+    // A utility flag to decide whether we must enforce the per-tx consensus
+    // sigcheck limit. It does not control the sigcheck limits in
+    // policy/consensus.h .
     SCRIPT_ENFORCE_SIGCHECKS = (1U << 23),
-};
 
-#endif // BITCOIN_SCRIPT_SCRIPT_FLAGS_H
+    // Flag that allows us to determine if the script interpreter should allow
+    // 64-bit integer arithmetic and the return of OP_MUL or use the previous
+    // semantics.
+    SCRIPT_64_BIT_INTEGERS = (1U << 24),
+
+    // Native Introspection opcodes.
+    SCRIPT_NATIVE_INTROSPECTION = (1U << 25),
+
+    // Enable p2sh32 (uses OP_HASH256 rather than OP_HASH160)
+    SCRIPT_ENABLE_P2SH_32 = (1U << 26),
+
+    // Enable native tokens support, including all consensus rules & native
+    // introspection op-codes related to them.
+    SCRIPT_ENABLE_TOKENS = (1U << 27),
+
+    // Upgrade 11
+    // - Enable CHIP-2021-05-vm-limits: Targeted Virtual Machine Limits
+    // - Enable CHIP-2024-07-BigInt: High-Precision Arithmetic for Bitcoin Cash
+    SCRIPT_ENABLE_MAY2025 = (1U << 28),
+    // Used only if SCRIPT_ENABLE_MAY2025 is set; Use "relay" costing rules: Hashing is costed 3x for standard txns.
+    SCRIPT_VM_LIMITS_STANDARD = (1U << 29),
+};

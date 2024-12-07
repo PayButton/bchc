@@ -1,12 +1,17 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <compressor.h>
 
+#include <hash.h>
 #include <pubkey.h>
 #include <script/standard.h>
+
+#include <cstring>
+#include <utility>
 
 /*
  * These check for scripts for which a special case with a shorter encoding is
@@ -17,19 +22,26 @@
  */
 
 static bool IsToKeyID(const CScript &script, CKeyID &hash) {
-    if (script.size() == 25 && script[0] == OP_DUP && script[1] == OP_HASH160 &&
-        script[2] == 20 && script[23] == OP_EQUALVERIFY &&
-        script[24] == OP_CHECKSIG) {
-        memcpy(&hash, &script[3], 20);
+    if (script.IsPayToPubKeyHash()) {
+        static_assert(CKeyID::size() == 20);
+        std::memcpy(&*hash.begin(), &script[3], 20);
         return true;
     }
     return false;
 }
 
-static bool IsToScriptID(const CScript &script, CScriptID &hash) {
-    if (script.size() == 23 && script[0] == OP_HASH160 && script[1] == 20 &&
-        script[22] == OP_EQUAL) {
-        memcpy(&hash, &script[2], 20);
+static bool IsToScriptID(const CScript &script, ScriptID &hash) {
+    if (std::vector<uint8_t> payload; script.IsPayToScriptHash(0 /* no p2psh_32 */, &payload)) {
+        if (payload.size() == uint160::size()) {
+            hash = uint160{payload};
+        } else if (payload.size() == uint256::size()) {
+            // not reached in current code, but left in for future expansion
+            assert(!"Current code should not be compressing p2sh_32 in TxOutCompression");
+            hash = uint256{payload};
+        } else {
+            assert(!"Unexpected ScriptID payload size: expected a payload of size 20 or 32 bytes");
+            return false; // not reached
+        }
         return true;
     }
     return false;
@@ -55,20 +67,27 @@ bool CompressScript(const CScript &script, std::vector<uint8_t> &out) {
     if (IsToKeyID(script, keyID)) {
         out.resize(21);
         out[0] = 0x00;
-        memcpy(&out[1], &keyID, 20);
+        static_assert(keyID.size() == 20);
+        std::memcpy(&out[1], keyID.data(), 20);
         return true;
     }
-    CScriptID scriptID;
+    ScriptID scriptID;
     if (IsToScriptID(script, scriptID)) {
-        out.resize(21);
-        out[0] = 0x01;
-        memcpy(&out[1], &scriptID, 20);
+        // Note: the scriptID will always be of size() == 20 here in current
+        // code. If we wanted to add p2sh_32 support, we should just remove
+        // this assert() and add another special script byte (maybe 0x6) to
+        // indicate p2sh_32, and bump nSpecialScripts. Note that doing that
+        // *would* break txdb and undo file compatibility, however!
+        assert(scriptID.IsP2SH_20() && scriptID.size() == 20);
+        out.resize(scriptID.size() + 1u);
+        out[0] = 0x01; // 0x1 == p2sh_20
+        std::memcpy(&out[1], std::as_const(scriptID).data(), scriptID.size());
         return true;
     }
     CPubKey pubkey;
     if (IsToPubKey(script, pubkey)) {
         out.resize(33);
-        memcpy(&out[1], &pubkey[1], 32);
+        std::memcpy(&out[1], &pubkey[1], 32);
         if (pubkey[0] == 0x02 || pubkey[0] == 0x03) {
             out[0] = pubkey[0];
             return true;
@@ -90,46 +109,46 @@ unsigned int GetSpecialScriptSize(unsigned int nSize) {
     return 0;
 }
 
-bool DecompressScript(CScript &script, unsigned int nSize,
-                      const std::vector<uint8_t> &in) {
+bool DecompressScript(CScript &script, unsigned int nSize, const std::vector<uint8_t> &in) {
     switch (nSize) {
-        case 0x00:
+        case 0x00: // p2pkh
             script.resize(25);
             script[0] = OP_DUP;
             script[1] = OP_HASH160;
             script[2] = 20;
-            memcpy(&script[3], in.data(), 20);
+            std::memcpy(&script[3], in.data(), 20);
             script[23] = OP_EQUALVERIFY;
             script[24] = OP_CHECKSIG;
             return true;
-        case 0x01:
-            script.resize(23);
-            script[0] = OP_HASH160;
-            script[1] = 20;
-            memcpy(&script[2], in.data(), 20);
-            script[22] = OP_EQUAL;
+        case 0x01: // p2sh_20
+            assert(in.size() == uint160::size()); // 20 bytes expected
+            script.resize(in.size() + 3);
+            script[0] = OP_HASH160; // if adding p2sh_32, add conditional for OP_HASH256 here.
+            script[1] = in.size();
+            std::memcpy(&script[2], in.data(), in.size());
+            script[in.size() + 2] = OP_EQUAL;
             return true;
         case 0x02:
         case 0x03:
             script.resize(35);
             script[0] = 33;
             script[1] = nSize;
-            memcpy(&script[2], in.data(), 32);
+            std::memcpy(&script[2], in.data(), 32);
             script[34] = OP_CHECKSIG;
             return true;
         case 0x04:
         case 0x05:
             uint8_t vch[33] = {};
             vch[0] = nSize - 2;
-            memcpy(&vch[1], in.data(), 32);
-            CPubKey pubkey{vch};
+            std::memcpy(&vch[1], in.data(), 32);
+            CPubKey pubkey(&vch[0], &vch[33]);
             if (!pubkey.Decompress()) {
                 return false;
             }
             assert(pubkey.size() == 65);
             script.resize(67);
             script[0] = 65;
-            memcpy(&script[1], pubkey.begin(), 65);
+            std::memcpy(&script[1], pubkey.data(), 65);
             script[66] = OP_CHECKSIG;
             return true;
     }

@@ -5,7 +5,7 @@ export LC_ALL=C
 set -euo pipefail
 
 SCRIPT_PATH="$(dirname "$0")"
-ORIGINAL_PWD=$(pwd)
+ORIGINAL_PWD="$(pwd)"
 TOPLEVEL="$(cd "${SCRIPT_PATH}"; git rev-parse --show-toplevel)"
 OAUTH_TOKEN_PATH="${PWD}/.github-oauth-token"
 RELEASE_NOTES_DIR="${TOPLEVEL}/doc/release-notes"
@@ -13,8 +13,8 @@ RELEASE_NOTES_DIR="${TOPLEVEL}/doc/release-notes"
 help_message() {
   echo "Create a draft Github release and upload binaries."
   echo "Usage: $0 <options>"
-  echo "-a, --asset-dir       Path to the top-level directory outputted by a GUIX build."
-  echo "                      This directory must contain linux, osx, and win binaries in those respective sub-directories."
+  echo "-a, --asset-dir      (required) Path to the top-level directory outputted by a Gitian build."
+  echo "                        This directory must contain linux, osx, and win binaries in those respective sub-directories."
   echo "-d, --dry-run         Run through the script, but do not touch existing tags, push to Github, or upload release files."
   echo "-h, --help            Display this help message."
   echo "-o, --oauth-token     Path to a file containing your OAuth token (defaults to: '${OAUTH_TOKEN_PATH}')."
@@ -29,9 +29,9 @@ TAG=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
-case $1 in
+case "$1" in
   -a|--assets-dir)
-    ASSET_DIR=$(cd $2; pwd)
+    ASSET_DIR=$(cd "$2"; pwd)
     shift # shift past argument
     shift # shift past value
     ;;
@@ -96,42 +96,46 @@ fi
 
 # Fetch remote tags and make sure the tag exists
 cd "${SCRIPT_PATH}"
-GIT_REPO="https://${OAUTH_TOKEN}@github.com/bitcoin-abc/bitcoin-abc.git"
+GIT_REPO="https://${OAUTH_TOKEN}@github.com/bitcoin-cash-node/bitcoin-cash-node.git"
 git fetch "${GIT_REPO}" tag "${TAG}" || (echo "Error: Remote does not have tag '${TAG}'." && exit 20)
 cd "${ORIGINAL_PWD}"
 
-VERSION=$(echo "${TAG}" | cut -c 2-)
+VERSION=$(cut -c 2- <<< "${TAG}")
 
 # Collect list of assets (binaries) to upload
+if [ -z "${ASSET_DIR}" ]; then
+  echo "Error: Asset directory was not set. Try setting it with [ -a | --asset-dir ]"
+  exit 30
+fi
 ASSET_LIST=()
-if [ -n "${ASSET_DIR}" ]; then
-  if [ -d "${ASSET_DIR}" ]; then
-    # Linux binaries
-    ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-aarch64-linux-gnu.tar.gz")
-    ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-arm-linux-gnueabihf.tar.gz")
-    ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-x86_64-linux-gnu.tar.gz")
+if [ -d "${ASSET_DIR}" ]; then
+  # Linux binaries
+  ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-cash-node-${VERSION}-aarch64-linux-gnu.tar.gz")
+  ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-cash-node-${VERSION}-arm-linux-gnueabihf.tar.gz")
+  ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-cash-node-${VERSION}-i686-pc-linux-gnu.tar.gz")
+  ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-cash-node-${VERSION}-x86_64-linux-gnu.tar.gz")
 
-    # OSX binaries
-    ASSET_LIST+=("${ASSET_DIR}/osx/bitcoin-abc-${VERSION}-osx-unsigned.dmg")
+  # OSX binaries
+  ASSET_LIST+=("${ASSET_DIR}/osx/bitcoin-cash-node-${VERSION}-osx-unsigned.dmg")
 
-    # Windows binaries
-    ASSET_LIST+=("${ASSET_DIR}/win/bitcoin-abc-${VERSION}-win64-setup-unsigned.exe")
+  # Windows binaries
+  ASSET_LIST+=("${ASSET_DIR}/win/bitcoin-cash-node-${VERSION}-win32-setup-unsigned.exe")
+  ASSET_LIST+=("${ASSET_DIR}/win/bitcoin-cash-node-${VERSION}-win64-setup-unsigned.exe")
 
-    for FILENAME in "${ASSET_LIST[@]}"; do
-      if [ ! -f "${FILENAME}" ]; then
-        echo "Error: Expected binary '${FILENAME}' does not exist"
-        exit 31
-      fi
-    done
+  for FILENAME in "${ASSET_LIST[@]}"; do
+    if [ ! -f "${FILENAME}" ]; then
+      echo "Error: Expected binary '${FILENAME}' does not exist"
+      exit 31
+    fi
+  done
 
-    # Add any signature files
-    for FILENAME in "${ASSET_DIR}"/*"-sha256sums.${VERSION}.asc"; do
-      ASSET_LIST+=("${FILENAME}")
-    done
-  else
-    echo "Error: Asset directory '${ASSET_DIR}' does not exist"
-    exit 32
-  fi
+  # Add any signature files
+  for FILENAME in "${ASSET_DIR}"/*"-sha256sums.${VERSION}.asc"; do
+    ASSET_LIST+=("${FILENAME}")
+  done
+else
+  echo "Error: Asset directory '${ASSET_DIR}' does not exist"
+  exit 32
 fi
 
 # Fetch release notes
@@ -146,7 +150,7 @@ fi
 
 # Format request data
 POST_DATA="{\"tag_name\": \"${TAG}\", \"name\": \"${VERSION}\", \"body\": ${RELEASE_NOTES}, \"draft\": true}"
-URL="https://api.github.com/repos/bitcoin-abc/bitcoin-abc/releases"
+URL="https://api.github.com/repos/bitcoin-cash-node/bitcoin-cash-node/releases"
 
 if [ "${DRY_RUN}" == "true" ]; then
   echo "POST request data that would be sent to '${URL}':"
@@ -159,8 +163,8 @@ else
   echo "Creating draft release..."
   echo "Requesting '${URL}'..."
   RESPONSE=$(curl -X POST -H "Content-Type: application/json" -H "Authorization: token ${OAUTH_TOKEN}" -d "${POST_DATA}" "${URL}")
-  RELEASE_ID=$(echo "${RESPONSE}" | jq '.id')
-  UPLOAD_URL="https://uploads.github.com/repos/bitcoin-abc/bitcoin-abc/releases/${RELEASE_ID}/assets"
+  RELEASE_ID=$(jq '.id' <<< "${RESPONSE}")
+  UPLOAD_URL="https://uploads.github.com/repos/bitcoin-cash-node/bitcoin-cash-node/releases/${RELEASE_ID}/assets"
 
   echo "Uploading assets..."
   if [ ${#ASSET_LIST[@]} -gt 0 ]; then
@@ -175,4 +179,4 @@ else
 fi
 
 echo "Done."
-echo "https://github.com/Bitcoin-ABC/bitcoin-abc/releases/tag/${TAG}"
+echo "https://github.com/bitcoin-cash-node/bitcoin-cash-node/releases/tag/${TAG}"

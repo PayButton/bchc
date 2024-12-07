@@ -1,95 +1,71 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_TXDB_H
-#define BITCOIN_TXDB_H
+#pragma once
 
 #include <blockfileinfo.h>
 #include <coins.h>
 #include <dbwrapper.h>
 #include <flatfile.h>
-#include <kernel/cs_main.h>
-#include <util/fs.h>
-#include <util/result.h>
+#include <primitives/block.h>
 
-#include <cstddef>
-#include <cstdint>
-#include <functional>
+#include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 struct BlockHash;
-class CBlockFileInfo;
 class CBlockIndex;
-class COutPoint;
+class CCoinsViewDBCursor;
 
 namespace Consensus {
 struct Params;
-};
+}
 
-//! min. -dbcache (MiB)
-static constexpr int64_t MIN_DB_CACHE_MB = 4;
-//! max. -dbcache (MiB)
-static constexpr int64_t MAX_DB_CACHE_MB = sizeof(void *) > 4 ? 16384 : 1024;
+//! No need to periodic flush if at least this much space still available.
+static constexpr int MAX_BLOCK_COINSDB_USAGE = 10;
 //! -dbcache default (MiB)
-static constexpr int64_t DEFAULT_DB_CACHE_MB = 1024;
+static const int64_t nDefaultDbCache = 450;
 //! -dbbatchsize default (bytes)
-static constexpr int64_t DEFAULT_DB_BATCH_SIZE = 16 << 20;
+static const int64_t nDefaultDbBatchSize = 16 << 20;
+//! max. -dbcache (MiB)
+static const int64_t nMaxDbCache = sizeof(void *) > 4 ? 16384 : 1024;
+//! min. -dbcache (MiB)
+static const int64_t nMinDbCache = 4;
 //! Max memory allocated to block tree DB specific cache, if no -txindex (MiB)
-static constexpr int64_t MAX_BLOCK_DB_CACHE_MB = 2;
+static const int64_t nMaxBlockDBCache = 2;
 //! Max memory allocated to block tree DB specific cache, if -txindex (MiB)
 // Unlike for the UTXO database, for the txindex scenario the leveldb cache make
 // a meaningful difference:
 // https://github.com/bitcoin/bitcoin/pull/8273#issuecomment-229601991
-static constexpr int64_t MAX_TX_INDEX_CACHE_MB = 1024;
-//! Max memory allocated to all block filter index caches combined in MiB.
-static constexpr int64_t MAX_FILTER_INDEX_CACHE_MB = 1024;
+static const int64_t nMaxTxIndexCache = 1024;
 //! Max memory allocated to coin DB specific cache (MiB)
-static constexpr int64_t MAX_COINS_DB_CACHE_MB = 8;
-
-//! User-controlled performance and debug options.
-struct CoinsViewOptions {
-    //! Maximum database write batch size in bytes.
-    size_t batch_write_bytes = DEFAULT_DB_BATCH_SIZE;
-    //! If non-zero, randomly exit when the database is flushed with (1/ratio)
-    //! probability.
-    int simulate_crash_ratio = 0;
-};
+static const int64_t nMaxCoinsDBCache = 8;
 
 /** CCoinsView backed by the coin database (chainstate/) */
 class CCoinsViewDB final : public CCoinsView {
 protected:
-    DBParams m_db_params;
-    CoinsViewOptions m_options;
-    std::unique_ptr<CDBWrapper> m_db;
+    CDBWrapper db;
 
 public:
-    explicit CCoinsViewDB(DBParams db_params, CoinsViewOptions options);
+    explicit CCoinsViewDB(size_t nCacheSize, bool fMemory = false,
+                          bool fWipe = false);
 
     bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
     bool HaveCoin(const COutPoint &outpoint) const override;
     BlockHash GetBestBlock() const override;
     std::vector<BlockHash> GetHeadBlocks() const override;
-    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
-                    bool erase = true) override;
-    CCoinsViewCursor *Cursor() const override;
+    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) override;
+    CCoinsViewCursor *Cursor(bool snapshot = false) const override;
 
     //! Attempt to update from an older database format.
     //! Returns whether an error occurred.
     bool Upgrade();
     size_t EstimateSize() const override;
-
-    //! Dynamically alter the underlying leveldb cache size.
-    void ResizeCache(size_t new_cache_size) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
-
-    //! @returns filesystem path to on-disk storage or std::nullopt if in
-    //! memory.
-    std::optional<fs::path> StoragePath() { return m_db->StoragePath(); }
 };
 
 /** Specialization of CCoinsViewCursor to iterate over a CCoinsViewDB */
@@ -116,7 +92,9 @@ private:
 /** Access to the block database (blocks/index/) */
 class CBlockTreeDB : public CDBWrapper {
 public:
-    using CDBWrapper::CDBWrapper;
+    explicit CBlockTreeDB(size_t nCacheSize, bool fMemory = false,
+                          bool fWipe = false);
+
     bool WriteBatchSync(
         const std::vector<std::pair<int, const CBlockFileInfo *>> &fileInfo,
         int nLastFile, const std::vector<const CBlockIndex *> &blockinfo);
@@ -128,16 +106,5 @@ public:
     bool ReadFlag(const std::string &name, bool &fValue);
     bool LoadBlockIndexGuts(
         const Consensus::Params &params,
-        std::function<CBlockIndex *(const BlockHash &)> insertBlockIndex)
-        EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
-    ;
-
-    //! Attempt to update from an older database format.
-    //! Returns whether an error occurred.
-    bool Upgrade();
+        std::function<CBlockIndex *(const BlockHash &)> insertBlockIndex);
 };
-
-[[nodiscard]] util::Result<void>
-CheckLegacyTxindex(CBlockTreeDB &block_tree_db);
-
-#endif // BITCOIN_TXDB_H

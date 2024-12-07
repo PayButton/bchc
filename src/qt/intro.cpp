@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,22 +7,24 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <common/args.h>
-#include <config.h>
+#include <fs.h>
 #include <interfaces/node.h>
 #include <qt/forms/ui_intro.h>
-#include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/intro.h>
-#include <qt/optionsmodel.h>
-#include <util/fs.h>
-#include <util/fs_helpers.h>
+#include <util/system.h>
 
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QSettings>
 
 #include <cmath>
+
+static const uint64_t GB_BYTES = 1000000000LL;
+/**
+ * Total required space (in GB) depending on user choice (prune, not prune).
+ */
+static uint64_t requiredSpace;
 
 /* Check free space asynchronously to prevent hanging the UI thread.
 
@@ -106,56 +109,51 @@ void FreespaceChecker::check() {
     Q_EMIT reply(replyStatus, replyMessage, freeBytesAvailable);
 }
 
-namespace {
-//! Return pruning size that will be used if automatic pruning is enabled.
-int GetPruneTargetGB() {
-    int64_t prune_target_mib = gArgs.GetIntArg("-prune", 0);
-    // >1 means automatic pruning is enabled by config, 1 means manual pruning,
-    // 0 means no pruning.
-    return prune_target_mib > 1 ? PruneMiBtoGB(prune_target_mib)
-                                : DEFAULT_PRUNE_TARGET_GB;
-}
-} // namespace
-
-Intro::Intro(QWidget *parent, int64_t blockchain_size_gb,
-             int64_t chain_state_size_gb)
+Intro::Intro(QWidget *parent, uint64_t blockchain_size,
+             uint64_t chain_state_size)
     : QDialog(parent), ui(new Ui::Intro), thread(nullptr), signalled(false),
-      m_blockchain_size_gb(blockchain_size_gb),
-      m_chain_state_size_gb(chain_state_size_gb),
-      m_prune_target_gb(GetPruneTargetGB()) {
+      m_blockchain_size(blockchain_size), m_chain_state_size(chain_state_size) {
     ui->setupUi(this);
     ui->welcomeLabel->setText(ui->welcomeLabel->text().arg(PACKAGE_NAME));
     ui->storageLabel->setText(ui->storageLabel->text().arg(PACKAGE_NAME));
 
     ui->lblExplanation1->setText(ui->lblExplanation1->text()
                                      .arg(PACKAGE_NAME)
-                                     .arg(m_blockchain_size_gb)
+                                     .arg(m_blockchain_size)
                                      .arg(2009)
                                      .arg(tr("Bitcoin")));
-    ui->lblExplanation2->setText(ui->lblExplanation2->text().arg(PACKAGE_NAME));
+    ui->lblExplanation2->setText(
+        ui->lblExplanation2->text().arg(PACKAGE_NAME));
 
-    // -prune=1 means enabled, above that it's a size in MiB
-    if (gArgs.GetIntArg("-prune", 0) > 1) {
-        ui->prune->setChecked(true);
-        ui->prune->setEnabled(false);
+    uint64_t pruneTarget = std::max<int64_t>(0, gArgs.GetArg("-prune", 0));
+    requiredSpace = m_blockchain_size;
+    QString storageRequiresMsg =
+        tr("At least %1 GB of data will be stored in this directory, and it "
+           "will grow over time.");
+    if (pruneTarget) {
+        uint64_t prunedGBs = std::ceil(pruneTarget * 1024 * 1024.0 / GB_BYTES);
+        if (prunedGBs <= requiredSpace) {
+            requiredSpace = prunedGBs;
+            storageRequiresMsg = tr("Approximately %1 GB of data will be "
+                                    "stored in this directory.");
+        }
+        ui->lblExplanation3->setVisible(true);
+    } else {
+        ui->lblExplanation3->setVisible(false);
     }
-    ui->prune->setText(tr("Discard blocks after verification, except most "
-                          "recent %1 GB (prune)")
-                           .arg(m_prune_target_gb));
-    UpdatePruneLabels(ui->prune->isChecked());
-
-    connect(ui->prune, &QCheckBox::toggled, [this](bool prune_checked) {
-        UpdatePruneLabels(prune_checked);
-        UpdateFreeSpaceLabel();
-    });
-
+    requiredSpace += m_chain_state_size;
+    ui->sizeWarningLabel->setText(
+        tr("%1 will download and store a copy of the Bitcoin block chain.")
+            .arg(PACKAGE_NAME) +
+        " " + storageRequiresMsg.arg(requiredSpace) + " " +
+        tr("The wallet will also be stored in this directory."));
     startThread();
 }
 
 Intro::~Intro() {
     delete ui;
     /* Ensure thread is finished before it is deleted */
-    thread->quit();
+    Q_EMIT stopThread();
     thread->wait();
 }
 
@@ -165,7 +163,7 @@ QString Intro::getDataDirectory() {
 
 void Intro::setDataDirectory(const QString &dataDir) {
     ui->dataDirectory->setText(dataDir);
-    if (dataDir == GUIUtil::getDefaultDataDirectory()) {
+    if (dataDir == getDefaultDataDirectory()) {
         ui->dataDirDefault->setChecked(true);
         ui->dataDirectory->setEnabled(false);
         ui->ellipsisButton->setEnabled(false);
@@ -176,9 +174,11 @@ void Intro::setDataDirectory(const QString &dataDir) {
     }
 }
 
-bool Intro::showIfNeeded(bool &did_show_intro, bool &prune) {
-    did_show_intro = false;
+QString Intro::getDefaultDataDirectory() {
+    return GUIUtil::boostPathToQString(GetDefaultDataDir());
+}
 
+bool Intro::pickDataDirectory(interfaces::Node &node) {
     QSettings settings;
     /* If data directory provided on command line, no need to look at settings
        or show a picking dialog */
@@ -186,7 +186,7 @@ bool Intro::showIfNeeded(bool &did_show_intro, bool &prune) {
         return true;
     }
     /* 1) Default data directory for operating system */
-    QString dataDir = GUIUtil::getDefaultDataDirectory();
+    QString dataDir = getDefaultDataDirectory();
     /* 2) Allow QSettings to override default dir */
     dataDir = settings.value("strDataDir", dataDir).toString();
 
@@ -199,7 +199,7 @@ bool Intro::showIfNeeded(bool &did_show_intro, bool &prune) {
          * interface.
          */
         try {
-            SelectParams(gArgs.GetChainName());
+            node.selectParams(gArgs.GetChainName());
         } catch (const std::exception &) {
             return false;
         }
@@ -208,12 +208,10 @@ bool Intro::showIfNeeded(bool &did_show_intro, bool &prune) {
          * If current default data directory does not exist, let the user choose
          * one.
          */
-        const CChainParams &params = GetConfig().GetChainParams();
-        Intro intro(nullptr, params.AssumedBlockchainSize(),
-                    params.AssumedChainStateSize());
+        Intro intro(nullptr, node.getAssumedBlockchainSize(),
+                    node.getAssumedChainStateSize());
         intro.setDataDirectory(dataDir);
         intro.setWindowIcon(QIcon(":icons/bitcoin"));
-        did_show_intro = true;
 
         while (true) {
             if (!intro.exec()) {
@@ -239,9 +237,6 @@ bool Intro::showIfNeeded(bool &did_show_intro, bool &prune) {
             }
         }
 
-        // Additional preferences:
-        prune = intro.ui->prune->isChecked();
-
         settings.setValue("strDataDir", dataDir);
         settings.setValue("fReset", false);
     }
@@ -250,10 +245,10 @@ bool Intro::showIfNeeded(bool &did_show_intro, bool &prune) {
      * override -datadir in the bitcoin.conf file in the default data directory
      * (to be consistent with bitcoind behavior)
      */
-    if (dataDir != GUIUtil::getDefaultDataDirectory()) {
+    if (dataDir != getDefaultDataDirectory()) {
         // use OS locale for path setting
-        gArgs.SoftSetArg(
-            "-datadir", fs::PathToString(GUIUtil::qstringToBoostPath(dataDir)));
+        node.softSetArg("-datadir",
+                        GUIUtil::qstringToBoostPath(dataDir).string());
     }
     return true;
 }
@@ -274,33 +269,19 @@ void Intro::setStatus(int status, const QString &message,
     if (status == FreespaceChecker::ST_ERROR) {
         ui->freeSpace->setText("");
     } else {
-        m_bytes_available = bytesAvailable;
-        if (ui->prune->isEnabled()) {
-            ui->prune->setChecked(
-                m_bytes_available <
-                (m_blockchain_size_gb + m_chain_state_size_gb + 10) * GB_BYTES);
+        QString freeString =
+            tr("%n GB of free space available", "", bytesAvailable / GB_BYTES);
+        if (bytesAvailable < requiredSpace * GB_BYTES) {
+            freeString += " " + tr("(of %n GB needed)", "", requiredSpace);
+            ui->freeSpace->setStyleSheet("QLabel { color: #800000 }");
+        } else {
+            ui->freeSpace->setStyleSheet("");
         }
-        UpdateFreeSpaceLabel();
+        ui->freeSpace->setText(freeString + ".");
     }
     /* Don't allow confirm in ERROR state */
     ui->buttonBox->button(QDialogButtonBox::Ok)
         ->setEnabled(status != FreespaceChecker::ST_ERROR);
-}
-
-void Intro::UpdateFreeSpaceLabel() {
-    QString freeString =
-        tr("%n GB of free space available", "", m_bytes_available / GB_BYTES);
-    if (m_bytes_available < m_required_space_gb * GB_BYTES) {
-        freeString += " " + tr("(of %n GB needed)", "", m_required_space_gb);
-        ui->freeSpace->setStyleSheet("QLabel { color: #800000 }");
-    } else if (m_bytes_available / GB_BYTES - m_required_space_gb < 10) {
-        freeString +=
-            " " + tr("(%n GB needed for full chain)", "", m_required_space_gb);
-        ui->freeSpace->setStyleSheet("QLabel { color: #999900 }");
-    } else {
-        ui->freeSpace->setStyleSheet("");
-    }
-    ui->freeSpace->setText(freeString + ".");
 }
 
 void Intro::on_dataDirectory_textChanged(const QString &dataDirStr) {
@@ -318,7 +299,7 @@ void Intro::on_ellipsisButton_clicked() {
 }
 
 void Intro::on_dataDirDefault_clicked() {
-    setDataDirectory(GUIUtil::getDefaultDataDirectory());
+    setDataDirectory(getDefaultDataDirectory());
 }
 
 void Intro::on_dataDirCustom_clicked() {
@@ -334,7 +315,8 @@ void Intro::startThread() {
     connect(executor, &FreespaceChecker::reply, this, &Intro::setStatus);
     connect(this, &Intro::requestCheck, executor, &FreespaceChecker::check);
     /*  make sure executor object is deleted in its own thread */
-    connect(thread, &QThread::finished, executor, &QObject::deleteLater);
+    connect(this, &Intro::stopThread, executor, &QObject::deleteLater);
+    connect(this, &Intro::stopThread, thread, &QThread::quit);
 
     thread->start();
 }
@@ -356,23 +338,4 @@ QString Intro::getPathToCheck() {
     signalled = false; /* new request can be queued now */
     mutex.unlock();
     return retval;
-}
-
-void Intro::UpdatePruneLabels(bool prune_checked) {
-    m_required_space_gb = m_blockchain_size_gb + m_chain_state_size_gb;
-    QString storageRequiresMsg =
-        tr("At least %1 GB of data will be stored in this directory, and it "
-           "will grow over time.");
-    if (prune_checked && m_prune_target_gb <= m_blockchain_size_gb) {
-        m_required_space_gb = m_prune_target_gb + m_chain_state_size_gb;
-        storageRequiresMsg =
-            tr("Approximately %1 GB of data will be stored in this directory.");
-    }
-    ui->lblExplanation3->setVisible(prune_checked);
-    ui->sizeWarningLabel->setText(
-        tr("%1 will download and store a copy of the Bitcoin block chain.")
-            .arg(PACKAGE_NAME) +
-        " " + storageRequiresMsg.arg(m_required_space_gb) + " " +
-        tr("The wallet will also be stored in this directory."));
-    this->adjustSize();
 }

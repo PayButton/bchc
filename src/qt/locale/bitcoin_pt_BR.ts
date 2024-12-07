@@ -2996,7 +2996,7 @@
     </message>
 </context>
 <context>
-    <name>bitcoin-abc</name>
+    <name>bitcoin-cash-node</name>
     <message>
         <source>Options:</source>
         <translation>Opções:</translation>
@@ -3066,8 +3066,8 @@
         <translation>Não foi possível iniciar o servidor HTTP. Veja o log para detaihes.</translation>
     </message>
     <message>
-        <source>Bitcoin ABC</source>
-        <translation>Bitcoin ABC</translation>
+        <source>Bitcoin Cash Node</source>
+        <translation>Bitcoin Cash Node</translation>
     </message>
     <message>
         <source>The %s developers</source>
@@ -3662,7 +3662,7 @@
         <translation>Não manter transações na mempool por mais que &lt;n&gt; horas (padrão: %u)</translation>
     </message>
     <message>
-        <source>Equivalent bytes per sigop in transactions for relay and mining (default: %u)</source>
+        <source>Equivalent bytes per sigcheck in transactions for relay and mining (default: %u)</source>
         <translation>Número mínimo de bytes por assinatura em transações que transmitimos e mineramos (default: %u)</translation>
     </message>
     <message>

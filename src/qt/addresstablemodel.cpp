@@ -1,17 +1,18 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/addresstablemodel.h>
 
 #include <cashaddrenc.h>
+#include <interfaces/node.h>
 #include <key_io.h>
 #include <qt/guiutil.h>
 #include <qt/walletmodel.h>
 #include <wallet/wallet.h>
 
 #include <algorithm>
-#include <variant>
 
 #include <QDebug>
 #include <QFont>
@@ -54,8 +55,8 @@ struct AddressTableEntryLessThan {
 static AddressTableEntry::Type
 translateTransactionType(const QString &strPurpose, bool isMine) {
     AddressTableEntry::Type addressType = AddressTableEntry::Hidden;
-    // "refund" addresses aren't shown, and change addresses aren't returned by
-    // getAddresses at all.
+    // "refund" addresses aren't shown, and change addresses aren't in
+    // mapAddressBook at all.
     if (strPurpose == "send") {
         addressType = AddressTableEntry::Sending;
     } else if (strPurpose == "receive") {
@@ -242,7 +243,7 @@ bool AddressTableModel::setData(const QModelIndex &index, const QVariant &value,
             CTxDestination newAddress = DecodeDestination(
                 value.toString().toStdString(), walletModel->getChainParams());
             // Refuse to set invalid address, set error status and return false
-            if (std::get_if<CNoDestination>(&newAddress)) {
+            if (boost::get<CNoDestination>(&newAddress)) {
                 editStatus = INVALID_ADDRESS;
                 return false;
             }
@@ -341,31 +342,34 @@ QString AddressTableModel::addRow(const QString &type, const QString &label,
             editStatus = DUPLICATE_ADDRESS;
             return QString();
         }
-        // Add entry
-        walletModel->wallet().setAddressBook(
-            DecodeDestination(strAddress, walletModel->getChainParams()),
-            strLabel, "send");
     } else if (type == Receive) {
         // Generate a new address to associate with given label
-        CTxDestination dest;
-        if (!walletModel->wallet().getNewDestination(address_type, strLabel,
-                                                     dest)) {
+        CPubKey newKey;
+        if (!walletModel->wallet().getKeyFromPool(false /* internal */,
+                                                  newKey)) {
             WalletModel::UnlockContext ctx(walletModel->requestUnlock());
             if (!ctx.isValid()) {
                 // Unlock wallet failed or was cancelled
                 editStatus = WALLET_UNLOCK_FAILURE;
                 return QString();
             }
-            if (!walletModel->wallet().getNewDestination(address_type, strLabel,
-                                                         dest)) {
+            if (!walletModel->wallet().getKeyFromPool(false /* internal */,
+                                                      newKey)) {
                 editStatus = KEY_GENERATION_FAILURE;
                 return QString();
             }
         }
-        strAddress = EncodeCashAddr(dest, walletModel->getChainParams());
+        walletModel->wallet().learnRelatedScripts(newKey, address_type);
+        strAddress = EncodeCashAddr(GetDestinationForKey(newKey, address_type),
+                                    walletModel->getChainParams());
     } else {
         return QString();
     }
+
+    // Add entry
+    walletModel->wallet().setAddressBook(
+        DecodeDestination(strAddress, walletModel->getChainParams()), strLabel,
+        (type == Send ? "send" : "receive"));
     return QString::fromStdString(strAddress);
 }
 

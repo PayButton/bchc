@@ -1,9 +1,9 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_PREVECTOR_H
-#define BITCOIN_PREVECTOR_H
+#pragma once
 
 #include <algorithm>
 #include <cassert>
@@ -11,8 +11,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <type_traits>
-#include <utility>
 
 /**
  * Implements a drop-in replacement for std::vector<T> which stores up to N
@@ -237,7 +237,7 @@ private:
         struct {
             char *indirect;
             size_type capacity;
-        } indirect_contents;
+        };
     };
 #pragma pack(pop)
     alignas(char *) direct_or_indirect _union = {};
@@ -251,6 +251,10 @@ private:
                   "value_type T cannot have more restrictive alignment "
                   "requirement than pointer");
 
+    static_assert(
+        std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>,
+        "value_type T must be trivially copyable and trivially destructible");
+
     T *direct_ptr(difference_type pos) {
         return reinterpret_cast<T *>(_union.direct) + pos;
     }
@@ -258,11 +262,10 @@ private:
         return reinterpret_cast<const T *>(_union.direct) + pos;
     }
     T *indirect_ptr(difference_type pos) {
-        return reinterpret_cast<T *>(_union.indirect_contents.indirect) + pos;
+        return reinterpret_cast<T *>(_union.indirect) + pos;
     }
     const T *indirect_ptr(difference_type pos) const {
-        return reinterpret_cast<const T *>(_union.indirect_contents.indirect) +
-               pos;
+        return reinterpret_cast<const T *>(_union.indirect) + pos;
     }
     bool is_direct() const { return _size <= N; }
 
@@ -283,11 +286,10 @@ private:
                 // allocator or new/delete so that handlers are called as
                 // necessary, but performance would be slightly degraded by
                 // doing so.
-                _union.indirect_contents.indirect = static_cast<char *>(
-                    realloc(_union.indirect_contents.indirect,
-                            ((size_t)sizeof(T)) * new_capacity));
-                assert(_union.indirect_contents.indirect);
-                _union.indirect_contents.capacity = new_capacity;
+                _union.indirect = static_cast<char *>(realloc(
+                    _union.indirect, ((size_t)sizeof(T)) * new_capacity));
+                assert(_union.indirect);
+                _union.capacity = new_capacity;
             } else {
                 char *new_indirect = static_cast<char *>(
                     malloc(((size_t)sizeof(T)) * new_capacity));
@@ -295,8 +297,8 @@ private:
                 T *src = direct_ptr(0);
                 T *dst = reinterpret_cast<T *>(new_indirect);
                 memcpy(dst, src, size() * sizeof(T));
-                _union.indirect_contents.indirect = new_indirect;
-                _union.indirect_contents.capacity = new_capacity;
+                _union.indirect = new_indirect;
+                _union.capacity = new_capacity;
                 _size += N + 1;
             }
         }
@@ -343,7 +345,7 @@ public:
         fill(item_ptr(0), first, last);
     }
 
-    prevector() {}
+    prevector() noexcept {}
 
     explicit prevector(size_type n) { resize(n); }
 
@@ -368,7 +370,7 @@ public:
         fill(item_ptr(0), other.begin(), other.end());
     }
 
-    prevector(prevector<N, T, Size, Diff> &&other) { swap(other); }
+    prevector(prevector<N, T, Size, Diff> &&other) noexcept { swap(other); }
 
     prevector &operator=(const prevector<N, T, Size, Diff> &other) {
         if (&other == this) {
@@ -378,7 +380,7 @@ public:
         return *this;
     }
 
-    prevector &operator=(prevector<N, T, Size, Diff> &&other) {
+    prevector &operator=(prevector<N, T, Size, Diff> &&other) noexcept {
         swap(other);
         return *this;
     }
@@ -405,15 +407,17 @@ public:
         if (is_direct()) {
             return N;
         } else {
-            return _union.indirect_contents.capacity;
+            return _union.capacity;
         }
     }
+
+    static constexpr size_t static_capacity() { return N; }
 
     T &operator[](size_type pos) { return *item_ptr(pos); }
 
     const T &operator[](size_type pos) const { return *item_ptr(pos); }
 
-    void resize(size_type new_size) {
+    void resize(size_type new_size, const T &value = T{}) {
         size_type cur_size = size();
         if (cur_size == new_size) {
             return;
@@ -426,7 +430,7 @@ public:
             change_capacity(new_size);
         }
         ptrdiff_t increase = new_size - cur_size;
-        fill(item_ptr(cur_size), increase);
+        fill(item_ptr(cur_size), increase, value);
         _size += increase;
     }
 
@@ -507,6 +511,7 @@ public:
         iterator p = first;
         char *endp = (char *)&(*end());
         if (!std::is_trivially_destructible<T>::value) {
+            // NB: this branch is never taken in the current implementation
             while (p != last) {
                 (*p).~T();
                 _size--;
@@ -547,11 +552,12 @@ public:
 
     ~prevector() {
         if (!std::is_trivially_destructible<T>::value) {
+            // NB: this branch is never taken in the current implementation
             clear();
         }
         if (!is_direct()) {
-            free(_union.indirect_contents.indirect);
-            _union.indirect_contents.indirect = nullptr;
+            free(_union.indirect);
+            _union.indirect = nullptr;
         }
     }
 
@@ -603,7 +609,7 @@ public:
         if (is_direct()) {
             return 0;
         } else {
-            return ((size_t)(sizeof(T))) * _union.indirect_contents.capacity;
+            return ((size_t)(sizeof(T))) * _union.capacity;
         }
     }
 
@@ -611,5 +617,3 @@ public:
 
     const value_type *data() const { return item_ptr(0); }
 };
-
-#endif // BITCOIN_PREVECTOR_H

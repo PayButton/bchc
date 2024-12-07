@@ -1,6 +1,0 @@
-# Ignore local caches
-**/__pycache__
-**/.pytest_cache
-
-# Ignore tests
-test

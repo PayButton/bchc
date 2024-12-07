@@ -1,11 +1,11 @@
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RPC_COMMAND_H
-#define BITCOIN_RPC_COMMAND_H
+#pragma once
 
 #include <univalue.h>
+#include <util/noncopyable.h>
 
 #include <string>
 
@@ -17,7 +17,7 @@ class JSONRPCRequest;
  * necessary.  For more typical cases where only request arguments are
  * required, see the RPCCommandWithArgsContext class.
  */
-class RPCCommand {
+class RPCCommand : public NonCopyable {
 private:
     const std::string name;
 
@@ -33,9 +33,6 @@ private:
 public:
     RPCCommand(const std::string &nameIn) : name(nameIn) {}
     virtual ~RPCCommand() {}
-
-    RPCCommand(const RPCCommand &) = delete;
-    RPCCommand &operator=(const RPCCommand &) = delete;
 
     /**
      * It is recommended to override Execute(JSONRPCRequest) only if the entire
@@ -59,5 +56,3 @@ public:
 
     UniValue Execute(const JSONRPCRequest &request) const final;
 };
-
-#endif // BITCOIN_RPC_COMMAND_H

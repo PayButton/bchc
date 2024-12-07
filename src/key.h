@@ -1,13 +1,14 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
 // Copyright (c) 2017 The Zcash developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_KEY_H
-#define BITCOIN_KEY_H
+#pragma once
 
 #include <pubkey.h>
+#include <serialize.h>
 #include <support/allocators/secure.h>
 #include <uint256.h>
 
@@ -17,12 +18,9 @@
 /**
  * secure_allocator is defined in allocators.h
  * CPrivKey is a serialized private key, with all parameters included
- * (SIZE bytes)
+ * (PRIVATE_KEY_SIZE bytes)
  */
 typedef std::vector<uint8_t, secure_allocator<uint8_t>> CPrivKey;
-
-//! a Schnorr signature
-using SchnorrSig = std::array<uint8_t, CPubKey::SCHNORR_SIZE>;
 
 /** An encapsulated secp256k1 private key. */
 class CKey {
@@ -30,14 +28,15 @@ public:
     /**
      * secp256k1:
      */
-    static const unsigned int SIZE = 279;
-    static const unsigned int COMPRESSED_SIZE = 214;
+    static const unsigned int PRIVATE_KEY_SIZE = 279;
+    static const unsigned int COMPRESSED_PRIVATE_KEY_SIZE = 214;
     /**
      * see www.keylength.com
      * script supports up to 75 for single byte push
      */
-    static_assert(SIZE >= COMPRESSED_SIZE,
-                  "COMPRESSED_SIZE is larger than SIZE");
+    static_assert(
+        PRIVATE_KEY_SIZE >= COMPRESSED_PRIVATE_KEY_SIZE,
+        "COMPRESSED_PRIVATE_KEY_SIZE is larger than PRIVATE_KEY_SIZE");
 
 private:
     //! Whether this private key is valid. We check for correctness when
@@ -61,10 +60,6 @@ public:
         // Important: vch must be 32 bytes in length to not break serialization
         keydata.resize(32);
     }
-    //! Produce a valid compressed key
-    static CKey MakeCompressedKey();
-    //! Produce a valid uncompressed key
-    static CKey MakeUncompressedKey();
 
     friend bool operator==(const CKey &a, const CKey &b) {
         return a.fCompressed == b.fCompressed && a.size() == b.size() &&
@@ -100,9 +95,6 @@ public:
     //! Generate a new private key using a cryptographic PRNG.
     void MakeNewKey(bool fCompressed);
 
-    //! Negate private key
-    bool Negate();
-
     /**
      * Convert the private key to a CPrivKey (serialized OpenSSL private key
      * data).
@@ -127,8 +119,6 @@ public:
      * Create a Schnorr signature.
      * The test_case parameter tweaks the deterministic nonce.
      */
-    bool SignSchnorr(const uint256 &hash, SchnorrSig &sig,
-                     uint32_t test_case = 0) const;
     bool SignSchnorr(const uint256 &hash, std::vector<uint8_t> &vchSig,
                      uint32_t test_case = 0) const;
 
@@ -162,15 +152,15 @@ public:
 };
 
 struct CExtKey {
-    uint8_t nDepth;
-    uint8_t vchFingerprint[4];
-    unsigned int nChild;
+    uint8_t nDepth = 0;
+    uint8_t vchFingerprint[4] = {};
+    unsigned int nChild = 0;
     ChainCode chaincode;
     CKey key;
 
     friend bool operator==(const CExtKey &a, const CExtKey &b) {
         return a.nDepth == b.nDepth &&
-               memcmp(a.vchFingerprint, b.vchFingerprint,
+               memcmp(&a.vchFingerprint[0], &b.vchFingerprint[0],
                       sizeof(vchFingerprint)) == 0 &&
                a.nChild == b.nChild && a.chaincode == b.chaincode &&
                a.key == b.key;
@@ -181,8 +171,23 @@ struct CExtKey {
     bool Derive(CExtKey &out, unsigned int nChild) const;
     CExtPubKey Neuter() const;
     void SetSeed(const uint8_t *seed, unsigned int nSeedLen);
+    template <typename Stream> void Serialize(Stream &s) const {
+        unsigned int len = BIP32_EXTKEY_SIZE;
+        ::WriteCompactSize(s, len);
+        uint8_t code[BIP32_EXTKEY_SIZE];
+        Encode(code);
+        s.write((const char *)&code[0], len);
+    }
+    template <typename Stream> void Unserialize(Stream &s) {
+        unsigned int len = ::ReadCompactSize(s);
+        if (len != BIP32_EXTKEY_SIZE) {
+            throw std::runtime_error("Invalid extended key size\n");
+        }
 
-    CExtKey() = default;
+        uint8_t code[BIP32_EXTKEY_SIZE];
+        s.read((char *)&code[0], len);
+        Decode(code);
+    }
 };
 
 /**
@@ -199,5 +204,3 @@ void ECC_Stop();
 
 /** Check that required EC support is available at runtime. */
 bool ECC_InitSanityCheck();
-
-#endif // BITCOIN_KEY_H

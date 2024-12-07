@@ -1,29 +1,27 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <httprpc.h>
 
 #include <chainparams.h>
-#include <common/args.h>
 #include <config.h>
 #include <crypto/hmac_sha256.h>
-#include <logging.h>
+#include <httpserver.h>
+#include <key_io.h>
+#include <random.h>
 #include <rpc/protocol.h>
+#include <rpc/server.h>
+#include <sync.h>
+#include <ui_interface.h>
 #include <util/strencodings.h>
-#include <util/translation.h>
+#include <util/string.h>
+#include <util/system.h>
 #include <walletinitinterface.h>
 
-#include <boost/algorithm/string.hpp> // boost::trim
-
-#include <algorithm>
 #include <cstdio>
-#include <functional>
-#include <iterator>
-#include <map>
 #include <memory>
-#include <set>
-#include <string>
 
 /** WWW-Authenticate to present with 401 Unauthorized response */
 static const char *WWW_AUTH_HEADER_DATA = "Basic realm=\"jsonrpc\"";
@@ -71,23 +69,18 @@ static std::string strRPCUserColonPass;
 static std::string strRPCCORSDomain;
 /* Stored RPC timer interface (for unregistration) */
 static std::unique_ptr<HTTPRPCTimerInterface> httpRPCTimerInterface;
-/* RPC Auth Whitelist */
-static std::map<std::string, std::set<std::string>> g_rpc_whitelist;
-static bool g_rpc_whitelist_default = false;
 
-static void JSONErrorReply(HTTPRequest *req, const UniValue &objError,
-                           const UniValue &id) {
+static void JSONErrorReply(HTTPRequest* req, JSONRPCError&& error, UniValue&& id) {
     // Send error reply from json-rpc error object.
     int nStatus = HTTP_INTERNAL_SERVER_ERROR;
-    int code = objError.find_value("code").getInt<int>();
 
-    if (code == RPC_INVALID_REQUEST) {
+    if (error.code == RPC_INVALID_REQUEST) {
         nStatus = HTTP_BAD_REQUEST;
-    } else if (code == RPC_METHOD_NOT_FOUND) {
+    } else if (error.code == RPC_METHOD_NOT_FOUND) {
         nStatus = HTTP_NOT_FOUND;
     }
 
-    std::string strReply = JSONRPCReply(NullUniValue, objError, id);
+    std::string strReply = JSONRPCReply(UniValue(), std::move(error).toObj(), std::move(id));
 
     req->WriteHeader("Content-Type", "application/json");
     req->WriteReply(nStatus, strReply);
@@ -97,7 +90,7 @@ static void JSONErrorReply(HTTPRequest *req, const UniValue &objError,
  * This function checks username and password against -rpcauth entries from
  * config file.
  */
-static bool multiUserAuthorized(std::string strUserPass) {
+static bool multiUserAuthorized(const std::string &strUserPass) {
     if (strUserPass.find(':') == std::string::npos) {
         return false;
     }
@@ -107,7 +100,7 @@ static bool multiUserAuthorized(std::string strUserPass) {
     for (const std::string &strRPCAuth : gArgs.GetArgs("-rpcauth")) {
         // Search for multi-user login/pass "rpcauth" from config
         std::vector<std::string> vFields;
-        boost::split(vFields, strRPCAuth, boost::is_any_of(":$"));
+        Split(vFields, strRPCAuth, ":$");
         if (vFields.size() != 3) {
             // Incorrect formatting in config file
             continue;
@@ -124,9 +117,9 @@ static bool multiUserAuthorized(std::string strUserPass) {
         static const unsigned int KEY_SIZE = 32;
         uint8_t out[KEY_SIZE];
 
-        CHMAC_SHA256(reinterpret_cast<const uint8_t *>(strSalt.data()),
+        CHMAC_SHA256(reinterpret_cast<const uint8_t *>(strSalt.c_str()),
                      strSalt.size())
-            .Write(reinterpret_cast<const uint8_t *>(strPass.data()),
+            .Write(reinterpret_cast<const uint8_t *>(strPass.c_str()),
                    strPass.size())
             .Finalize(out);
         std::vector<uint8_t> hexvec(out, out + KEY_SIZE);
@@ -151,8 +144,7 @@ static bool RPCAuthorized(const std::string &strAuth,
     }
 
     std::string strUserPass64 = strAuth.substr(6);
-    boost::trim(strUserPass64);
-    std::string strUserPass = DecodeBase64(strUserPass64);
+    std::string strUserPass = DecodeBase64(TrimString(strUserPass64));
 
     if (strUserPass.find(':') != std::string::npos) {
         strAuthUsernameOut = strUserPass.substr(0, strUserPass.find(':'));
@@ -170,17 +162,18 @@ static bool checkCORS(HTTPRequest *req) {
 
     // 1. If the Origin header is not present terminate this set of steps.
     // The request is outside the scope of this specification.
-    std::pair<bool, std::string> origin = req->GetHeader("origin");
-    if (!origin.first) {
+    const auto originOpt = req->GetHeader("origin");
+    if (!originOpt) {
         return false;
     }
+    const std::string &origin = *originOpt;
 
     // 2. If the value of the Origin header is not a case-sensitive match for
     // any of the values in list of origins do not set any additional headers
     // and terminate this set of steps.
     // Note: Always matching is acceptable since the list of origins can be
     // unbounded.
-    if (origin.second != strRPCCORSDomain) {
+    if (origin != strRPCCORSDomain) {
         return false;
     }
 
@@ -198,11 +191,11 @@ static bool checkCORS(HTTPRequest *req) {
         // If there is no Access-Control-Request-Method header or if parsing
         // failed, do not set any additional headers and terminate this set
         // of steps. The request is outside the scope of this specification.
-        std::pair<bool, std::string> method =
-            req->GetHeader("access-control-request-method");
-        if (!method.first) {
+        const auto methodOpt = req->GetHeader("access-control-request-method");
+        if (!methodOpt) {
             return false;
         }
+        const std::string &method = *methodOpt;
 
         // 4. Let header field-names be the values as result of parsing
         // the Access-Control-Request-Headers headers.
@@ -211,15 +204,14 @@ static bool checkCORS(HTTPRequest *req) {
         // If parsing failed do not set any additional headers and terminate
         // this set of steps. The request is outside the scope of this
         // specification.
-        std::pair<bool, std::string> header_field_names =
-            req->GetHeader("access-control-request-headers");
+        const auto header_field_names_opt = req->GetHeader("access-control-request-headers");
 
         // 5. If method is not a case-sensitive match for any of the
         // values in list of methods do not set any additional headers
         // and terminate this set of steps.
         // Note: Always matching is acceptable since the list of methods
         // can be unbounded.
-        if (method.second != "POST") {
+        if (method != "POST") {
             return false;
         }
 
@@ -228,14 +220,14 @@ static bool checkCORS(HTTPRequest *req) {
         // set any additional headers and terminate this set of steps.
         // Note: Always matching is acceptable since the list of headers can
         // be unbounded.
-        const std::string &list_of_headers = "authorization,content-type";
+        static const std::string list_of_headers = "authorization,content-type";
 
         // 7. If the resource supports credentials add a single
         // Access-Control-Allow-Origin header, with the value of the Origin
         // header as value, and add a single
         // Access-Control-Allow-Credentials header with the case-sensitive
         // string "true" as value.
-        req->WriteHeader("Access-Control-Allow-Origin", origin.second);
+        req->WriteHeader("Access-Control-Allow-Origin", origin);
         req->WriteHeader("Access-Control-Allow-Credentials", "true");
 
         // 8. Optionally add a single Access-Control-Max-Age header with as
@@ -250,15 +242,15 @@ static bool checkCORS(HTTPRequest *req) {
         // Note: Since the list of methods can be unbounded, simply
         // returning the method indicated by
         // Access-Control-Request-Method (if supported) can be enough.
-        req->WriteHeader("Access-Control-Allow-Methods", method.second);
+        req->WriteHeader("Access-Control-Allow-Methods", method);
 
         // 10. If each of the header field-names is a simple header and none
         // is Content-Type, this step may be skipped.
         // Add one or more Access-Control-Allow-Headers headers consisting
         // of (a subset of) the list of headers.
         req->WriteHeader("Access-Control-Allow-Headers",
-                         header_field_names.first ? header_field_names.second
-                                                  : list_of_headers);
+                         header_field_names_opt ? *header_field_names_opt
+                                                : list_of_headers);
         req->WriteReply(HTTP_OK);
         return true;
     }
@@ -275,7 +267,7 @@ static bool checkCORS(HTTPRequest *req) {
     // Access-Control-Allow-Origin header, with the value of the Origin
     // header as value, and add a single Access-Control-Allow-Credentials
     // header with the case-sensitive string "true" as value.
-    req->WriteHeader("Access-Control-Allow-Origin", origin.second);
+    req->WriteHeader("Access-Control-Allow-Origin", origin);
     req->WriteHeader("Access-Control-Allow-Credentials", "true");
 
     // 4. If the list of exposed headers is not empty add one or more
@@ -286,7 +278,7 @@ static bool checkCORS(HTTPRequest *req) {
     return false;
 }
 
-bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
+bool HTTPRPCRequestProcessor::ProcessHTTPRequest(const std::any& context, HTTPRequest *req) {
     // First, check and/or set CORS headers
     if (checkCORS(req)) {
         return true;
@@ -299,27 +291,26 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
         return false;
     }
     // Check authorization
-    std::pair<bool, std::string> authHeader = req->GetHeader("authorization");
-    if (!authHeader.first) {
+    const auto authHeaderOpt = req->GetHeader("authorization");
+    if (!authHeaderOpt) {
         req->WriteHeader("WWW-Authenticate", WWW_AUTH_HEADER_DATA);
         req->WriteReply(HTTP_UNAUTHORIZED);
         return false;
     }
+    const std::string &authHeader = *authHeaderOpt;
 
     JSONRPCRequest jreq;
     jreq.context = context;
-    jreq.peerAddr = req->GetPeer().ToString();
-    if (!RPCAuthorized(authHeader.second, jreq.authUser)) {
+    if (!RPCAuthorized(authHeader, jreq.authUser)) {
         LogPrintf("ThreadRPCServer incorrect password attempt from %s\n",
-                  jreq.peerAddr);
+                  req->GetPeer().ToString());
 
         /**
          * Deter brute-forcing.
          * If this results in a DoS the user really shouldn't have their RPC
          * port exposed.
          */
-        UninterruptibleSleep(
-            std::chrono::milliseconds{RPC_AUTH_BRUTE_FORCE_DELAY});
+        MilliSleep(RPC_AUTH_BRUTE_FORCE_DELAY);
 
         req->WriteHeader("WWW-Authenticate", WWW_AUTH_HEADER_DATA);
         req->WriteReply(HTTP_UNAUTHORIZED);
@@ -337,64 +328,27 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
         jreq.URI = req->GetURI();
 
         std::string strReply;
-        bool user_has_whitelist = g_rpc_whitelist.count(jreq.authUser);
-        if (!user_has_whitelist && g_rpc_whitelist_default) {
-            LogPrintf("RPC User %s not allowed to call any methods\n",
-                      jreq.authUser);
-            req->WriteReply(HTTP_FORBIDDEN);
-            return false;
-
-            // singleton request
-        } else if (valRequest.isObject()) {
-            jreq.parse(valRequest);
-            if (user_has_whitelist &&
-                !g_rpc_whitelist[jreq.authUser].count(jreq.strMethod)) {
-                LogPrintf("RPC User %s not allowed to call method %s\n",
-                          jreq.authUser, jreq.strMethod);
-                req->WriteReply(HTTP_FORBIDDEN);
-                return false;
-            }
-            UniValue result = rpcServer.ExecuteCommand(config, jreq);
+        // singleton request
+        if (valRequest.isObject()) {
+            jreq.parse(std::move(valRequest));
 
             // Send reply
-            strReply = JSONRPCReply(result, NullUniValue, jreq.id);
-
-            // array of requests
+            // (id is copied rather than moved, so it's still there for exception handlers below)
+            strReply = JSONRPCReply(rpcServer.ExecuteCommand(config, jreq), UniValue(), UniValue(jreq.id));
         } else if (valRequest.isArray()) {
-            if (user_has_whitelist) {
-                for (unsigned int reqIdx = 0; reqIdx < valRequest.size();
-                     reqIdx++) {
-                    if (!valRequest[reqIdx].isObject()) {
-                        throw JSONRPCError(RPC_INVALID_REQUEST,
-                                           "Invalid Request object");
-                    } else {
-                        const UniValue &request = valRequest[reqIdx].get_obj();
-                        // Parse method
-                        std::string strMethod =
-                            request.find_value("method").get_str();
-                        if (!g_rpc_whitelist[jreq.authUser].count(strMethod)) {
-                            LogPrintf(
-                                "RPC User %s not allowed to call method %s\n",
-                                jreq.authUser, strMethod);
-                            req->WriteReply(HTTP_FORBIDDEN);
-                            return false;
-                        }
-                    }
-                }
-            }
-            strReply = JSONRPCExecBatch(config, rpcServer, jreq,
-                                        valRequest.get_array());
+            // array of requests
+            strReply = JSONRPCExecBatch(config, rpcServer, jreq, std::move(valRequest.get_array()));
         } else {
             throw JSONRPCError(RPC_PARSE_ERROR, "Top-level object parse error");
         }
 
         req->WriteHeader("Content-Type", "application/json");
         req->WriteReply(HTTP_OK, strReply);
-    } catch (const UniValue &objError) {
-        JSONErrorReply(req, objError, jreq.id);
+    } catch (JSONRPCError &error) {
+        JSONErrorReply(req, std::move(error), std::move(jreq.id));
         return false;
     } catch (const std::exception &e) {
-        JSONErrorReply(req, JSONRPCError(RPC_PARSE_ERROR, e.what()), jreq.id);
+        JSONErrorReply(req, JSONRPCError(RPC_PARSE_ERROR, e.what()), std::move(jreq.id));
         return false;
     }
     return true;
@@ -402,8 +356,13 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
 
 static bool InitRPCAuthentication() {
     if (gArgs.GetArg("-rpcpassword", "") == "") {
-        LogPrintf("Using random cookie authentication.\n");
+        LogPrintf("No rpcpassword set - using random cookie authentication.\n");
         if (!GenerateAuthCookie(&strRPCUserColonPass)) {
+            // Same message as AbortNode.
+            uiInterface.ThreadSafeMessageBox(
+                _("Error: A fatal internal error occurred, see debug.log for "
+                  "details"),
+                "", CClientUIInterface::MSG_ERROR);
             return false;
         }
     } else {
@@ -420,43 +379,18 @@ static bool InitRPCAuthentication() {
     if (gArgs.GetArg("-rpcauth", "") != "") {
         LogPrintf("Using rpcauth authentication.\n");
     }
-
-    g_rpc_whitelist_default = gArgs.GetBoolArg("-rpcwhitelistdefault",
-                                               gArgs.IsArgSet("-rpcwhitelist"));
-    for (const std::string &strRPCWhitelist : gArgs.GetArgs("-rpcwhitelist")) {
-        auto pos = strRPCWhitelist.find(':');
-        std::string strUser = strRPCWhitelist.substr(0, pos);
-        bool intersect = g_rpc_whitelist.count(strUser);
-        std::set<std::string> &whitelist = g_rpc_whitelist[strUser];
-        if (pos != std::string::npos) {
-            std::string strWhitelist = strRPCWhitelist.substr(pos + 1);
-            std::set<std::string> new_whitelist;
-            boost::split(new_whitelist, strWhitelist, boost::is_any_of(", "));
-            if (intersect) {
-                std::set<std::string> tmp_whitelist;
-                std::set_intersection(
-                    new_whitelist.begin(), new_whitelist.end(),
-                    whitelist.begin(), whitelist.end(),
-                    std::inserter(tmp_whitelist, tmp_whitelist.end()));
-                new_whitelist = std::move(tmp_whitelist);
-            }
-            whitelist = std::move(new_whitelist);
-        }
-    }
-
     return true;
 }
 
-bool StartHTTPRPC(HTTPRPCRequestProcessor &httpRPCRequestProcessor) {
+bool StartHTTPRPC(HTTPRPCRequestProcessor &httpRPCRequestProcessor, const std::any& context) {
     LogPrint(BCLog::RPC, "Starting HTTP RPC server\n");
     if (!InitRPCAuthentication()) {
         return false;
     }
 
-    const std::function<bool(Config &, HTTPRequest *, const std::string &)>
-        &rpcFunction =
-            std::bind(&HTTPRPCRequestProcessor::DelegateHTTPRequest,
-                      &httpRPCRequestProcessor, std::placeholders::_2);
+    auto rpcFunction = [context, &httpRPCRequestProcessor](Config &, HTTPRequest* request, const std::string&) {
+        return HTTPRPCRequestProcessor::DelegateHTTPRequest(context, &httpRPCRequestProcessor, request);
+    };
     RegisterHTTPHandler("/", true, rpcFunction);
     if (g_wallet_init_interface.HasWalletSupport()) {
         RegisterHTTPHandler("/wallet/", false, rpcFunction);

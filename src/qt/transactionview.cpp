@@ -1,10 +1,10 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/transactionview.h>
 
-#include <node/ui_interface.h>
 #include <qt/addresstablemodel.h>
 #include <qt/bitcoinunits.h>
 #include <qt/csvmodelwriter.h>
@@ -17,6 +17,7 @@
 #include <qt/transactionrecord.h>
 #include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
+#include <ui_interface.h>
 
 #include <QComboBox>
 #include <QDateTimeEdit>
@@ -36,7 +37,9 @@
 
 TransactionView::TransactionView(const PlatformStyle *platformStyle,
                                  QWidget *parent)
-    : QWidget(parent) {
+    : QWidget(parent), model(nullptr), transactionProxyModel(nullptr),
+      transactionView(nullptr), abandonAction(nullptr),
+      columnResizingFixer(nullptr) {
     // Build filter row
     setContentsMargins(0, 0, 0, 0);
 
@@ -113,11 +116,7 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle,
     } else {
         amountWidget->setFixedWidth(100);
     }
-    QDoubleValidator *amountValidator = new QDoubleValidator(0, 1e20, 8, this);
-    QLocale amountLocale(QLocale::C);
-    amountLocale.setNumberOptions(QLocale::RejectGroupSeparator);
-    amountValidator->setLocale(amountLocale);
-    amountWidget->setValidator(amountValidator);
+    amountWidget->setValidator(new QDoubleValidator(0, 1e20, 8, this));
     hlayout->addWidget(amountWidget);
 
     // Delay before filtering transactions in ms
@@ -158,8 +157,8 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle,
 
     // Actions
     abandonAction = new QAction(tr("Abandon transaction"), this);
-    copyAddressAction = new QAction(tr("Copy address"), this);
-    copyLabelAction = new QAction(tr("Copy label"), this);
+    QAction *copyAddressAction = new QAction(tr("Copy address"), this);
+    QAction *copyLabelAction = new QAction(tr("Copy label"), this);
     QAction *copyAmountAction = new QAction(tr("Copy amount"), this);
     QAction *copyTxIDAction = new QAction(tr("Copy transaction ID"), this);
     QAction *copyTxHexAction = new QAction(tr("Copy raw transaction"), this);
@@ -270,17 +269,16 @@ void TransactionView::setModel(WalletModel *_model) {
             QStringList listUrls = GUIUtil::splitSkipEmptyParts(
                 _model->getOptionsModel()->getThirdPartyTxUrls(), "|");
             for (int i = 0; i < listUrls.size(); ++i) {
-                QString url = listUrls[i].trimmed();
-                QString host = QUrl(url, QUrl::StrictMode).host();
-                if (!host.isEmpty()) {
+                const auto url = listUrls[i].trimmed();
+                const auto host = QUrl(url, QUrl::StrictMode).host();
+                if (!host.isEmpty() && OptionsModel::isValidThirdPartyTxUrlString(url)) {
                     // use host as menu item label
                     QAction *thirdPartyTxUrlAction = new QAction(host, this);
                     if (i == 0) {
                         contextMenu->addSeparator();
                     }
                     contextMenu->addAction(thirdPartyTxUrlAction);
-                    connect(thirdPartyTxUrlAction, &QAction::triggered,
-                            [this, url] { openThirdPartyTxUrl(url); });
+                    connect(thirdPartyTxUrlAction, &QAction::triggered, [this, url] { openThirdPartyTxUrl(url); });
                 }
             }
         }
@@ -382,10 +380,8 @@ void TransactionView::changedAmount() {
         return;
     }
 
-    Amount amount_parsed = Amount::zero();
-    if (BitcoinUnits::parse(model->getOptionsModel()->getDisplayUnit(),
-                            amountWidget->text(), &amount_parsed)) {
-        transactionProxyModel->setMinAmount(amount_parsed);
+    if (auto amount_parsed = BitcoinUnits::parse(model->getOptionsModel()->getDisplayUnit(), true, amountWidget->text())) {
+        transactionProxyModel->setMinAmount(*amount_parsed);
     } else {
         transactionProxyModel->setMinAmount(Amount::zero());
     }
@@ -453,14 +449,9 @@ void TransactionView::contextualMenu(const QPoint &point) {
                     .toString()
                     .toStdString());
     abandonAction->setEnabled(model->wallet().transactionCanBeAbandoned(txid));
-    copyAddressAction->setEnabled(GUIUtil::hasEntryData(
-        transactionView, 0, TransactionTableModel::AddressRole));
-    copyLabelAction->setEnabled(GUIUtil::hasEntryData(
-        transactionView, 0, TransactionTableModel::LabelRole));
 
     if (index.isValid()) {
-        GUIUtil::PopupMenu(contextMenu,
-                           transactionView->viewport()->mapToGlobal(point));
+        contextMenu->popup(transactionView->viewport()->mapToGlobal(point));
     }
 }
 

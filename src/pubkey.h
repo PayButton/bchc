@@ -1,11 +1,11 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
 // Copyright (c) 2017 The Zcash developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_PUBKEY_H
-#define BITCOIN_PUBKEY_H
+#pragma once
 
 #include <hash.h>
 #include <serialize.h>
@@ -21,11 +21,11 @@ const unsigned int BIP32_EXTKEY_SIZE = 74;
 /** A reference to a CKey: the Hash160 of its serialized public key */
 class CKeyID : public uint160 {
 public:
-    CKeyID() : uint160() {}
-    explicit CKeyID(const uint160 &in) : uint160(in) {}
+    constexpr CKeyID() noexcept : uint160() {}
+    explicit constexpr CKeyID(const uint160 &in) noexcept : uint160(in) {}
 };
 
-using ChainCode = uint256;
+typedef uint256 ChainCode;
 
 /** An encapsulated public key. */
 class CPubKey {
@@ -33,32 +33,31 @@ public:
     /**
      * secp256k1:
      */
-    static constexpr unsigned int SIZE = 65;
-    static constexpr unsigned int COMPRESSED_SIZE = 33;
-    static constexpr unsigned int SCHNORR_SIZE = 64;
+    static constexpr unsigned int PUBLIC_KEY_SIZE = 65;
+    static constexpr unsigned int COMPRESSED_PUBLIC_KEY_SIZE = 33;
     static constexpr unsigned int SIGNATURE_SIZE = 72;
     static constexpr unsigned int COMPACT_SIGNATURE_SIZE = 65;
     /**
      * see www.keylength.com
      * script supports up to 75 for single byte push
      */
-    static_assert(SIZE >= COMPRESSED_SIZE,
-                  "COMPRESSED_SIZE is larger than SIZE");
+    static_assert(PUBLIC_KEY_SIZE >= COMPRESSED_PUBLIC_KEY_SIZE,
+                  "COMPRESSED_PUBLIC_KEY_SIZE is larger than PUBLIC_KEY_SIZE");
 
 private:
     /**
      * Just store the serialized data.
      * Its length can very cheaply be computed from the first byte.
      */
-    uint8_t vch[SIZE];
+    uint8_t vch[PUBLIC_KEY_SIZE];
 
     //! Compute the length of a pubkey with a given first byte.
     static unsigned int GetLen(uint8_t chHeader) {
         if (chHeader == 2 || chHeader == 3) {
-            return COMPRESSED_SIZE;
+            return COMPRESSED_PUBLIC_KEY_SIZE;
         }
         if (chHeader == 4 || chHeader == 6 || chHeader == 7) {
-            return SIZE;
+            return PUBLIC_KEY_SIZE;
         }
         return 0;
     }
@@ -90,7 +89,7 @@ public:
     }
 
     //! Construct a public key from a byte vector.
-    explicit CPubKey(Span<const uint8_t> _vch) {
+    explicit CPubKey(const std::vector<uint8_t> &_vch) {
         Set(_vch.begin(), _vch.end());
     }
 
@@ -117,18 +116,18 @@ public:
     template <typename Stream> void Serialize(Stream &s) const {
         unsigned int len = size();
         ::WriteCompactSize(s, len);
-        s.write(AsBytes(Span{vch, len}));
+        s.write((char *)vch, len);
     }
     template <typename Stream> void Unserialize(Stream &s) {
-        const unsigned int len(::ReadCompactSize(s));
-        if (len <= SIZE) {
-            s.read(AsWritableBytes(Span{vch, len}));
-            if (len != size()) {
-                Invalidate();
-            }
+        unsigned int len = ::ReadCompactSize(s);
+        if (len <= PUBLIC_KEY_SIZE) {
+            s.read((char *)vch, len);
         } else {
             // invalid pubkey, skip available data
-            s.ignore(len);
+            char dummy;
+            while (len--) {
+                s.read(&dummy, 1);
+            }
             Invalidate();
         }
     }
@@ -151,7 +150,7 @@ public:
     bool IsFullyValid() const;
 
     //! Check whether this is a compressed public key.
-    bool IsCompressed() const { return size() == COMPRESSED_SIZE; }
+    bool IsCompressed() const { return size() == COMPRESSED_PUBLIC_KEY_SIZE; }
 
     /**
      * Verify a DER-serialized ECDSA signature (~72 bytes).
@@ -164,8 +163,6 @@ public:
      * Verify a Schnorr signature (=64 bytes).
      * If this public key is not fully valid, the return value will be false.
      */
-    bool VerifySchnorr(const uint256 &hash,
-                       const std::array<uint8_t, SCHNORR_SIZE> &sig) const;
     bool VerifySchnorr(const uint256 &hash,
                        const std::vector<uint8_t> &vchSig) const;
 
@@ -191,29 +188,46 @@ public:
 };
 
 struct CExtPubKey {
-    uint8_t nDepth;
-    uint8_t vchFingerprint[4];
-    unsigned int nChild;
+    uint8_t nDepth = 0;
+    uint8_t vchFingerprint[4] = {};
+    unsigned int nChild = 0;
     ChainCode chaincode;
     CPubKey pubkey;
 
     friend bool operator==(const CExtPubKey &a, const CExtPubKey &b) {
         return a.nDepth == b.nDepth &&
-               memcmp(a.vchFingerprint, b.vchFingerprint,
+               memcmp(&a.vchFingerprint[0], &b.vchFingerprint[0],
                       sizeof(vchFingerprint)) == 0 &&
                a.nChild == b.nChild && a.chaincode == b.chaincode &&
                a.pubkey == b.pubkey;
-    }
-
-    friend bool operator!=(const CExtPubKey &a, const CExtPubKey &b) {
-        return !(a == b);
     }
 
     void Encode(uint8_t code[BIP32_EXTKEY_SIZE]) const;
     void Decode(const uint8_t code[BIP32_EXTKEY_SIZE]);
     bool Derive(CExtPubKey &out, unsigned int nChild) const;
 
-    CExtPubKey() = default;
+    void Serialize(CSizeComputer &s) const {
+        // Optimized implementation for ::GetSerializeSize that avoids copying.
+        // add one byte for the size (compact int)
+        s.seek(BIP32_EXTKEY_SIZE + 1);
+    }
+    template <typename Stream> void Serialize(Stream &s) const {
+        unsigned int len = BIP32_EXTKEY_SIZE;
+        ::WriteCompactSize(s, len);
+        uint8_t code[BIP32_EXTKEY_SIZE];
+        Encode(code);
+        s.write((const char *)&code[0], len);
+    }
+    template <typename Stream> void Unserialize(Stream &s) {
+        unsigned int len = ::ReadCompactSize(s);
+        if (len != BIP32_EXTKEY_SIZE) {
+            throw std::runtime_error("Invalid extended key size\n");
+        }
+
+        uint8_t code[BIP32_EXTKEY_SIZE];
+        s.read((char *)&code[0], len);
+        Decode(code);
+    }
 };
 
 /**
@@ -227,5 +241,3 @@ public:
     ECCVerifyHandle();
     ~ECCVerifyHandle();
 };
-
-#endif // BITCOIN_PUBKEY_H

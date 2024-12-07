@@ -1,13 +1,12 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/script_error.h>
 
-#include <string>
-
-std::string ScriptErrorString(const ScriptError serror) {
+const char *ScriptErrorString(const ScriptError serror) {
     switch (serror) {
         case ScriptError::OK:
             return "No error";
@@ -43,8 +42,9 @@ std::string ScriptErrorString(const ScriptError serror) {
         case ScriptError::INVALID_OPERAND_SIZE:
             return "Invalid operand size";
         case ScriptError::INVALID_NUMBER_RANGE:
-            return "Given operand is not a number within the valid range "
-                   "[-2^31...2^31]";
+            return "Given operand is not a number within the valid range [-2^31 + 1, 2^31 - 1]";
+        case ScriptError::INVALID_NUMBER_RANGE_64_BIT:
+            return "Given operand is not a number within the valid range [-2^63 + 1, 2^63 - 1]";
         case ScriptError::IMPOSSIBLE_ENCODING:
             return "The requested encoding is impossible to satisfy";
         case ScriptError::INVALID_SPLIT_RANGE:
@@ -87,6 +87,8 @@ std::string ScriptErrorString(const ScriptError serror) {
             return "Non-canonical signature: S value is unnecessarily high";
         case ScriptError::MINIMALIF:
             return "OP_IF/NOTIF argument must be minimal";
+        case ScriptError::MINIMALNUM:
+            return "Number encoding must be minimal";
         case ScriptError::SIG_NULLFAIL:
             return "Signature must be zero for failed CHECK(MULTI)SIG "
                    "operation";
@@ -99,13 +101,36 @@ std::string ScriptErrorString(const ScriptError serror) {
         case ScriptError::PUBKEYTYPE:
             return "Public key is neither compressed or uncompressed";
         case ScriptError::CLEANSTACK:
-            return "Stack size must be exactly one after execution";
+            return "Extra items left on stack after execution";
         case ScriptError::ILLEGAL_FORKID:
             return "Illegal use of SIGHASH_FORKID";
         case ScriptError::MUST_USE_FORKID:
             return "Signature must use SIGHASH_FORKID";
         case ScriptError::SIGCHECKS_LIMIT_EXCEEDED:
             return "Validation resources exceeded (SigChecks)";
+
+        // Native introspection errors
+        case ScriptError::CONTEXT_NOT_PRESENT:
+            return "Script execution context lacks introspection data";
+        case ScriptError::LIMITED_CONTEXT_NO_SIBLING_INFO:
+            return "Script execution context is limited and lacks sibling utxo data";
+        case ScriptError::INVALID_TX_INPUT_INDEX:
+            return "The specified transaction input index is out of range";
+        case ScriptError::INVALID_TX_OUTPUT_INDEX:
+            return "The specified transaction output index is out of range";
+
+        // Targeted VM Limits Chip
+        case ScriptError::OP_COST:
+            return "VM cost limit exceeded";
+        case ScriptError::TOO_MANY_HASH_ITERS:
+            return "Hash iteration limit exceeded";
+        case ScriptError::CONDITIONAL_STACK_DEPTH:
+            return "Conditional depth limit exceeded";
+
+        // Big integer errors
+        case ScriptError::INVALID_NUMBER_RANGE_BIG_INT:
+            return "Given operand is not a number within the valid range [-2^79,999 + 1, 2^79,999 - 1]";
+
         case ScriptError::UNKNOWN:
         case ScriptError::ERROR_COUNT:
         default:

@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -10,6 +11,7 @@
 #include <qt/forms/ui_addressbookpage.h>
 
 #include <qt/addresstablemodel.h>
+#include <qt/bitcoingui.h>
 #include <qt/csvmodelwriter.h>
 #include <qt/editaddressdialog.h>
 #include <qt/guiutil.h>
@@ -32,7 +34,7 @@ public:
     }
 
 protected:
-    bool filterAcceptsRow(int row, const QModelIndex &parent) const override {
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const {
         auto model = sourceModel();
         auto label = model->index(row, AddressTableModel::Label, parent);
 
@@ -94,10 +96,10 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
         case ForEditing:
             switch (tab) {
                 case SendingTab:
-                    setWindowTitle(tr("Sending addresses"));
+                    setWindowTitle(tr("Sending Addresses"));
                     break;
                 case ReceivingTab:
-                    setWindowTitle(tr("Receiving addresses"));
+                    setWindowTitle(tr("Receiving Addresses"));
                     break;
             }
             break;
@@ -105,7 +107,7 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
     switch (tab) {
         case SendingTab:
             ui->labelExplanation->setText(
-                tr("These are your Bitcoin addresses for sending payments. "
+                tr("These are your Bitcoin Cash addresses for sending payments. "
                    "Always check the amount and the receiving address before "
                    "sending coins."));
             ui->deleteAddress->setVisible(true);
@@ -113,9 +115,9 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
             break;
         case ReceivingTab:
             ui->labelExplanation->setText(
-                tr("These are your Bitcoin addresses for receiving payments. "
-                   "Use the 'Create new receiving address' button in the "
-                   "receive tab to create new addresses."));
+                tr("These are your Bitcoin Cash addresses for receiving payments. "
+                   "It is recommended to use a new receiving address for each "
+                   "transaction."));
             ui->deleteAddress->setVisible(false);
             ui->newAddress->setVisible(false);
             break;
@@ -151,8 +153,6 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
             &AddressBookPage::contextualMenu);
 
     connect(ui->closeButton, &QPushButton::clicked, this, &QDialog::accept);
-
-    GUIUtil::handleCloseWindowShortcut(this);
 }
 
 AddressBookPage::~AddressBookPage() {

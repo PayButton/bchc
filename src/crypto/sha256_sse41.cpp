@@ -1,13 +1,10 @@
-// Copyright (c) 2017-2019 The Bitcoin developers
-// Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
 #ifdef ENABLE_SSE41
 
 #include <cstdint>
 #include <immintrin.h>
 
 #include <crypto/common.h>
+#include <crypto/sha256.h>
 
 namespace sha256d64_sse41 {
 namespace {

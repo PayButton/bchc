@@ -17,7 +17,6 @@ members = [
     "chronik/chronik-plugin-impl",
     "chronik/chronik-proto",
     "chronik/chronik-util",
-    "modules/ecash-lib-wasm",
 ]
 
 [workspace.package]

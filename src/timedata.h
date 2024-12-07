@@ -1,15 +1,12 @@
 // Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_TIMEDATA_H
-#define BITCOIN_TIMEDATA_H
-
-#include <util/time.h>
+#pragma once
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -59,23 +56,15 @@ public:
         }
     }
 
-    int size() const { return vValues.size(); }
+    int size() const { return int(vValues.size()); }
 
-    std::vector<T> sorted() const { return vSorted; }
+    /// Returns a reference to the internal "sorted" vector.
+    /// It is an error to iterate over this reference's data while also
+    /// mixing-in calls to input(). If you need to do that, take a copy.
+    const std::vector<T> & sorted() const { return vSorted; }
 };
 
 /** Functions to keep track of adjusted P2P time */
 int64_t GetTimeOffset();
-NodeClock::time_point GetAdjustedTime();
-inline NodeSeconds AdjustedTime() {
-    return Now<NodeSeconds>() + std::chrono::seconds{GetTimeOffset()};
-}
+int64_t GetAdjustedTime();
 void AddTimeData(const CNetAddr &ip, int64_t nTime);
-
-/**
- * Reset the internal state of GetTimeOffset(), GetAdjustedTime() and
- * AddTimeData().
- */
-void TestOnlyResetTimeData();
-
-#endif // BITCOIN_TIMEDATA_H

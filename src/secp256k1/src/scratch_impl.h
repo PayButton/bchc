@@ -1,17 +1,17 @@
-/***********************************************************************
- * Copyright (c) 2017 Andrew Poelstra                                  *
- * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
- ***********************************************************************/
+/**********************************************************************
+ * Copyright (c) 2017 Andrew Poelstra                                 *
+ * Distributed under the MIT software license, see the accompanying   *
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
+ **********************************************************************/
 
-#ifndef SECP256K1_SCRATCH_IMPL_H
-#define SECP256K1_SCRATCH_IMPL_H
+#ifndef _SECP256K1_SCRATCH_IMPL_H_
+#define _SECP256K1_SCRATCH_IMPL_H_
 
 #include "util.h"
 #include "scratch.h"
 
 static secp256k1_scratch* secp256k1_scratch_create(const secp256k1_callback* error_callback, size_t size) {
-    const size_t base_alloc = ROUND_TO_ALIGN(sizeof(secp256k1_scratch));
+    const size_t base_alloc = ((sizeof(secp256k1_scratch) + ALIGNMENT - 1) / ALIGNMENT) * ALIGNMENT;
     void *alloc = checked_malloc(error_callback, base_alloc + size);
     secp256k1_scratch* ret = (secp256k1_scratch *)alloc;
     if (ret != NULL) {
@@ -26,7 +26,7 @@ static secp256k1_scratch* secp256k1_scratch_create(const secp256k1_callback* err
 static void secp256k1_scratch_destroy(const secp256k1_callback* error_callback, secp256k1_scratch* scratch) {
     if (scratch != NULL) {
         VERIFY_CHECK(scratch->alloc_size == 0); /* all checkpoints should be applied */
-        if (secp256k1_memcmp_var(scratch->magic, "scratch", 8) != 0) {
+        if (memcmp(scratch->magic, "scratch", 8) != 0) {
             secp256k1_callback_call(error_callback, "invalid scratch space");
             return;
         }
@@ -36,7 +36,7 @@ static void secp256k1_scratch_destroy(const secp256k1_callback* error_callback, 
 }
 
 static size_t secp256k1_scratch_checkpoint(const secp256k1_callback* error_callback, const secp256k1_scratch* scratch) {
-    if (secp256k1_memcmp_var(scratch->magic, "scratch", 8) != 0) {
+    if (memcmp(scratch->magic, "scratch", 8) != 0) {
         secp256k1_callback_call(error_callback, "invalid scratch space");
         return 0;
     }
@@ -44,7 +44,7 @@ static size_t secp256k1_scratch_checkpoint(const secp256k1_callback* error_callb
 }
 
 static void secp256k1_scratch_apply_checkpoint(const secp256k1_callback* error_callback, secp256k1_scratch* scratch, size_t checkpoint) {
-    if (secp256k1_memcmp_var(scratch->magic, "scratch", 8) != 0) {
+    if (memcmp(scratch->magic, "scratch", 8) != 0) {
         secp256k1_callback_call(error_callback, "invalid scratch space");
         return;
     }
@@ -56,12 +56,8 @@ static void secp256k1_scratch_apply_checkpoint(const secp256k1_callback* error_c
 }
 
 static size_t secp256k1_scratch_max_allocation(const secp256k1_callback* error_callback, const secp256k1_scratch* scratch, size_t objects) {
-    if (secp256k1_memcmp_var(scratch->magic, "scratch", 8) != 0) {
+    if (memcmp(scratch->magic, "scratch", 8) != 0) {
         secp256k1_callback_call(error_callback, "invalid scratch space");
-        return 0;
-    }
-    /* Ensure that multiplication will not wrap around */
-    if (ALIGNMENT > 1 && objects > SIZE_MAX/(ALIGNMENT - 1)) {
         return 0;
     }
     if (scratch->max_size - scratch->alloc_size <= objects * (ALIGNMENT - 1)) {
@@ -72,16 +68,9 @@ static size_t secp256k1_scratch_max_allocation(const secp256k1_callback* error_c
 
 static void *secp256k1_scratch_alloc(const secp256k1_callback* error_callback, secp256k1_scratch* scratch, size_t size) {
     void *ret;
-    size_t rounded_size;
+    size = ROUND_TO_ALIGN(size);
 
-    rounded_size = ROUND_TO_ALIGN(size);
-    /* Check that rounding did not wrap around */
-    if (rounded_size < size) {
-        return NULL;
-    }
-    size = rounded_size;
-
-    if (secp256k1_memcmp_var(scratch->magic, "scratch", 8) != 0) {
+    if (memcmp(scratch->magic, "scratch", 8) != 0) {
         secp256k1_callback_call(error_callback, "invalid scratch space");
         return NULL;
     }

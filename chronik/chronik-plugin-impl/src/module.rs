@@ -25,11 +25,19 @@ pub fn chronik_plugin(
         "script.py",
         "chronik_plugin.script",
     )?;
+    // Re-use `slp.py` from the test framework, need to patch the import
     PyModule::from_code_bound(
         py,
-        include_str!("token.py"),
-        "token.py",
-        "chronik_plugin.token",
+        &include_str!("../../../test/functional/test_framework/chronik/slp.py")
+            .replace("test_framework", "chronik_plugin"),
+        "slp.py",
+        "chronik_plugin.slp",
+    )?;
+    PyModule::from_code_bound(
+        py,
+        include_str!("etoken.py"),
+        "etoken.py",
+        "chronik_plugin.etoken",
     )?;
     PyModule::from_code_bound(
         py,

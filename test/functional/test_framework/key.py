@@ -1,5 +1,5 @@
+#!/usr/bin/env python3
 # Copyright (c) 2019 Pieter Wuille
-# Copyright (c) 2019-2020 The Bitcoin developers
 
 """Test-only secp256k1 elliptic curve implementation
 
@@ -8,10 +8,25 @@ keys, and is trivially vulnerable to side channel attacks. Do not use for
 anything but tests.
 """
 
-import hashlib
 import random
 
-from .util import modinv
+
+def modinv(a, n):
+    """Compute the modular inverse of a modulo n
+
+    See https://en.wikipedia.org/wiki/Extended_Euclidean_algorithm#Modular_integers
+    """
+    t1, t2 = 0, 1
+    r1, r2 = n, a
+    while r2 != 0:
+        q = r1 // r2
+        t1, t2 = t2, t1 - q * t2
+        r1, r2 = r2, r1 - q * r2
+    if r1 > 1:
+        return None
+    if t1 < 0:
+        t1 += n
+    return t1
 
 
 def jacobi_symbol(n, k):
@@ -26,9 +41,9 @@ def jacobi_symbol(n, k):
         while n & 1 == 0:
             n >>= 1
             r = k & 7
-            t ^= r == 3 or r == 5
+            t ^= (r == 3 or r == 5)
         n, k = k, n
-        t ^= n & k & 3 == 3
+        t ^= (n & k & 3 == 3)
         n = n % k
     if k == 1:
         return -1 if t else 1
@@ -74,17 +89,8 @@ class EllipticCurve:
         x1, y1, z1 = p1
         z2 = pow(z1, 2, self.p)
         z4 = pow(z2, 2, self.p)
-        return (
-            z1 != 0
-            and (
-                pow(x1, 3, self.p)
-                + self.a * x1 * z4
-                + self.b * z2 * z4
-                - pow(y1, 2, self.p)
-            )
-            % self.p
-            == 0
-        )
+        return z1 != 0 and (pow(x1, 3, self.p) + self.a * x1 *
+                            z4 + self.b * z2 * z4 - pow(y1, 2, self.p)) % self.p == 0
 
     def is_x_coord(self, x):
         """Test whether x is a valid X coordinate on the curve."""
@@ -130,7 +136,7 @@ class EllipticCurve:
         u2 = (x2 * z1_2) % self.p
         s2 = (y2 * z1_3) % self.p
         if x1 == u2:
-            if y1 != s2:
+            if (y1 != s2):
                 return (0, 1, 0)
             return self.double(p1)
         h = u2 - x1
@@ -164,7 +170,7 @@ class EllipticCurve:
         s1 = (y1 * z2_3) % self.p
         s2 = (y2 * z1_3) % self.p
         if u1 == u2:
-            if s1 != s2:
+            if (s1 != s2):
                 return (0, 1, 0)
             return self.double(p1)
         h = u2 - u1
@@ -185,8 +191,8 @@ class EllipticCurve:
         r = (0, 1, 0)
         for i in range(255, -1, -1):
             r = self.double(r)
-            for p, n in ps:
-                if (n >> i) & 1:
+            for (p, n) in ps:
+                if ((n >> i) & 1):
                     r = self.add(r, p)
         return r
 
@@ -195,13 +201,12 @@ SECP256K1 = EllipticCurve(2**256 - 2**32 - 977, 0, 7)
 SECP256K1_G = (
     0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
-    1,
-)
+    1)
 SECP256K1_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 SECP256K1_ORDER_HALF = SECP256K1_ORDER // 2
 
 
-class ECPubKey:
+class ECPubKey():
     """A secp256k1 public key"""
 
     def __init__(self):
@@ -210,18 +215,15 @@ class ECPubKey:
 
     def set(self, data):
         """Construct a public key from a serialization in compressed or uncompressed format"""
-        if len(data) == 65 and data[0] == 0x04:
-            p = (
-                int.from_bytes(data[1:33], "big"),
-                int.from_bytes(data[33:65], "big"),
-                1,
-            )
+        if (len(data) == 65 and data[0] == 0x04):
+            p = (int.from_bytes(data[1:33], 'big'),
+                 int.from_bytes(data[33:65], 'big'), 1)
             self.valid = SECP256K1.on_curve(p)
             if self.valid:
                 self.p = p
                 self.compressed = False
-        elif len(data) == 33 and (data[0] == 0x02 or data[0] == 0x03):
-            x = int.from_bytes(data[1:33], "big")
+        elif (len(data) == 33 and (data[0] == 0x02 or data[0] == 0x03)):
+            x = int.from_bytes(data[1:33], 'big')
             if SECP256K1.is_x_coord(x):
                 p = SECP256K1.lift_x(x)
                 if (p[1] & 1) != (data[0] & 1):
@@ -248,48 +250,49 @@ class ECPubKey:
         if p is None:
             return None
         if self.compressed:
-            return bytes([0x02 + (p[1] & 1)]) + p[0].to_bytes(32, "big")
+            return bytes([0x02 + (p[1] & 1)]) + p[0].to_bytes(32, 'big')
         else:
-            return bytes([0x04]) + p[0].to_bytes(32, "big") + p[1].to_bytes(32, "big")
+            return bytes([0x04]) + p[0].to_bytes(32, 'big') + \
+                p[1].to_bytes(32, 'big')
 
     def verify_ecdsa(self, sig, msg, low_s=True):
         """Verify a strictly DER-encoded ECDSA signature against this pubkey."""
         assert self.valid
-        if sig[1] + 2 != len(sig):
+        if (sig[1] + 2 != len(sig)):
             return False
-        if len(sig) < 4:
+        if (len(sig) < 4):
             return False
-        if sig[0] != 0x30:
+        if (sig[0] != 0x30):
             return False
-        if sig[2] != 0x02:
+        if (sig[2] != 0x02):
             return False
         rlen = sig[3]
-        if len(sig) < 6 + rlen:
+        if (len(sig) < 6 + rlen):
             return False
         if rlen < 1 or rlen > 33:
             return False
         if sig[4] >= 0x80:
             return False
-        if rlen > 1 and (sig[4] == 0) and not (sig[5] & 0x80):
+        if (rlen > 1 and (sig[4] == 0) and not (sig[5] & 0x80)):
             return False
-        r = int.from_bytes(sig[4 : 4 + rlen], "big")
-        if sig[4 + rlen] != 0x02:
+        r = int.from_bytes(sig[4:4 + rlen], 'big')
+        if (sig[4 + rlen] != 0x02):
             return False
         slen = sig[5 + rlen]
         if slen < 1 or slen > 33:
             return False
-        if len(sig) != 6 + rlen + slen:
+        if (len(sig) != 6 + rlen + slen):
             return False
         if sig[6 + rlen] >= 0x80:
             return False
-        if slen > 1 and (sig[6 + rlen] == 0) and not (sig[7 + rlen] & 0x80):
+        if (slen > 1 and (sig[6 + rlen] == 0) and not (sig[7 + rlen] & 0x80)):
             return False
-        s = int.from_bytes(sig[6 + rlen : 6 + rlen + slen], "big")
+        s = int.from_bytes(sig[6 + rlen:6 + rlen + slen], 'big')
         if r < 1 or s < 1 or r >= SECP256K1_ORDER or s >= SECP256K1_ORDER:
             return False
         if low_s and s >= SECP256K1_ORDER_HALF:
             return False
-        z = int.from_bytes(msg, "big")
+        z = int.from_bytes(msg, 'big')
         w = modinv(s, SECP256K1_ORDER)
         u1 = z * w % SECP256K1_ORDER
         u2 = r * w % SECP256K1_ORDER
@@ -298,29 +301,8 @@ class ECPubKey:
             return False
         return True
 
-    def verify_schnorr(self, sig, msg32):
-        assert self.is_valid
-        assert len(sig) == 64
-        assert len(msg32) == 32
 
-        Rx = sig[:32]
-        s = int.from_bytes(sig[32:], "big")
-        e = int.from_bytes(
-            hashlib.sha256(Rx + self.get_bytes() + msg32).digest(), "big"
-        )
-        nege = SECP256K1_ORDER - e
-
-        R = SECP256K1.affine(SECP256K1.mul([(SECP256K1_G, s), (self.p, nege)]))
-
-        if R is None:
-            return False
-        if jacobi_symbol(R[1], SECP256K1.p) == -1:
-            return False
-
-        return R[0] == int.from_bytes(Rx, "big")
-
-
-class ECKey:
+class ECKey():
     """A secp256k1 private key"""
 
     def __init__(self):
@@ -329,20 +311,26 @@ class ECKey:
     def set(self, secret, compressed):
         """Construct a private key object with given 32-byte secret and compressed flag."""
         assert len(secret) == 32
-        secret = int.from_bytes(secret, "big")
-        self.valid = secret > 0 and secret < SECP256K1_ORDER
+        secret = int.from_bytes(secret, 'big')
+        self.valid = (secret > 0 and secret < SECP256K1_ORDER)
         if self.valid:
             self.secret = secret
             self.compressed = compressed
 
     def generate(self, compressed=True):
         """Generate a random private key (compressed or uncompressed)."""
-        self.set(random.randrange(1, SECP256K1_ORDER).to_bytes(32, "big"), compressed)
+        self.set(
+            random.randrange(
+                1,
+                SECP256K1_ORDER).to_bytes(
+                32,
+                'big'),
+            compressed)
 
     def get_bytes(self):
         """Retrieve the 32-byte representation of this key."""
         assert self.valid
-        return self.secret.to_bytes(32, "big")
+        return self.secret.to_bytes(32, 'big')
 
     @property
     def is_valid(self):
@@ -365,7 +353,7 @@ class ECKey:
     def sign_ecdsa(self, msg, low_s=True):
         """Construct a DER-encoded ECDSA signature with this key."""
         assert self.valid
-        z = int.from_bytes(msg, "big")
+        z = int.from_bytes(msg, 'big')
         # Note: no RFC6979, but a simple random nonce (some tests rely on
         # distinct transactions for the same operation)
         k = random.randrange(1, SECP256K1_ORDER)
@@ -374,37 +362,8 @@ class ECKey:
         s = (modinv(k, SECP256K1_ORDER) * (z + self.secret * r)) % SECP256K1_ORDER
         if low_s and s > SECP256K1_ORDER_HALF:
             s = SECP256K1_ORDER - s
-        rb = r.to_bytes((r.bit_length() + 8) // 8, "big")
-        sb = s.to_bytes((s.bit_length() + 8) // 8, "big")
-        return (
-            b"\x30"
-            + bytes([4 + len(rb) + len(sb), 2, len(rb)])
-            + rb
-            + bytes([2, len(sb)])
-            + sb
-        )
-
-    def sign_schnorr(self, msg32):
-        """Create Schnorr signature (BIP-Schnorr convention)."""
-        assert self.valid
-        assert len(msg32) == 32
-
-        pubkey = self.get_pubkey()
-        assert pubkey.is_valid
-
-        k = random.randrange(1, SECP256K1_ORDER)
-
-        R = SECP256K1.affine(SECP256K1.mul([(SECP256K1_G, k)]))
-
-        if jacobi_symbol(R[1], SECP256K1.p) == -1:
-            k = SECP256K1_ORDER - k
-
-        Rx = R[0].to_bytes(32, "big")
-        e = int.from_bytes(
-            hashlib.sha256(Rx + pubkey.get_bytes() + msg32).digest(), "big"
-        )
-        s = (k + e * int.from_bytes(self.get_bytes(), "big")) % SECP256K1_ORDER
-        sig = Rx + s.to_bytes(32, "big")
-
-        assert pubkey.verify_schnorr(sig, msg32)
-        return sig
+        rb = r.to_bytes((r.bit_length() + 8) // 8, 'big')
+        sb = s.to_bytes((s.bit_length() + 8) // 8, 'big')
+        return b'\x30' + \
+            bytes([4 + len(rb) + len(sb), 2, len(rb)]) + \
+            rb + bytes([2, len(sb)]) + sb

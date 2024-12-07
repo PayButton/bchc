@@ -1,9 +1,9 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_OPTIONSDIALOG_H
-#define BITCOIN_QT_OPTIONSDIALOG_H
+#pragma once
 
 #include <QDialog>
 #include <QValidator>
@@ -25,16 +25,6 @@ class ProxyAddressValidator : public QValidator {
 
 public:
     explicit ProxyAddressValidator(QObject *parent);
-
-    State validate(QString &input, int &pos) const override;
-};
-
-/** Third party tx URL validator, checks for an https link. */
-class ThirdPartyTxUrlsValidator : public QValidator {
-    Q_OBJECT
-
-public:
-    explicit ThirdPartyTxUrlsValidator(QObject *parent);
 
     State validate(QString &input, int &pos) const override;
 };
@@ -68,19 +58,17 @@ private Q_SLOTS:
 
     void togglePruneWarning(bool enabled);
     void showRestartWarning(bool fPersistent = false);
+    void thirdPartyTxWarning(bool fPersistent = false);
     void clearStatusLabel();
     void updateProxyValidationState();
     /* query the networks, for which the default proxy is used */
     void updateDefaultProxyNets();
-    void updateThirdPartyTxUrlsState();
 
 Q_SIGNALS:
-    void proxyIpChecks(QValidatedLineEdit *pUiProxyIp, uint16_t nProxyPort);
+    void proxyIpChecks(QValidatedLineEdit *pUiProxyIp, int nProxyPort);
 
 private:
     Ui::OptionsDialog *ui;
     OptionsModel *model;
     QDataWidgetMapper *mapper;
 };
-
-#endif // BITCOIN_QT_OPTIONSDIALOG_H

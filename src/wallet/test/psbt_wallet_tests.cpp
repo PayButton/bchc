@@ -1,23 +1,26 @@
 // Copyright (c) 2017 The Bitcoin Core developers
+// Copyright (c) 2019-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <key_io.h>
-#include <util/bip32.h>
-#include <util/error.h>
+#include <policy/policy.h>
+#include <script/sign.h>
 #include <util/strencodings.h>
+#include <wallet/psbtwallet.h>
 #include <wallet/test/wallet_test_fixture.h>
 #include <wallet/wallet.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
+
+#include <univalue.h>
 
 #include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(psbt_wallet_tests, WalletTestingSetup)
 
 BOOST_AUTO_TEST_CASE(psbt_updater_test) {
-    auto spk_man = m_wallet.GetOrCreateLegacyScriptPubKeyMan();
-    LOCK2(m_wallet.cs_wallet, spk_man->cs_KeyStore);
+    LOCK(m_wallet.cs_wallet);
 
     // Create prevtxs and add to wallet
     CDataStream s_prev_tx1(
@@ -30,9 +33,8 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
 
     CTransactionRef prev_tx1;
     s_prev_tx1 >> prev_tx1;
-    m_wallet.mapWallet.emplace(std::piecewise_construct,
-                               std::forward_as_tuple(prev_tx1->GetId()),
-                               std::forward_as_tuple(prev_tx1));
+    CWalletTx prev_wtx1(&m_wallet, prev_tx1);
+    m_wallet.mapWallet.emplace(prev_wtx1.GetId(), std::move(prev_wtx1));
 
     CDataStream s_prev_tx2(
         ParseHex(
@@ -45,9 +47,8 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
         SER_NETWORK, PROTOCOL_VERSION);
     CTransactionRef prev_tx2;
     s_prev_tx2 >> prev_tx2;
-    m_wallet.mapWallet.emplace(std::piecewise_construct,
-                               std::forward_as_tuple(prev_tx2->GetId()),
-                               std::forward_as_tuple(prev_tx2));
+    CWalletTx prev_wtx2(&m_wallet, prev_tx2);
+    m_wallet.mapWallet.emplace(prev_wtx2.GetId(), std::move(prev_wtx2));
 
     // Add scripts
     CScript rs1;
@@ -57,7 +58,7 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
                  "dae4dba2fbfef536d752ae"),
         SER_NETWORK, PROTOCOL_VERSION);
     s_rs1 >> rs1;
-    spk_man->AddCScript(rs1);
+    m_wallet.AddCScript(rs1, false /*=p2sh_20*/, false); // no p2sh_32 in wallet, use legacy vm limits in wallet
 
     CScript rs2;
     CDataStream s_rs2(
@@ -66,16 +67,16 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
                  "6151926860221f0e7352ae"),
         SER_NETWORK, PROTOCOL_VERSION);
     s_rs2 >> rs2;
-    spk_man->AddCScript(rs2);
+    m_wallet.AddCScript(rs2, false /*=p2sh_20*/, false); // no p2sh_32 in wallet, use legacy vm limits in wallet
 
     // Add hd seed
     // Mainnet and uncompressed form of
     // cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T
     CKey key =
         DecodeSecret("5KSSJQ7UNfFGwVgpCZDSHm5rVNhMFcFtvWM3zQ8mW4qNDEN7LFd");
-    CPubKey master_pub_key = spk_man->DeriveNewSeed(key);
-    spk_man->SetHDSeed(master_pub_key);
-    spk_man->NewKeyPool();
+    CPubKey master_pub_key = m_wallet.DeriveNewSeed(key);
+    m_wallet.SetHDSeed(master_pub_key);
+    m_wallet.NewKeyPool();
 
     // Call FillPSBT
     PartiallySignedTransaction psbtx;
@@ -93,10 +94,7 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
     // The path missing comes from the HD masterkey.
 
     // Fill transaction with our data
-    bool complete = true;
-    BOOST_REQUIRE_EQUAL(
-        m_wallet.FillPSBT(psbtx, complete, SigHashType(), false, true),
-        TransactionError::OK);
+    FillPSBT(&m_wallet, psbtx, STANDARD_SCRIPT_VERIFY_FLAGS, SigHashType(), false, true);
 
     // Get the final tx
     CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);

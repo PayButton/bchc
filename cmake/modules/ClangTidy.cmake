@@ -1,6 +1,6 @@
 if(NOT CLANG_TIDY_EXE)
 	include(DoOrFail)
-	find_program_or_fail(CLANG_TIDY_EXE clang-tidy clang-tidy-13 clang-tidy-12 clang-tidy-11 clang-tidy-10)
+	find_program_or_fail(CLANG_TIDY_EXE clang-tidy clang-tidy-10 clang-tidy-9 clang-tidy-8)
 
 	execute_process(
 		COMMAND "${CLANG_TIDY_EXE}" -version
@@ -9,14 +9,14 @@ if(NOT CLANG_TIDY_EXE)
 	)
 
 	string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" CLANG_TIDY_VERSION "${CLANG_TIDY_VERSION_OUTPUT}")
-	if("${CLANG_TIDY_VERSION}" VERSION_LESS "10.0.0")
-		message(FATAL_ERROR "clang-tidy version >= 10 is required")
+	if("${CLANG_TIDY_VERSION}" VERSION_LESS "8.0.0")
+		message(FATAL_ERROR "clang-tidy version >= 8 is required")
 	endif()
 
 	message(STATUS "Using clang-tidy: ${CLANG_TIDY_EXE} (version ${CLANG_TIDY_VERSION})")
 endif()
 
-set(CLANG_TIDY_ARGS "${CLANG_TIDY_EXE}" -warnings-as-errors=*)
+set(CLANG_TIDY_ARGS "${CLANG_TIDY_EXE}" -fix)
 
 set(CMAKE_C_CLANG_TIDY ${CLANG_TIDY_ARGS})
 set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_ARGS})

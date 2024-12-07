@@ -1,13 +1,12 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_GUIUTIL_H
-#define BITCOIN_QT_GUIUTIL_H
+#pragma once
 
-#include <consensus/amount.h>
-#include <netaddress.h>
-#include <util/fs.h>
+#include <amount.h>
+#include <fs.h>
 
 #include <QEvent>
 #include <QHeaderView>
@@ -18,8 +17,6 @@
 #include <QProgressBar>
 #include <QString>
 #include <QTableView>
-
-#include <chrono>
 
 class QValidatedLineEdit;
 class SendCoinsRecipient;
@@ -32,13 +29,9 @@ class Node;
 
 QT_BEGIN_NAMESPACE
 class QAbstractItemView;
-class QAction;
 class QDateTime;
 class QFont;
 class QLineEdit;
-class QMenu;
-class QPoint;
-class QProgressDialog;
 class QUrl;
 class QWidget;
 QT_END_NAMESPACE
@@ -48,9 +41,18 @@ QT_END_NAMESPACE
  */
 namespace GUIUtil {
 
-// Create human-readable string from date
+// Create short human-readable string from a QDateTime, e.g.: 8/1/17 13:00
 QString dateTimeStr(const QDateTime &datetime);
+// Like the above but takes a time value as a time_t equivalent (seconds since epoch)
 QString dateTimeStr(qint64 nTime);
+
+// Create a longer human-readable string from a QDateTime, e.g.: Thu, January 21, 2021 9:36:29 AM EST
+QString dateTimeStrLong(const QDateTime &dateTime);
+// Like the above but takes a time value as a time_t equivalent (seconds since epoch)
+QString dateTimeStrLong(qint64 nTime);
+
+// Returns a QDateTime object given a time_t equivalent (seconds sinch epoch)
+QDateTime dateTimeFromTime(qint64 nTime);
 
 // Return a monospace font
 QFont fixedPitchFont();
@@ -90,7 +92,7 @@ QString HtmlEscape(const std::string &str, bool fMultiLine = false);
    @see  TransactionView::copyLabel, TransactionView::copyAmount,
    TransactionView::copyAddress
  */
-void copyEntryData(const QAbstractItemView *view, int column,
+void copyEntryData(QAbstractItemView *view, int column,
                    int role = Qt::EditRole);
 
 /** Return a field of the currently selected entry as a QString. Does nothing if
@@ -100,23 +102,9 @@ void copyEntryData(const QAbstractItemView *view, int column,
    @see  TransactionView::copyLabel, TransactionView::copyAmount,
    TransactionView::copyAddress
  */
-QList<QModelIndex> getEntryData(const QAbstractItemView *view, int column);
-
-/**
- * Returns true if the specified field of the currently selected view entry is
- * not empty.
- * @param[in] column  Data column to extract from the model
- * @param[in] role    Data role to extract from the model
- * @see  TransactionView::contextualMenu
- */
-bool hasEntryData(const QAbstractItemView *view, int column, int role);
+QList<QModelIndex> getEntryData(QAbstractItemView *view, int column);
 
 void setClipboard(const QString &str);
-
-/**
- * Determine default data directory for operating system.
- */
-QString getDefaultDataDirectory();
 
 /** Get save filename, mimics QFileDialog::getSaveFileName, except that it
   appends a default suffix
@@ -167,9 +155,6 @@ bool isObscured(QWidget *w);
 // Activate, show and raise the widget
 void bringToFront(QWidget *w);
 
-// Set shortcut to close window
-void handleCloseWindowShortcut(QWidget *w);
-
 // Open debug.log
 void openDebugLogfile();
 
@@ -195,21 +180,6 @@ protected:
 
 private:
     int size_threshold;
-};
-
-/**
- * Qt event filter that intercepts QEvent::FocusOut events for QLabel objects,
- * and resets their `textInteractionFlags' property to get rid of the visible
- * cursor.
- *
- * This is a temporary fix of QTBUG-59514.
- */
-class LabelOutOfFocusEventFilter : public QObject {
-    Q_OBJECT
-
-public:
-    explicit LabelOutOfFocusEventFilter(QObject *parent);
-    bool eventFilter(QObject *watched, QEvent *event) override;
 };
 
 /**
@@ -257,36 +227,28 @@ private Q_SLOTS:
 bool GetStartOnSystemStartup();
 bool SetStartOnSystemStartup(bool fAutoStart);
 
-/** Convert QString to OS specific boost path through UTF-8 */
+/* Convert QString to OS specific boost path through UTF-8 */
 fs::path qstringToBoostPath(const QString &path);
 
-/** Convert OS specific boost path to QString through UTF-8 */
+/* Convert OS specific boost path to QString through UTF-8 */
 QString boostPathToQString(const fs::path &path);
 
-/** Convert enum Network to QString */
-QString NetworkToQString(Network net);
+/* Convert seconds into a QString with days, hours, mins, secs */
+QString formatDurationStr(int secs);
 
-/** Convert seconds into a QString with days, hours, mins, secs */
-QString formatDurationStr(std::chrono::seconds dur);
-
-/** Format CNodeStats.nServices bitmask into a user-readable string */
+/* Format CNodeStats.nServices bitmask into a user-readable string */
 QString formatServicesStr(quint64 mask);
 
-/**
- * Format a CNodeStats.m_last_ping_time into a user-readable string or display
- * N/A, if 0.
- */
-QString formatPingTime(std::chrono::microseconds ping_time);
+/* Format a CNodeCombinedStats.dPingTime into a user-readable string or display
+ * N/A, if 0*/
+QString formatPingTime(double dPingTime);
 
-/** Format a CNodeCombinedStats.nTimeOffset into a user-readable string. */
+/* Format a CNodeCombinedStats.nTimeOffset into a user-readable string. */
 QString formatTimeOffset(int64_t nTimeOffset);
 
 QString formatNiceTimeOffset(qint64 secs);
 
 QString formatBytes(uint64_t bytes);
-
-qreal calculateIdealFontSize(int width, const QString &text, QFont font,
-                             qreal minPointSize = 4, qreal startPointSize = 14);
 
 class ClickableLabel : public QLabel {
     Q_OBJECT
@@ -328,31 +290,15 @@ Q_SIGNALS:
     void keyEscapePressed();
 
 private:
-    bool eventFilter(QObject *object, QEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event);
 };
 
 /**
  * Returns the distance in pixels appropriate for drawing a subsequent character
  * after text.
  *
- * In Qt 5.12 and before the QFontMetrics::width() is used and it is deprecated
- * since Qt 13.0. In Qt 5.11 the QFontMetrics::horizontalAdvance() was
- * introduced.
+ * Before Qt 5.11, QFontMetrics::width() is used (but it is deprecated
+ * since Qt 5.13.0). In Qt >= 5.11 QFontMetrics::horizontalAdvance() is used. 
  */
 int TextWidth(const QFontMetrics &fm, const QString &text);
-
-/**
- * Writes to debug.log short info about the used Qt and the host system.
- */
-void LogQtInfo();
-
-/**
- * Call QMenu::popup() only on supported QT_QPA_PLATFORM.
- */
-void PopupMenu(QMenu *menu, const QPoint &point, QAction *at_action = nullptr);
-
-// Fix known bugs in QProgressDialog class.
-void PolishProgressDialog(QProgressDialog *dialog);
 } // namespace GUIUtil
-
-#endif // BITCOIN_QT_GUIUTIL_H

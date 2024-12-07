@@ -1,9 +1,0 @@
-node_modules/
-generated/
-secrets.js
-
-# Coverage reports with  nyc
-.nyc_output/
-
-# junit test results
-test-results.xml

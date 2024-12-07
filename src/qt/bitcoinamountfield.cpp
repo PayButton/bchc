@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2015 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -15,6 +16,8 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 
+#include <cassert>
+
 /**
  * QSpinBox that uses fixed-point numbers internally and uses our own
  * formatting/parsing functions.
@@ -23,40 +26,42 @@ class AmountSpinBox : public QAbstractSpinBox {
     Q_OBJECT
 
 public:
-    explicit AmountSpinBox(QWidget *parent) {
+    explicit AmountSpinBox(QWidget *parent)
+        : QAbstractSpinBox(parent), currentUnit(BitcoinUnits::BCH),
+          singleStep(100000 * SATOSHI) {
         setAlignment(Qt::AlignRight);
 
         connect(lineEdit(), &QLineEdit::textEdited, this,
                 &AmountSpinBox::valueChanged);
     }
 
-    QValidator::State validate(QString &text, int &pos) const override {
+    QValidator::State validate(QString &text, int &pos [[maybe_unused]]) const override {
         if (text.isEmpty()) {
             return QValidator::Intermediate;
         }
+        // All spaces are ignored.
+        QString digits = BitcoinUnits::removeSpaces(text);
+        // Return Invalid for non-numeric characters - this will prevent them from being typed/pasted into the input field.
+        // Note the input field is intended for unsigned amounts only (in MoneyRange),
+        // so plus/minus signs are also rejected even though the amount parser can handle them.
+        for (const QChar& chr : digits) {
+            if ((chr < '0' || chr > '9') && chr != '.' && chr != ',') {
+                return QValidator::Invalid;
+            }
+        }
+        // Also return Invalid if the digits do not form a parseable number.
+        // Otherwise return Intermediate so that fixup() is called on defocus.
         bool valid = false;
-        parse(text, &valid);
-        // Make sure we return Intermediate so that fixup() is called on
-        // defocus.
+        parse(digits, &valid);
         return valid ? QValidator::Intermediate : QValidator::Invalid;
     }
 
     void fixup(QString &input) const override {
-        bool valid;
-        Amount val;
-
-        if (input.isEmpty() && !m_allow_empty) {
-            valid = true;
-            val = m_min_amount;
-        } else {
-            valid = false;
-            val = parse(input, &valid);
-        }
-
+        bool valid = false;
+        Amount val = parse(input, &valid);
         if (valid) {
-            val = qBound(m_min_amount, val, m_max_amount);
             input = BitcoinUnits::format(currentUnit, val, false,
-                                         BitcoinUnits::SeparatorStyle::ALWAYS);
+                                         BitcoinUnits::separatorAlways);
             lineEdit()->setText(input);
         }
     }
@@ -67,21 +72,15 @@ public:
 
     void setValue(const Amount value) {
         lineEdit()->setText(BitcoinUnits::format(
-            currentUnit, value, false, BitcoinUnits::SeparatorStyle::ALWAYS));
+            currentUnit, value, false, BitcoinUnits::separatorAlways));
         Q_EMIT valueChanged();
     }
-
-    void SetAllowEmpty(bool allow) { m_allow_empty = allow; }
-
-    void SetMinValue(const Amount &value) { m_min_amount = value; }
-
-    void SetMaxValue(const Amount &value) { m_max_amount = value; }
 
     void stepBy(int steps) override {
         bool valid = false;
         Amount val = value(&valid);
         val = val + steps * singleStep;
-        val = qBound(m_min_amount, val, m_max_amount);
+        val = qMin(qMax(val, Amount::zero()), MAX_MONEY);
         setValue(val);
     }
 
@@ -89,9 +88,7 @@ public:
         bool valid = false;
         Amount val(value(&valid));
         currentUnit = unit;
-        lineEdit()->setPlaceholderText(
-            BitcoinUnits::format(currentUnit, m_min_amount, false,
-                                 BitcoinUnits::SeparatorStyle::ALWAYS));
+
         if (valid) {
             setValue(val);
         } else {
@@ -108,9 +105,9 @@ public:
             const QFontMetrics fm(fontMetrics());
             int h = lineEdit()->minimumSizeHint().height();
             int w = GUIUtil::TextWidth(
-                fm, BitcoinUnits::format(BitcoinUnits::base,
-                                         BitcoinUnits::maxMoney(), false,
-                                         BitcoinUnits::SeparatorStyle::ALWAYS));
+                fm, BitcoinUnits::format(BitcoinUnits::BCH,
+                                         MAX_MONEY, false,
+                                         BitcoinUnits::separatorAlways));
             // Cursor blinking space.
             w += 2;
 
@@ -145,12 +142,9 @@ public:
     }
 
 private:
-    int currentUnit{BitcoinUnits::base};
-    Amount singleStep{100000 * SATOSHI};
+    int currentUnit;
+    Amount singleStep;
     mutable QSize cachedMinimumSizeHint;
-    bool m_allow_empty{true};
-    Amount m_min_amount{Amount::zero()};
-    Amount m_max_amount{BitcoinUnits::maxMoney()};
 
     /**
      * Parse a string into a number of base monetary units and
@@ -158,30 +152,28 @@ private:
      * @note Must return 0 if !valid.
      */
     Amount parse(const QString &text, bool *valid_out = nullptr) const {
-        Amount val = Amount::zero();
-        bool valid = BitcoinUnits::parse(currentUnit, text, &val);
-        if (valid) {
-            if (val < Amount::zero() || val > BitcoinUnits::maxMoney()) {
-                valid = false;
-            }
-        }
+        auto val = BitcoinUnits::parse(currentUnit, true, text);
+        bool valid = val && MoneyRange(*val);
         if (valid_out) {
             *valid_out = valid;
         }
-        return valid ? val : Amount::zero();
+        return valid ? *val : Amount::zero();
     }
 
 protected:
     bool event(QEvent *event) override {
-        if (event->type() == QEvent::KeyPress ||
-            event->type() == QEvent::KeyRelease) {
-            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-            if (keyEvent->key() == Qt::Key_Comma) {
-                // Translate a comma into a period.
-                QKeyEvent periodKeyEvent(
-                    event->type(), Qt::Key_Period, keyEvent->modifiers(), ".",
-                    keyEvent->isAutoRepeat(), keyEvent->count());
-                return QAbstractSpinBox::event(&periodKeyEvent);
+        if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
+            QKeyEvent *keyEvent = dynamic_cast<QKeyEvent *>(event);
+            assert(keyEvent != nullptr);
+            // Translate a comma into a period or vice versa, depending on locale.
+            bool preferComma = BitcoinUnits::decimalSeparatorIsComma();
+            if (keyEvent->key() == (preferComma ? Qt::Key_Period : Qt::Key_Comma)) {
+                QKeyEvent replacementKeyEvent(event->type(),
+                                              preferComma ? Qt::Key_Comma : Qt::Key_Period,
+                                              keyEvent->modifiers(),
+                                              preferComma ? "," : ".",
+                                              keyEvent->isAutoRepeat(), keyEvent->count());
+                return QAbstractSpinBox::event(&replacementKeyEvent);
             }
         }
         return QAbstractSpinBox::event(event);
@@ -201,10 +193,10 @@ protected:
         bool valid = false;
         Amount val = value(&valid);
         if (valid) {
-            if (val > m_min_amount) {
+            if (val > Amount::zero()) {
                 rv |= StepDownEnabled;
             }
-            if (val < m_max_amount) {
+            if (val < MAX_MONEY) {
                 rv |= StepUpEnabled;
             }
         }
@@ -296,17 +288,6 @@ void BitcoinAmountField::setValue(const Amount value) {
     amount->setValue(value);
 }
 
-void BitcoinAmountField::SetAllowEmpty(bool allow) {
-    amount->SetAllowEmpty(allow);
-}
-
-void BitcoinAmountField::SetMinValue(const Amount &value) {
-    amount->SetMinValue(value);
-}
-
-void BitcoinAmountField::SetMaxValue(const Amount &value) {
-    amount->SetMaxValue(value);
-}
 void BitcoinAmountField::setReadOnly(bool fReadOnly) {
     amount->setReadOnly(fReadOnly);
 }

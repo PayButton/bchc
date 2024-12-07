@@ -1,106 +1,73 @@
-# Copyright (c) 2018 The Bitcoin developers
+# Copyright (c) 2018-2020 The Bitcoin developers
 
-project(bitcoin-bench)
+project(bench_bitcoin)
 
-set(BENCH_DATA_RAW_FILES
-	data/block413567.raw
+add_custom_command(
+  OUTPUT
+    ${CMAKE_CURRENT_BINARY_DIR}/data/block413567.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/data/block556034.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/data/coins_spent_413567.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/data/coins_spent_556034.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/data/recv_messages.cpp
+  COMMAND
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/convert-raw-files.py ${CMAKE_CURRENT_SOURCE_DIR}/data ${CMAKE_CURRENT_BINARY_DIR}/data
+  DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/block413567.raw.bz2
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/block556034.raw.bz2
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/coins_spent_413567.raw.bz2
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/coins_spent_556034.raw.bz2
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/recv_messages.raw.bz2
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/convert-raw-files.py
 )
 
-# Process raw files.
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/data")
-
-foreach(_raw_file ${BENCH_DATA_RAW_FILES})
-	string(APPEND
-		_generated_header_output
-		"${CMAKE_CURRENT_BINARY_DIR}/${_raw_file}" ".h"
-	)
-
-	list(APPEND BENCH_DATA_GENERATED_HEADERS ${_generated_header_output})
-	get_filename_component(_test_name ${_raw_file} NAME_WE)
-
-	add_custom_command(
-		OUTPUT "${_generated_header_output}"
-		COMMAND
-			"${Python_EXECUTABLE}"
-			"data/convert-raw-to-header.py"
-			"${_test_name}"
-			"${_raw_file}" > "${_generated_header_output}"
-		COMMENT "Transforming raw file ${_raw_file} into header"
-		MAIN_DEPEDENCY "${_raw_file}"
-		DEPENDS "data/convert-raw-to-header.py"
-		VERBATIM
-		WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-	)
-endforeach()
-
-add_executable(bitcoin-bench
+add_executable(bench_bitcoin
+	EXCLUDE_FROM_ALL
+	banman.cpp
 	addrman.cpp
 	base58.cpp
 	bench.cpp
 	bench_bitcoin.cpp
 	block_assemble.cpp
+	blockdata.cpp
 	cashaddr.cpp
 	ccoins_caching.cpp
-	chacha_poly_aead.cpp
-	chacha20.cpp
 	chained_tx.cpp
 	checkblock.cpp
 	checkqueue.cpp
 	crypto_aes.cpp
 	crypto_hash.cpp
-	data.cpp
+	${CMAKE_CURRENT_BINARY_DIR}/data/block413567.cpp
+	${CMAKE_CURRENT_BINARY_DIR}/data/block556034.cpp
+	${CMAKE_CURRENT_BINARY_DIR}/data/coins_spent_413567.cpp
+	${CMAKE_CURRENT_BINARY_DIR}/data/coins_spent_556034.cpp
+	${CMAKE_CURRENT_BINARY_DIR}/data/recv_messages.cpp
+	dsproof.cpp
 	duplicate_inputs.cpp
 	examples.cpp
 	gcs_filter.cpp
-	hashpadding.cpp
-	load_external.cpp
+	json.cpp
+	json_util.cpp
+	libauth_bench.cpp
 	lockedpool.cpp
 	mempool_eviction.cpp
-	mempool_stress.cpp
 	merkle_root.cpp
-	nanobench.cpp
-	pool.cpp
-	peer_eviction.cpp
-	poly1305.cpp
+	net_messages.cpp
 	prevector.cpp
+	removeforblock.cpp
 	rollingbloom.cpp
 	rpc_blockchain.cpp
 	rpc_mempool.cpp
-	streams_findbyte.cpp
+	util_string.cpp
 	util_time.cpp
 	verify_script.cpp
-
-	# Add the generated headers to trigger the conversion command
-	${BENCH_DATA_GENERATED_HEADERS}
 )
 
-target_link_libraries(bitcoin-bench testutil)
+target_link_libraries(bench_bitcoin common bitcoinconsensus server test_common)
 
 if(BUILD_BITCOIN_WALLET)
-	target_sources(bitcoin-bench
-		PRIVATE
-			coin_selection.cpp
-			wallet_balance.cpp
-	)
-	target_link_libraries(bitcoin-bench wallet)
+	target_sources(bench_bitcoin PRIVATE coin_selection.cpp keypool.cpp)
+	target_link_libraries(bench_bitcoin wallet)
 endif()
 
-include(InstallationHelper)
-install_target(bitcoin-bench EXCLUDE_FROM_ALL)
-
-include(TestSuite)
-
-add_test_custom_target(bench-bitcoin
-	TEST_COMMAND
-		"$<TARGET_FILE:bitcoin-bench>"
-		-output_csv=BitcoinABC_Bench.csv
-		-output_json=BitcoinABC_Bench.json
-	CUSTOM_TARGET_ARGS
-		DEPENDS bitcoin-bench
-		USES_TERMINAL
-)
-
-set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY ADDITIONAL_CLEAN_FILES
-	BitcoinABC_Bench.csv
-	BitcoinABC_Bench.json
-)
+add_custom_target(bench-bitcoin COMMAND bench_bitcoin USES_TERMINAL)
+add_custom_target(bitcoin-bench DEPENDS bench_bitcoin)

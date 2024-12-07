@@ -1,12 +1,12 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_MERKLEBLOCK_H
-#define BITCOIN_MERKLEBLOCK_H
+#pragma once
 
-#include <common/bloom.h>
+#include <bloom.h>
 #include <primitives/block.h>
 #include <serialize.h>
 #include <uint256.h>
@@ -14,11 +14,10 @@
 #include <vector>
 
 // Helper functions for serialization.
-std::vector<uint8_t> BitsToBytes(const std::vector<bool> &bits);
-std::vector<bool> BytesToBits(const std::vector<uint8_t> &bytes);
+std::vector<unsigned char> BitsToBytes(const std::vector<bool> &bits);
+std::vector<bool> BytesToBits(const std::vector<unsigned char> &bytes);
 
-/**
- * Data structure that represents a partial merkle tree.
+/** Data structure that represents a partial merkle tree.
  *
  * It represents a subset of the txid's of a known block, in a way that
  * allows recovery of the list of txid's and the merkle root, in an
@@ -101,7 +100,7 @@ protected:
 public:
     SERIALIZE_METHODS(CPartialMerkleTree, obj) {
         READWRITE(obj.nTransactions, obj.vHash);
-        std::vector<uint8_t> bytes;
+        std::vector<unsigned char> bytes;
         SER_WRITE(obj, bytes = BitsToBytes(obj.vBits));
         READWRITE(bytes);
         SER_READ(obj, obj.vBits = BytesToBits(bytes));
@@ -184,5 +183,3 @@ private:
     CMerkleBlock(const CBlock &block, CBloomFilter *filter,
                  const std::set<TxId> *txids);
 };
-
-#endif // BITCOIN_MERKLEBLOCK_H

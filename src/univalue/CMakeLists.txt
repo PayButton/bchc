@@ -1,7 +1,10 @@
-# Copyright (c) 2017 The Bitcoin developers
+# Copyright (c) 2017-2024 The Bitcoin developers
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.13)
 project(univalue)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(UNIVALUE_BUILD_TESTS "Build univalue's unit tests" ON)
 
@@ -20,7 +23,7 @@ target_include_directories(univalue
 		lib
 )
 
-if(UNIVALUE_BUILD_TESTS)
+if(UNIVALUE_BUILD_TESTS AND ENABLE_TEST)
 	include(TestSuite)
 	create_test_suite(univalue)
 
@@ -40,4 +43,14 @@ if(UNIVALUE_BUILD_TESTS)
 	add_executable(json_test EXCLUDE_FROM_ALL test/test_json.cpp)
 	target_link_libraries(json_test univalue)
 	add_dependencies(check-univalue json_test)
-endif(UNIVALUE_BUILD_TESTS)
+endif(UNIVALUE_BUILD_TESTS AND ENABLE_TEST)
+
+# Generate lib/univalue_escapes.h
+include(NativeExecutable)
+add_native_executable(univalue_gen gen/gen.cpp)
+native_target_include_directories(univalue_gen PUBLIC include)
+
+# Custom target to regenerate univalue_escapes.h
+add_custom_target(generate_univalue_escapes_h
+	COMMAND univalue_gen > ${CMAKE_CURRENT_SOURCE_DIR}/lib/univalue_escapes.h
+)

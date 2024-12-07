@@ -1,14 +1,13 @@
-/***********************************************************************
- * Copyright (c) 2014 Pieter Wuille                                    *
- * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
- ***********************************************************************/
+/**********************************************************************
+ * Copyright (c) 2014 Pieter Wuille                                   *
+ * Distributed under the MIT software license, see the accompanying   *
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
+ **********************************************************************/
 
 #ifndef SECP256K1_HASH_IMPL_H
 #define SECP256K1_HASH_IMPL_H
 
 #include "hash.h"
-#include "util.h"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -28,9 +27,9 @@
     (h) = t1 + t2; \
 } while(0)
 
-#if defined(SECP256K1_BIG_ENDIAN)
+#ifdef WORDS_BIGENDIAN
 #define BE32(x) (x)
-#elif defined(SECP256K1_LITTLE_ENDIAN)
+#else
 #define BE32(p) ((((p) & 0xFF) << 24) | (((p) & 0xFF00) << 8) | (((p) & 0xFF0000) >> 8) | (((p) & 0xFF000000) >> 24))
 #endif
 
@@ -162,19 +161,6 @@ static void secp256k1_sha256_finalize(secp256k1_sha256 *hash, unsigned char *out
         hash->s[i] = 0;
     }
     memcpy(out32, (const unsigned char*)out, 32);
-}
-
-/* Initializes a sha256 struct and writes the 64 byte string
- * SHA256(tag)||SHA256(tag) into it. */
-static void secp256k1_sha256_initialize_tagged(secp256k1_sha256 *hash, const unsigned char *tag, size_t taglen) {
-    unsigned char buf[32];
-    secp256k1_sha256_initialize(hash);
-    secp256k1_sha256_write(hash, tag, taglen);
-    secp256k1_sha256_finalize(hash, buf);
-
-    secp256k1_sha256_initialize(hash);
-    secp256k1_sha256_write(hash, buf, 32);
-    secp256k1_sha256_write(hash, buf, 32);
 }
 
 static void secp256k1_hmac_sha256_initialize(secp256k1_hmac_sha256 *hash, const unsigned char *key, size_t keylen) {

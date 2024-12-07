@@ -1,12 +1,12 @@
 // Copyright (c) 2015 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <util/system.h>
 #include <zmq/zmqabstractnotifier.h>
 
 #include <cassert>
-
-const int CZMQAbstractNotifier::DEFAULT_ZMQ_SNDHWM;
 
 CZMQAbstractNotifier::~CZMQAbstractNotifier() {
     assert(!psocket);
@@ -21,22 +21,6 @@ bool CZMQAbstractNotifier::NotifyTransaction(
     return true;
 }
 
-bool CZMQAbstractNotifier::NotifyBlockConnect(
-    const CBlockIndex * /*CBlockIndex*/) {
-    return true;
-}
-
-bool CZMQAbstractNotifier::NotifyBlockDisconnect(
-    const CBlockIndex * /*CBlockIndex*/) {
-    return true;
-}
-
-bool CZMQAbstractNotifier::NotifyTransactionAcceptance(
-    const CTransaction & /*transaction*/, uint64_t mempool_sequence) {
-    return true;
-}
-
-bool CZMQAbstractNotifier::NotifyTransactionRemoval(
-    const CTransaction & /*transaction*/, uint64_t mempool_sequence) {
+bool CZMQAbstractNotifier::NotifyDoubleSpend(const CTransaction & /*transaction*/) {
     return true;
 }

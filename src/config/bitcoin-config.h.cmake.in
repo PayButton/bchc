@@ -1,11 +1,8 @@
-// Copyright (c) 2017 The Bitcoin developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 
-#ifndef BITCOIN_CONFIG_BITCOIN_CONFIG_H
-#define BITCOIN_CONFIG_BITCOIN_CONFIG_H
+#pragma once
 
 #define PACKAGE_NAME "${PACKAGE_NAME}"
-
-#define PACKAGE_BUGREPORT "${PACKAGE_BUGREPORT}"
 
 #define COPYRIGHT_YEAR "${COPYRIGHT_YEAR}"
 #define COPYRIGHT_HOLDERS "${COPYRIGHT_HOLDERS}"
@@ -41,40 +38,27 @@
 #cmakedefine HAVE_DECL___BUILTIN_CLZL 1
 #cmakedefine HAVE_DECL___BUILTIN_CLZLL 1
 #cmakedefine HAVE_DECL___BUILTIN_POPCOUNT 1
-#cmakedefine HAVE_DECL___BUILTIN_SADDLL_OVERFLOW 1
-#cmakedefine HAVE_DECL___BUILTIN_SSUBLL_OVERFLOW 1
 
 #cmakedefine HAVE_MALLOPT_ARENA_MAX 1
 #cmakedefine HAVE_MALLOC_INFO 1
 
-#cmakedefine HAVE_DECL_SETSID 1
 #cmakedefine HAVE_DECL_STRNLEN 1
-#cmakedefine HAVE_DECL_FORK 1
+#cmakedefine HAVE_DECL_DAEMON 1
 #cmakedefine HAVE_DECL_GETIFADDRS 1
 #cmakedefine HAVE_DECL_FREEIFADDRS 1
 #cmakedefine HAVE_GETENTROPY 1
 #cmakedefine HAVE_GETENTROPY_RAND 1
 #cmakedefine HAVE_SYS_GETRANDOM 1
-
-#cmakedefine HAVE_VM_VM_PARAM_H 1
-#cmakedefine HAVE_SYS_VMMETER_H 1
-#cmakedefine HAVE_SYS_RESOURCES_H 1
-#cmakedefine HAVE_SYSCTL 1
-
 #cmakedefine HAVE_SYSCTL_ARND 1
-
-#cmakedefine HAVE_SYSTEM 1
 
 #cmakedefine CHAR_EQUALS_INT8 0
 #cmakedefine HAVE_LARGE_FILE_SUPPORT 1
 
 #cmakedefine HAVE_FUNC_ATTRIBUTE_VISIBILITY 1
 #cmakedefine HAVE_FUNC_ATTRIBUTE_DLLEXPORT 1
-#cmakedefine HAVE_POSIX_FALLOCATE 1
 
-#cmakedefine HAVE_FDATASYNC 1
+#define FDELT_TYPE ${FDELT_TYPE}
 
-#cmakedefine ENABLE_BIP70 1
 #cmakedefine ENABLE_WALLET 1
 #cmakedefine ENABLE_ZMQ 1
 
@@ -101,11 +85,11 @@
 /* Define if QtDBus support should be enabled */
 #cmakedefine USE_DBUS 1
 
-#cmakedefine HAVE___INT128 1
-
-#cmakedefine ENABLE_TRACING 1
+/* Define if we have __int128 */
+#cmakedefine01 HAVE_INT128
 
 /* Define to 1 if strerror_r returns char *. */
 #cmakedefine STRERROR_R_CHAR_P 1
 
-#endif // BITCOIN_BITCOIN_CONFIG_H
+/* Define to 1 if compiler has -Wstringop-overflow (usually GCC) */
+#cmakedefine HAVE_W_STRINGOP_OVERFLOW 1

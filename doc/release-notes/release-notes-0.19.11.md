@@ -1,4 +1,5 @@
-# Bitcoin ABC 0.19.11 Release Notes
+Bitcoin ABC 0.19.11
+===================
 
 Bitcoin ABC version 0.19.11 is now available from:
 

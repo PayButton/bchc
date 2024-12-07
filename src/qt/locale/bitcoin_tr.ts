@@ -2996,7 +2996,7 @@
     </message>
 </context>
 <context>
-    <name>bitcoin-abc</name>
+    <name>bitcoin-cash-node</name>
     <message>
         <source>Options:</source>
         <translation>Seçenekler:</translation>
@@ -3066,8 +3066,8 @@
         <translation>HTTP sunucusu başlatılamadı. Ayrıntılar için debug.log dosyasına bakınız.</translation>
     </message>
     <message>
-        <source>Bitcoin ABC</source>
-        <translation>Bitcoin ABC</translation>
+        <source>Bitcoin Cash Node</source>
+        <translation>Bitcoin Cash Node</translation>
     </message>
     <message>
         <source>The %s developers</source>
@@ -3666,8 +3666,8 @@
         <translation>İşlemleri bellek alanında &lt;n&gt; saatten fazla tutma (varsayılan: %u)</translation>
     </message>
     <message>
-        <source>Equivalent bytes per sigop in transactions for relay and mining (default: %u)</source>
-        <translation>Oluşturma ve aktarma işlemlerinde sigop başına eşdeğer bayt (varsayılan: %u)</translation>
+        <source>Equivalent bytes per sigcheck in transactions for relay and mining (default: %u)</source>
+        <translation>Oluşturma ve aktarma işlemlerinde sigcheck başına eşdeğer bayt (varsayılan: %u)</translation>
     </message>
     <message>
         <source>Fees (in %s/kB) smaller than this are considered zero fee for transaction creation (default: %s)</source>

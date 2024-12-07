@@ -1,60 +1,55 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/standard.h>
 
+#include <crypto/sha256.h>
+#include <pubkey.h>
 #include <script/script.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
-#include <string>
+using valtype = std::vector<uint8_t>;
 
-typedef std::vector<uint8_t> valtype;
+uint32_t nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
 
-CScriptID::CScriptID(const CScript &in) : BaseHash(Hash160(in)) {}
-CScriptID::CScriptID(const ScriptHash &in)
-    : BaseHash(static_cast<uint160>(in)) {}
+ScriptID::ScriptID(const CScript &in, bool is32)
+    : var(is32 ? var_t{Hash(in)} : var_t{Hash160(in)}) {}
 
-ScriptHash::ScriptHash(const CScript &in) : BaseHash(Hash160(in)) {}
-ScriptHash::ScriptHash(const CScriptID &in)
-    : BaseHash(static_cast<uint160>(in)) {}
-
-PKHash::PKHash(const CPubKey &pubkey) : BaseHash(pubkey.GetID()) {}
-PKHash::PKHash(const CKeyID &pubkey_id) : BaseHash(pubkey_id) {}
-
-CKeyID ToKeyID(const PKHash &key_hash) {
-    return CKeyID{static_cast<uint160>(key_hash)};
-}
-
-std::string GetTxnOutputType(TxoutType t) {
+const char *GetTxnOutputType(txnouttype t) {
     switch (t) {
-        case TxoutType::NONSTANDARD:
+        case TX_NONSTANDARD:
             return "nonstandard";
-        case TxoutType::PUBKEY:
+        case TX_PUBKEY:
             return "pubkey";
-        case TxoutType::PUBKEYHASH:
+        case TX_PUBKEYHASH:
             return "pubkeyhash";
-        case TxoutType::SCRIPTHASH:
+        case TX_SCRIPTHASH:
             return "scripthash";
-        case TxoutType::MULTISIG:
+        case TX_MULTISIG:
             return "multisig";
-        case TxoutType::NULL_DATA:
+        case TX_NULL_DATA:
             return "nulldata";
-    } // no default case, so the compiler can warn about missing cases
-    assert(false);
+    }
+    return nullptr;
 }
 
 static bool MatchPayToPubkey(const CScript &script, valtype &pubkey) {
-    if (script.size() == CPubKey::SIZE + 2 && script[0] == CPubKey::SIZE &&
-        script.back() == OP_CHECKSIG) {
-        pubkey =
-            valtype(script.begin() + 1, script.begin() + CPubKey::SIZE + 1);
+    if (script.size() == CPubKey::PUBLIC_KEY_SIZE + 2 &&
+        script[0] == CPubKey::PUBLIC_KEY_SIZE && script.back() == OP_CHECKSIG) {
+        pubkey = valtype(script.begin() + 1,
+                         script.begin() + CPubKey::PUBLIC_KEY_SIZE + 1);
         return CPubKey::ValidSize(pubkey);
     }
-    if (script.size() == CPubKey::COMPRESSED_SIZE + 2 &&
-        script[0] == CPubKey::COMPRESSED_SIZE && script.back() == OP_CHECKSIG) {
-        pubkey = valtype(script.begin() + 1,
-                         script.begin() + CPubKey::COMPRESSED_SIZE + 1);
+    if (script.size() == CPubKey::COMPRESSED_PUBLIC_KEY_SIZE + 2 &&
+        script[0] == CPubKey::COMPRESSED_PUBLIC_KEY_SIZE &&
+        script.back() == OP_CHECKSIG) {
+        pubkey =
+            valtype(script.begin() + 1,
+                    script.begin() + CPubKey::COMPRESSED_PUBLIC_KEY_SIZE + 1);
         return CPubKey::ValidSize(pubkey);
     }
     return false;
@@ -105,18 +100,16 @@ static bool MatchMultisig(const CScript &script, unsigned int &required,
     return (it + 1 == script.end());
 }
 
-TxoutType Solver(const CScript &scriptPubKey,
-                 std::vector<std::vector<uint8_t>> &vSolutionsRet) {
+txnouttype Solver(const CScript &scriptPubKey, std::vector<std::vector<uint8_t>> &vSolutionsRet, uint32_t flags) {
     vSolutionsRet.clear();
 
     // Shortcut for pay-to-script-hash, which are more constrained than the
     // other types:
-    // it is always OP_HASH160 20 [20 byte hash] OP_EQUAL
-    if (scriptPubKey.IsPayToScriptHash()) {
-        std::vector<uint8_t> hashBytes(scriptPubKey.begin() + 2,
-                                       scriptPubKey.begin() + 22);
-        vSolutionsRet.push_back(hashBytes);
-        return TxoutType::SCRIPTHASH;
+    // Before p2sh_32 activation in `flags`, it is always:    OP_HASH160 20 [20 byte hash] OP_EQUAL
+    // *After* p2sh_32 activation in `flags`, it may also be: OP_HASH256 32 [32 byte hash] OP_EQUAL
+    if (valtype hashBytes; scriptPubKey.IsPayToScriptHash(flags, &hashBytes)) {
+        vSolutionsRet.push_back(std::move(hashBytes));
+        return TX_SCRIPTHASH;
     }
 
     // Provably prunable, data-carrying output
@@ -126,18 +119,18 @@ TxoutType Solver(const CScript &scriptPubKey,
     // script.
     if (scriptPubKey.size() >= 1 && scriptPubKey[0] == OP_RETURN &&
         scriptPubKey.IsPushOnly(scriptPubKey.begin() + 1)) {
-        return TxoutType::NULL_DATA;
+        return TX_NULL_DATA;
     }
 
     std::vector<uint8_t> data;
     if (MatchPayToPubkey(scriptPubKey, data)) {
         vSolutionsRet.push_back(std::move(data));
-        return TxoutType::PUBKEY;
+        return TX_PUBKEY;
     }
 
     if (MatchPayToPubkeyHash(scriptPubKey, data)) {
         vSolutionsRet.push_back(std::move(data));
-        return TxoutType::PUBKEYHASH;
+        return TX_PUBKEYHASH;
     }
 
     unsigned int required;
@@ -148,53 +141,62 @@ TxoutType Solver(const CScript &scriptPubKey,
         vSolutionsRet.insert(vSolutionsRet.end(), keys.begin(), keys.end());
         // safe as size is in range 1..16
         vSolutionsRet.push_back({static_cast<uint8_t>(keys.size())});
-        return TxoutType::MULTISIG;
+        return TX_MULTISIG;
     }
 
     vSolutionsRet.clear();
-    return TxoutType::NONSTANDARD;
+    return TX_NONSTANDARD;
 }
 
-bool ExtractDestination(const CScript &scriptPubKey,
-                        CTxDestination &addressRet) {
+bool ExtractDestination(const CScript &scriptPubKey, CTxDestination &addressRet, uint32_t flags) {
     std::vector<valtype> vSolutions;
-    TxoutType whichType = Solver(scriptPubKey, vSolutions);
+    txnouttype whichType = Solver(scriptPubKey, vSolutions, flags);
 
-    if (whichType == TxoutType::PUBKEY) {
+    if (whichType == TX_PUBKEY) {
         CPubKey pubKey(vSolutions[0]);
         if (!pubKey.IsValid()) {
             return false;
         }
 
-        addressRet = PKHash(pubKey);
+        addressRet = pubKey.GetID();
         return true;
     }
-    if (whichType == TxoutType::PUBKEYHASH) {
-        addressRet = PKHash(uint160(vSolutions[0]));
+    if (whichType == TX_PUBKEYHASH) {
+        addressRet = CKeyID(uint160(vSolutions[0]));
         return true;
     }
-    if (whichType == TxoutType::SCRIPTHASH) {
-        addressRet = ScriptHash(uint160(vSolutions[0]));
+    if (whichType == TX_SCRIPTHASH) {
+        const auto sol_size = vSolutions[0].size();
+        if (sol_size == uint160::size()) {
+            // legacy p2sh
+            addressRet = ScriptID(uint160(vSolutions[0]));
+        } else if (sol_size == uint256::size()) {
+            // newer p2sh_32
+            addressRet = ScriptID(uint256(vSolutions[0]));
+        } else {
+            assert(!"Expected solution size to either be 20 or 32 bytes!");
+            return false; // not reached
+        }
         return true;
     }
     // Multisig txns have more than one address...
     return false;
 }
 
-bool ExtractDestinations(const CScript &scriptPubKey, TxoutType &typeRet,
+bool ExtractDestinations(const CScript &scriptPubKey, txnouttype &typeRet,
                          std::vector<CTxDestination> &addressRet,
-                         int &nRequiredRet) {
+                         int &nRequiredRet, uint32_t flags) {
     addressRet.clear();
     std::vector<valtype> vSolutions;
-    typeRet = Solver(scriptPubKey, vSolutions);
-    if (typeRet == TxoutType::NONSTANDARD) {
+    typeRet = Solver(scriptPubKey, vSolutions, flags);
+    if (typeRet == TX_NONSTANDARD) {
         return false;
-    } else if (typeRet == TxoutType::NULL_DATA) {
+    } else if (typeRet == TX_NULL_DATA) {
         // This is data, not addresses
         return false;
     }
 
-    if (typeRet == TxoutType::MULTISIG) {
+    if (typeRet == TX_MULTISIG) {
         nRequiredRet = vSolutions.front()[0];
         for (size_t i = 1; i < vSolutions.size() - 1; i++) {
             CPubKey pubKey(vSolutions[i]);
@@ -202,7 +204,7 @@ bool ExtractDestinations(const CScript &scriptPubKey, TxoutType &typeRet,
                 continue;
             }
 
-            CTxDestination address = PKHash(pubKey);
+            CTxDestination address = pubKey.GetID();
             addressRet.push_back(address);
         }
 
@@ -212,7 +214,7 @@ bool ExtractDestinations(const CScript &scriptPubKey, TxoutType &typeRet,
     } else {
         nRequiredRet = 1;
         CTxDestination address;
-        if (!ExtractDestination(scriptPubKey, address)) {
+        if (!ExtractDestination(scriptPubKey, address, flags)) {
             return false;
         }
         addressRet.push_back(address);
@@ -222,23 +224,45 @@ bool ExtractDestinations(const CScript &scriptPubKey, TxoutType &typeRet,
 }
 
 namespace {
-class CScriptVisitor {
-public:
-    CScript operator()(const CNoDestination &dest) const { return CScript(); }
+class CScriptVisitor : public boost::static_visitor<bool> {
+private:
+    CScript *script;
 
-    CScript operator()(const PKHash &keyID) const {
-        return CScript() << OP_DUP << OP_HASH160 << ToByteVector(keyID)
-                         << OP_EQUALVERIFY << OP_CHECKSIG;
+public:
+    explicit CScriptVisitor(CScript *scriptin) { script = scriptin; }
+
+    bool operator()(const CNoDestination &) const {
+        script->clear();
+        return false;
     }
 
-    CScript operator()(const ScriptHash &scriptID) const {
-        return CScript() << OP_HASH160 << ToByteVector(scriptID) << OP_EQUAL;
+    bool operator()(const CKeyID &keyID) const {
+        script->clear();
+        *script << OP_DUP << OP_HASH160 << ToByteVector(keyID) << OP_EQUALVERIFY
+                << OP_CHECKSIG;
+        return true;
+    }
+
+    bool operator()(const ScriptID &scriptID) const {
+        script->clear();
+        if (scriptID.IsP2SH_20()) {
+            *script << OP_HASH160 << ToByteVector(scriptID) << OP_EQUAL;
+        } else if (scriptID.IsP2SH_32()) {
+            *script << OP_HASH256 << ToByteVector(scriptID) << OP_EQUAL;
+        } else {
+            assert(!"Unexpected state in class ScriptID");
+            return false; // not reached
+        }
+        return true;
     }
 };
 } // namespace
 
 CScript GetScriptForDestination(const CTxDestination &dest) {
-    return std::visit(CScriptVisitor(), dest);
+    CScript script;
+
+    boost::apply_visitor(CScriptVisitor(&script), dest);
+    return script;
 }
 
 CScript GetScriptForRawPubKey(const CPubKey &pubKey) {
@@ -258,5 +282,5 @@ CScript GetScriptForMultisig(int nRequired, const std::vector<CPubKey> &keys) {
 }
 
 bool IsValidDestination(const CTxDestination &dest) {
-    return dest.index() != 0;
+    return dest.which() != 0;
 }

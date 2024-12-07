@@ -1,4 +1,4 @@
-# Copyright (c) 2018 The Bitcoin developers
+# Copyright (c) 2018-2024 The Bitcoin developers
 
 project(bitcoin-qt)
 
@@ -10,7 +10,7 @@ if(ENABLE_DBUS_NOTIFICATIONS)
 	list(APPEND QT_REQUIRED_COMPONENTS DBus)
 endif()
 
-find_package(Qt5 5.9.5 COMPONENTS ${QT_REQUIRED_COMPONENTS} REQUIRED HINTS "${QT5_PREFIX}")
+find_package(Qt5 5.5.1 COMPONENTS ${QT_REQUIRED_COMPONENTS} REQUIRED HINTS "${QT5_PREFIX}")
 
 # Localisation
 add_subdirectory(locale)
@@ -31,7 +31,6 @@ add_custom_command(OUTPUT qrc_bitcoin_locale.cpp
 		temp_bitcoin_locale.qrc
 		-name bitcoin_locale
 		-o qrc_bitcoin_locale.cpp
-		--format-version 1
 	MAIN_DEPENDENCY temp_bitcoin_locale.qrc
 	DEPENDS locales
 	VERBATIM
@@ -54,11 +53,13 @@ qt5_wrap_ui(UI_GENERATED_HEADERS
 	forms/addressbookpage.ui
 	forms/askpassphrasedialog.ui
 	forms/coincontroldialog.ui
-	forms/createwalletdialog.ui
 	forms/editaddressdialog.ui
 	forms/helpmessagedialog.ui
 	forms/intro.ui
 	forms/modaloverlay.ui
+	forms/legacyaddressstopdialog.ui
+	forms/legacyaddresswarndialog.ui
+	forms/legacyaddressconvertdialog.ui
 	forms/openuridialog.ui
 	forms/optionsdialog.ui
 	forms/overviewpage.ui
@@ -136,19 +137,18 @@ endif()
 # OSX support
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	list(APPEND QT_PLUGIN_COMPONENTS QCocoaIntegrationPlugin)
-	list(APPEND QT_PLUGIN_COMPONENTS QMacStylePlugin)
 	list(APPEND QT_PLUGIN_PLATFORM_DEFINITIONS -DQT_QPA_PLATFORM_COCOA=1)
 
 	target_sources(bitcoin-qt-base PRIVATE
 		macdockiconhandler.mm
 		macnotificationhandler.mm
-		macos_appnap.mm
 	)
 
 	set_property(TARGET bitcoin-qt-base PROPERTY AUTOMOC_MOC_OPTIONS "-DQ_OS_MAC")
 
 	target_link_libraries(bitcoin-qt-base
 		"-framework Foundation"
+		"-framework ApplicationServices"
 		"-framework AppKit"
 	)
 endif()
@@ -232,76 +232,6 @@ if(ENABLE_DBUS_NOTIFICATIONS)
 	target_link_libraries(bitcoin-qt-base Qt5::DBus)
 endif()
 
-if(ENABLE_BIP70)
-	# Do protobuf codegen.
-	# The protobuf-config.cmake file is used here as the recent (version > 21)
-	# protobuf might not play nicely with the cmake-supplied FindProtobuf.cmake.
-	# This is due to cmake (at the time of writing, v3.26) not pulling the
-	# required Abseil dependencies properly (and not managing the new protobuf
-	# versioning scheme either).
-	# In the event it is not found, fallback to the FindProtobuf version.
-	# Documentation can be found here:
-	# https://github.com/protocolbuffers/protobuf/blob/main/docs/cmake_protobuf_generate.md
-	find_package(Protobuf CONFIG)
-	if(NOT Protobuf_FOUND)
-		find_package(Protobuf REQUIRED)
-	endif()
-
-	add_library(
-		bitcoin-qt-protobuf OBJECT
-		paymentrequest.proto
-	)
-	target_link_libraries(bitcoin-qt-protobuf PUBLIC protobuf::libprotobuf)
-
-	# Where protoc will put the generated files
-	set(PROTOC_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-	# Where the proto files are located
-	set(PROTO_IMPORT_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
-
-	# Include the generated headers path
-	target_include_directories(
-		bitcoin-qt-protobuf
-		PUBLIC "$<BUILD_INTERFACE:${PROTOC_OUTPUT_DIRECTORY}>"
-	)
-
-	protobuf_generate(
-		LANGUAGE cpp
-		TARGET bitcoin-qt-protobuf
-		IMPORT_DIRS "${PROTO_IMPORT_DIRECTORY}"
-		PROTOC_OUT_DIR "${PROTOC_OUTPUT_DIRECTORY}"
-	)
-
-	# Don't run clang-tidy on generated files
-	if(ENABLE_CLANG_TIDY)
-		include(ClangTidy)
-		target_disable_clang_tidy(bitcoin-qt-protobuf)
-	endif()
-
-	# Message::ByteSize() is deprecated and replaced by ByteSizeLong() since
-	# protobuf 3.1.
-	if(Protobuf_VERSION GREATER_EQUAL "3.1.0")
-		target_compile_definitions(bitcoin-qt-base PRIVATE USE_PROTOBUF_MESSAGE_BYTESIZELONG)
-	endif()
-
-	# OpenSSL functionality
-	include(BrewHelper)
-	find_brew_prefix(OPENSSL_ROOT_DIR openssl)
-	find_package(OpenSSL REQUIRED)
-
-	include(CheckSymbolExists)
-	set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
-	set(CMAKE_REQUIRED_LIBRARIES OpenSSL::SSL)
-	check_symbol_exists(EVP_MD_CTX_new "openssl/evp.h" HAVE_DECL_EVP_MD_CTX_NEW)
-	if(HAVE_DECL_EVP_MD_CTX_NEW)
-		target_compile_definitions(bitcoin-qt-base PRIVATE HAVE_DECL_EVP_MD_CTX_NEW=1)
-	endif()
-
-	target_link_libraries(bitcoin-qt-base
-		OpenSSL::SSL
-		bitcoin-qt-protobuf
-	)
-endif()
-
 # Wallet
 if(BUILD_BITCOIN_WALLET)
 	# Automoc option.
@@ -315,12 +245,12 @@ if(BUILD_BITCOIN_WALLET)
 			askpassphrasedialog.cpp
 			coincontroldialog.cpp
 			coincontroltreewidget.cpp
-			createwalletdialog.cpp
 			editaddressdialog.cpp
+			legacyaddressdialog.cpp
+			legacyaddressconvertdialog.cpp
 			openuridialog.cpp
 			overviewpage.cpp
 			paymentserver.cpp
-			qrimagewidget.cpp
 			receivecoinsdialog.cpp
 			receiverequestdialog.cpp
 			recentrequeststablemodel.cpp
@@ -340,14 +270,6 @@ if(BUILD_BITCOIN_WALLET)
 			walletview.cpp
 	)
 
-	# Add BIP70 functionality to bitcoin-qt
-	if(ENABLE_BIP70)
-		target_sources(bitcoin-qt-base
-			PRIVATE
-				paymentrequestplus.cpp
-		)
-	endif()
-
 	target_link_libraries(bitcoin-qt-base wallet)
 
 	if(ENABLE_QRCODE)
@@ -358,13 +280,9 @@ endif()
 
 # The executable
 add_executable(bitcoin-qt WIN32 main.cpp)
-include(WindowsVersionInfo)
-generate_windows_version_info(bitcoin-qt
-	DESCRIPTION "GUI node for Bitcoin"
-	ICONS
-		"res/icons/bitcoin.ico"
-		"res/icons/bitcoin_testnet.ico"
-)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	target_sources(bitcoin-qt PRIVATE res/bitcoin-qt-res.rc)
+endif()
 target_link_libraries(bitcoin-qt bitcoin-qt-base)
 
 include(BinaryTest)
@@ -373,7 +291,6 @@ add_to_security_check(bitcoin-qt)
 
 include(InstallationHelper)
 install_target(bitcoin-qt)
-install_manpages(bitcoin-qt)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	set(BITCOINQT_BUNDLE_ICON "res/icons/bitcoin.icns")
@@ -403,18 +320,17 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		"${EMPTY_LPROJ_FILE}"
 	)
 
-	set(BITCOIN_QT_OSX_BUNDLE_NAME "BitcoinABC-Qt")
 	set_target_properties(bitcoin-qt PROPERTIES
 		MACOSX_BUNDLE ON
 		OUTPUT_NAME "${BITCOIN_QT_OSX_BUNDLE_NAME}"
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/share/qt/Info.plist.cmake.in"
 		MACOSX_BUNDLE_BUNDLE_NAME "${BITCOIN_QT_OSX_BUNDLE_NAME}"
-		MACOSX_BUNDLE_BUNDLE_VERSION "${bitcoin-abc_VERSION}"
-		MACOSX_BUNDLE_GUI_IDENTIFIER "org.bitcoinabc.${BITCOIN_QT_OSX_BUNDLE_NAME}"
+		MACOSX_BUNDLE_BUNDLE_VERSION "${bitcoin-cash-node_VERSION}"
+		MACOSX_BUNDLE_GUI_IDENTIFIER "org.bitcoincashnode.${BITCOIN_QT_OSX_BUNDLE_NAME}"
 		MACOSX_BUNDLE_ICON_FILE "${BITCOINQT_BUNDLE_ICON_NAME}"
-		MACOSX_BUNDLE_INFO_STRING "${bitcoin-abc_VERSION}, Copyright © 2009-${COPYRIGHT_YEAR} ${COPYRIGHT_HOLDERS_FINAL}"
-		MACOSX_BUNDLE_LONG_VERSION_STRING "${bitcoin-abc_VERSION}"
-		MACOSX_BUNDLE_SHORT_VERSION_STRING "${bitcoin-abc_VERSION}"
+		MACOSX_BUNDLE_INFO_STRING "${bitcoin-cash-node_VERSION}, Copyright © 2009-${COPYRIGHT_YEAR} ${COPYRIGHT_HOLDERS_FINAL}"
+		MACOSX_BUNDLE_LONG_VERSION_STRING "${bitcoin-cash-node_VERSION}"
+		MACOSX_BUNDLE_SHORT_VERSION_STRING "${bitcoin-cash-node_VERSION}"
 		RESOURCE "${BITCOINQT_BUNDLE_RESOURCES}"
 	)
 	# The InfoPlist.strings files should be located in a resource subdirectory.
@@ -454,11 +370,17 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	find_program_or_fail(CMAKE_INSTALL_NAME_TOOL "install_name_tool")
 	find_program_or_fail(CMAKE_OTOOL "otool")
 
-	set(QT_BASE_TRANSLATIONS
-		"ar" "bg" "ca" "cs" "da" "de" "es" "fa" "fi" "fr" "gd" "gl" "he" "hu"
-		"it" "ja" "ko" "lt" "lv" "pl" "pt" "ru" "sk" "sl" "sv" "uk" "zh_CN"
+	set(QT_INSTALLER_SUPPORTED_LANGUAGES
+		"da"
+		"de"
+		"es"
+		"hu"
+		"ru"
+		"uk"
+		"zh_CN"
 		"zh_TW"
 	)
+	string(JOIN "," QT_LOCALES ${QT_INSTALLER_SUPPORTED_LANGUAGES})
 
 	get_target_property(QMAKE_EXECUTABLE Qt5::qmake IMPORTED_LOCATION)
 	execute_process(
@@ -492,17 +414,17 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		set(QT_TRANSLATION_DIR ${_qt_translation_dir} PARENT_SCOPE)
 	endfunction()
 
-	string(REPLACE " " "-" OSX_VOLNAME "${PACKAGE_NAME}")
-	file(WRITE "${CMAKE_BINARY_DIR}/osx_volname" "${OSX_VOLNAME}")
+	get_qt_translation_dir(QT_TRANSLATION_DIR ${QT_INSTALLER_SUPPORTED_LANGUAGES})
+	if(NOT QT_TRANSLATION_DIR)
+		message(FATAL_ERROR "Qt translation files are not found")
+	endif()
 
 	set(MACDEPLOY_DIR "${CMAKE_SOURCE_DIR}/contrib/macdeploy")
-	set(MACDEPLOYQTPLUS "${MACDEPLOY_DIR}/macdeployqtplus.py")
+	set(MACDEPLOYQTPLUS "${MACDEPLOY_DIR}/macdeployqtplus")
 	set(DMG_DIST "${CMAKE_BINARY_DIR}/dist")
-	set(DMG_DSSTORE "${DMG_DIST}/.DS_Store")
 	add_custom_command(
 		OUTPUT
 			"${DMG_DIST}"
-			"${DMG_DSSTORE}"
 		COMMAND
 			"INSTALLNAMETOOL=${CMAKE_INSTALL_NAME_TOOL}"
 			"OTOOL=${CMAKE_OTOOL}"
@@ -510,16 +432,40 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 			"${Python_EXECUTABLE}"
 			"${MACDEPLOYQTPLUS}"
 			"${STRIPPED_BUNDLE}"
-			"${OSX_VOLNAME}"
 			-translations-dir "${QT_TRANSLATION_DIR}"
+			-add-qt-tr "${QT_LOCALES}"
 		WORKING_DIRECTORY
 			"${CMAKE_BINARY_DIR}"
 		DEPENDS
 			"${STRIPPED_BUNDLE}"
 	)
 
+	# Building the DMG background image requires several steps:
+	#   1/ The SVG file must be edited to display the package name
+	#   2/ The SVG file should be transformed into a couple PNG files, on for
+	#      low resolution screens and one for high resolution screens.
+	#   3/ The PNG files must be transformed into a multi-resolution TIFF file.
+	#      The names are not set arbitrarily, they follow Apple's guidelines for
+	#      resolution independent bitmap images (see `man tiffutil`).
+	set(BACKGROUND_SVG "background.svg")
+	configure_file(
+		"${CMAKE_SOURCE_DIR}/contrib/macdeploy/background.svg.cmake.in"
+		"${BACKGROUND_SVG}"
+	)
+
+	include(ImageHelper)
+	set(BACKGROUND_PNG_LOWRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp.png")
+	set(BACKGROUND_PNG_HIRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp@2x.png")
+	set(BACKGROUND_TIFF_LOWRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp.tiff")
+	set(BACKGROUND_TIFF_HIRES "${CMAKE_CURRENT_BINARY_DIR}/background_temp@2x.tiff")
 	set(BACKGROUND_TIFF_NAME "background.tiff")
-	set(BACKGROUND_TIFF_MULTIRES "${CMAKE_SOURCE_DIR}/contrib/macdeploy/${BACKGROUND_TIFF_NAME}")
+	set(BACKGROUND_TIFF_MULTIRES "${CMAKE_BINARY_DIR}/${BACKGROUND_TIFF_NAME}")
+	convert_svg_to_png("${BACKGROUND_SVG}" "${BACKGROUND_PNG_LOWRES}" 36)
+	convert_svg_to_png("${BACKGROUND_SVG}" "${BACKGROUND_PNG_HIRES}" 72)
+	convert_png_to_tiff("${BACKGROUND_PNG_LOWRES}" "${BACKGROUND_TIFF_LOWRES}")
+	convert_png_to_tiff("${BACKGROUND_PNG_HIRES}" "${BACKGROUND_TIFF_HIRES}")
+	cat_multi_resolution_tiff("${BACKGROUND_TIFF_MULTIRES}" "${BACKGROUND_TIFF_LOWRES}" "${BACKGROUND_TIFF_HIRES}")
+
 	set(BACKGROUND_DIST_DIR "${DMG_DIST}/.background")
 	set(BACKGROUND_DIST_TIFF "${BACKGROUND_DIST_DIR}/${BACKGROUND_TIFF_NAME}")
 	add_custom_command(
@@ -531,6 +477,24 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 			${CMAKE_COMMAND} -E copy "${BACKGROUND_TIFF_MULTIRES}" "${BACKGROUND_DIST_TIFF}"
 		DEPENDS
 			"${BACKGROUND_TIFF_MULTIRES}"
+			"${DMG_DIST}"
+	)
+
+	string(REPLACE " " "-" OSX_VOLNAME "${PACKAGE_NAME}")
+	file(WRITE "${CMAKE_BINARY_DIR}/osx_volname" "${OSX_VOLNAME}")
+
+	set(DMG_DSSTORE "${DMG_DIST}/.DS_Store")
+	set(GEN_DSSTORE "${MACDEPLOY_DIR}/custom_dsstore.py")
+	add_custom_command(
+		OUTPUT
+			"${DMG_DSSTORE}"
+		COMMAND
+			"${Python_EXECUTABLE}"
+			"${GEN_DSSTORE}"
+			"${DMG_DSSTORE}"
+			"${OSX_VOLNAME}"
+		DEPENDS
+			"${GEN_DSSTORE}"
 			"${DMG_DIST}"
 	)
 
@@ -553,24 +517,22 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	)
 
 	if(CMAKE_CROSSCOMPILING)
-		find_program_or_fail(XORRISOFS_EXECUTABLE xorrisofs)
-
-		if (DEFINED ENV{SOURCE_DATE_EPOCH})
-			set(OVERRIDE_DATE -- -volume_date all_file_dates "=$ENV{SOURCE_DATE_EPOCH}")
-		endif()
+		find_program_or_fail(GENISOIMAGE_EXECUTABLE genisoimage)
 
 		add_custom_target(osx-dmg
 			COMMAND
-				"${XORRISOFS_EXECUTABLE}"
+				"${GENISOIMAGE_EXECUTABLE}"
+				-no-cache-inodes
 				-D
 				-l
+				-probe
 				-V "${OSX_VOLNAME}"
 				-no-pad
 				-r
 				-dir-mode 0755
+				-apple
 				-o "${OSX_VOLNAME}.dmg"
 				"${DMG_DIST}"
-				${OVERRIDE_DATE}
 			WORKING_DIRECTORY
 				"${CMAKE_BINARY_DIR}"
 		)
@@ -581,9 +543,11 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 				"${Python_EXECUTABLE}"
 				"${MACDEPLOYQTPLUS}"
 				"${STRIPPED_BUNDLE}"
-				"${OSX_VOLNAME}"
 				-translations-dir "${QT_TRANSLATION_DIR}"
+				-add-qt-tr "${QT_LOCALES}"
 				-dmg
+				-fancy "${MACDEPLOY_DIR}/fancy.plist"
+				-volname "${OSX_VOLNAME}"
 			WORKING_DIRECTORY
 				"${CMAKE_BINARY_DIR}"
 			DEPENDS
@@ -607,4 +571,6 @@ add_custom_target(translate
 )
 
 # Test tests
-add_subdirectory(test)
+if(ENABLE_TEST)
+    add_subdirectory(test)
+endif()

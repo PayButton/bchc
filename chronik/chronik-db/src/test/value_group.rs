@@ -61,11 +61,16 @@ impl Group for ValueGroup {
         ser_value(*value)
     }
 
+    fn ser_hash_member(&self, _member: &Self::Member<'_>) -> [u8; 32] {
+        unimplemented!()
+    }
+
     fn tx_history_conf() -> GroupHistoryConf {
         GroupHistoryConf {
             cf_page_name: "value_history",
             cf_num_txs_name: "value_history_num_txs",
             page_size: 4,
+            cf_member_hash_name: None,
         }
     }
 

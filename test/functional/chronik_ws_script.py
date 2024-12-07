@@ -8,7 +8,6 @@ from test_framework.address import (
     ADDRESS_ECREG_UNSPENDABLE,
     SCRIPTSIG_OP_TRUE,
 )
-from test_framework.avatools import can_find_inv_in_poll, get_ava_p2p_interface
 from test_framework.blocktools import (
     COINBASE_MATURITY,
     create_block,
@@ -21,7 +20,7 @@ from test_framework.p2p import P2PDataStore
 from test_framework.script import OP_EQUAL, OP_HASH160, CScript
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
-from test_framework.util import assert_equal, chronik_sub_script
+from test_framework.util import assert_equal, chronik_sub_script, wait_until
 
 QUORUM_NODE_COUNT = 16
 
@@ -30,13 +29,9 @@ class ChronikWsScriptTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
+        self.noban_tx_relay = True
         self.extra_args = [
             [
-                "-avaproofstakeutxodustthreshold=1000000",
-                "-avaproofstakeutxoconfirmations=1",
-                "-avacooldown=0",
-                "-avaminquorumstake=0",
-                "-avaminavaproofsnodecount=0",
                 "-chronik",
                 "-whitelist=noban@127.0.0.1",
             ],
@@ -57,21 +52,6 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         coinblockhash = self.generatetoaddress(node, 1, ADDRESS_ECREG_P2SH_OP_TRUE)[0]
         coinblock = node.getblock(coinblockhash)
         cointx = coinblock["tx"][0]
-
-        # Set up Avalanche
-        def get_quorum():
-            return [
-                get_ava_p2p_interface(self, node) for _ in range(0, QUORUM_NODE_COUNT)
-            ]
-
-        def has_finalized_tip(tip_expected):
-            hash_tip_final = int(tip_expected, 16)
-            can_find_inv_in_poll(quorum, hash_tip_final)
-            return node.isfinalblock(tip_expected)
-
-        quorum = get_quorum()
-
-        assert node.getavalancheinfo()["ready_to_poll"] is True
 
         tip = self.generatetoaddress(
             node, COINBASE_MATURITY, ADDRESS_ECREG_UNSPENDABLE
@@ -104,7 +84,7 @@ class ChronikWsScriptTest(BitcoinTestFramework):
 
         # Send the tx, will send updates to ws1 and ws2
         txid = node.sendrawtransaction(tx.serialize().hex())
-        self.wait_until(lambda: txid in node.getrawmempool())
+        wait_until(lambda: txid in node.getrawmempool())
 
         from test_framework.chronik.client import pb
 
@@ -204,19 +184,11 @@ class ChronikWsScriptTest(BitcoinTestFramework):
         check_tx_msgs(ws1, pb.TX_ADDED_TO_MEMPOOL, [txid, tx3_conflict.hash])
         check_tx_msgs(ws2, pb.TX_ADDED_TO_MEMPOOL, [txid, txid2])
 
-        # Test Avalanche finalization
-        tip = node.getbestblockhash()
-        self.wait_until(lambda: has_finalized_tip(tip))
 
         # Mine txs in a block -> sends CONFIRMED
         tip = self.generate(node, 1)[-1]
         check_tx_msgs(ws1, pb.TX_CONFIRMED, sorted([txid, tx3_conflict.hash]))
         check_tx_msgs(ws2, pb.TX_CONFIRMED, sorted([txid, txid2]))
-
-        # Wait for Avalanche finalization of block -> sends TX_FINALIZED
-        self.wait_until(lambda: has_finalized_tip(tip))
-        check_tx_msgs(ws1, pb.TX_FINALIZED, sorted([txid, tx3_conflict.hash]))
-        check_tx_msgs(ws2, pb.TX_FINALIZED, sorted([txid, txid2]))
 
         # Invalid subscription, payload too short
         ws1.sub_script("p2pkh", b"abc")

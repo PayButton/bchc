@@ -1,66 +1,60 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (C) 2020 Tom Zander <tomz@freedommail.ch>
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <protocol.h>
 
 #include <chainparams.h>
-#include <common/system.h>
 #include <config.h>
-#include <logging.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
+#ifndef WIN32
+#include <arpa/inet.h>
+#endif
 #include <atomic>
 
 static std::atomic<bool> g_initial_block_download_completed(false);
 
 namespace NetMsgType {
-const char *VERSION = "version";
-const char *VERACK = "verack";
-const char *ADDR = "addr";
-const char *ADDRV2 = "addrv2";
-const char *SENDADDRV2 = "sendaddrv2";
-const char *INV = "inv";
-const char *GETDATA = "getdata";
-const char *MERKLEBLOCK = "merkleblock";
-const char *GETBLOCKS = "getblocks";
-const char *GETHEADERS = "getheaders";
-const char *TX = "tx";
-const char *HEADERS = "headers";
-const char *BLOCK = "block";
-const char *GETADDR = "getaddr";
-const char *MEMPOOL = "mempool";
-const char *PING = "ping";
-const char *PONG = "pong";
-const char *NOTFOUND = "notfound";
-const char *FILTERLOAD = "filterload";
-const char *FILTERADD = "filteradd";
-const char *FILTERCLEAR = "filterclear";
-const char *SENDHEADERS = "sendheaders";
-const char *FEEFILTER = "feefilter";
-const char *SENDCMPCT = "sendcmpct";
-const char *CMPCTBLOCK = "cmpctblock";
-const char *GETBLOCKTXN = "getblocktxn";
-const char *BLOCKTXN = "blocktxn";
-const char *GETCFILTERS = "getcfilters";
-const char *CFILTER = "cfilter";
-const char *GETCFHEADERS = "getcfheaders";
-const char *CFHEADERS = "cfheaders";
-const char *GETCFCHECKPT = "getcfcheckpt";
-const char *CFCHECKPT = "cfcheckpt";
-const char *AVAHELLO = "avahello";
-const char *AVAPOLL = "avapoll";
-const char *AVARESPONSE = "avaresponse";
-const char *AVAPROOF = "avaproof";
-const char *GETAVAADDR = "getavaaddr";
-const char *GETAVAPROOFS = "getavaproofs";
-const char *AVAPROOFS = "avaproofs";
-const char *AVAPROOFSREQ = "avaproofsreq";
+const char *const VERSION = "version";
+const char *const VERACK = "verack";
+const char *const ADDR = "addr";
+const char *const ADDRV2 = "addrv2";
+const char *const SENDADDRV2 = "sendaddrv2";
+const char *const INV = "inv";
+const char *const GETDATA = "getdata";
+const char *const MERKLEBLOCK = "merkleblock";
+const char *const GETBLOCKS = "getblocks";
+const char *const GETHEADERS = "getheaders";
+const char *const TX = "tx";
+const char *const HEADERS = "headers";
+const char *const BLOCK = "block";
+const char *const GETADDR = "getaddr";
+const char *const MEMPOOL = "mempool";
+const char *const PING = "ping";
+const char *const PONG = "pong";
+const char *const NOTFOUND = "notfound";
+const char *const FILTERLOAD = "filterload";
+const char *const FILTERADD = "filteradd";
+const char *const FILTERCLEAR = "filterclear";
+const char *const REJECT = "reject";
+const char *const SENDHEADERS = "sendheaders";
+const char *const FEEFILTER = "feefilter";
+const char *const SENDCMPCT = "sendcmpct";
+const char *const CMPCTBLOCK = "cmpctblock";
+const char *const GETBLOCKTXN = "getblocktxn";
+const char *const BLOCKTXN = "blocktxn";
+const char *const EXTVERSION = "extversion";
+const char *const DSPROOF = "dsproof-beta";
 
-bool IsBlockLike(const std::string &strCommand) {
-    return strCommand == NetMsgType::BLOCK ||
-           strCommand == NetMsgType::CMPCTBLOCK ||
-           strCommand == NetMsgType::BLOCKTXN;
+bool IsBlockLike(const std::string &msg_type) {
+    return msg_type == NetMsgType::BLOCK ||
+           msg_type == NetMsgType::CMPCTBLOCK ||
+           msg_type == NetMsgType::BLOCKTXN;
 }
 }; // namespace NetMsgType
 
@@ -68,25 +62,16 @@ bool IsBlockLike(const std::string &strCommand) {
  * All known message types. Keep this in the same order as the list of messages
  * above and in protocol.h.
  */
-static const std::string allNetMessageTypes[] = {
-    NetMsgType::VERSION,     NetMsgType::VERACK,       NetMsgType::ADDR,
-    NetMsgType::ADDRV2,      NetMsgType::SENDADDRV2,   NetMsgType::INV,
-    NetMsgType::GETDATA,     NetMsgType::MERKLEBLOCK,  NetMsgType::GETBLOCKS,
-    NetMsgType::GETHEADERS,  NetMsgType::TX,           NetMsgType::HEADERS,
-    NetMsgType::BLOCK,       NetMsgType::GETADDR,      NetMsgType::MEMPOOL,
-    NetMsgType::PING,        NetMsgType::PONG,         NetMsgType::NOTFOUND,
-    NetMsgType::FILTERLOAD,  NetMsgType::FILTERADD,    NetMsgType::FILTERCLEAR,
-    NetMsgType::SENDHEADERS, NetMsgType::FEEFILTER,    NetMsgType::SENDCMPCT,
-    NetMsgType::CMPCTBLOCK,  NetMsgType::GETBLOCKTXN,  NetMsgType::BLOCKTXN,
-    NetMsgType::GETCFILTERS, NetMsgType::CFILTER,      NetMsgType::GETCFHEADERS,
-    NetMsgType::CFHEADERS,   NetMsgType::GETCFCHECKPT, NetMsgType::CFCHECKPT,
-    NetMsgType::AVAHELLO,    NetMsgType::AVAPOLL,      NetMsgType::AVARESPONSE,
-    NetMsgType::AVAPROOF,    NetMsgType::GETAVAADDR,   NetMsgType::GETAVAPROOFS,
-    NetMsgType::AVAPROOFS,   NetMsgType::AVAPROOFSREQ,
-};
-static const std::vector<std::string>
-    allNetMessageTypesVec(std::begin(allNetMessageTypes),
-                          std::end(allNetMessageTypes));
+static const std::vector<std::string> allNetMessageTypesVec{{
+    NetMsgType::VERSION,     NetMsgType::VERACK,     NetMsgType::ADDR,        NetMsgType::ADDRV2,
+    NetMsgType::SENDADDRV2,  NetMsgType::INV,        NetMsgType::GETDATA,     NetMsgType::MERKLEBLOCK,
+    NetMsgType::GETBLOCKS,   NetMsgType::GETHEADERS, NetMsgType::TX,          NetMsgType::HEADERS,
+    NetMsgType::BLOCK,       NetMsgType::GETADDR,    NetMsgType::MEMPOOL,     NetMsgType::PING,
+    NetMsgType::PONG,        NetMsgType::NOTFOUND,   NetMsgType::FILTERLOAD,  NetMsgType::FILTERADD,
+    NetMsgType::FILTERCLEAR, NetMsgType::REJECT,     NetMsgType::SENDHEADERS, NetMsgType::FEEFILTER,
+    NetMsgType::SENDCMPCT,   NetMsgType::CMPCTBLOCK, NetMsgType::GETBLOCKTXN, NetMsgType::BLOCKTXN,
+    NetMsgType::EXTVERSION,  NetMsgType::DSPROOF,
+}};
 
 CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn) {
     memcpy(std::begin(pchMessageStart), std::begin(pchMessageStartIn),
@@ -101,13 +86,14 @@ CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn,
                                unsigned int nMessageSizeIn) {
     memcpy(std::begin(pchMessageStart), std::begin(pchMessageStartIn),
            MESSAGE_START_SIZE);
-    // Copy the command name, zero-padding to COMMAND_SIZE bytes
+    // Copy the command name
     size_t i = 0;
     for (; i < pchCommand.size() && pszCommand[i] != 0; ++i) {
         pchCommand[i] = pszCommand[i];
     }
     // Assert that the command name passed in is not longer than COMMAND_SIZE
     assert(pszCommand[i] == 0);
+    // Zero-pad to COMMAND_SIZE bytes
     for (; i < pchCommand.size(); ++i) {
         pchCommand[i] = 0;
     }
@@ -117,6 +103,7 @@ CMessageHeader::CMessageHeader(const MessageMagic &pchMessageStartIn,
 }
 
 std::string CMessageHeader::GetCommand() const {
+    // return std::string(pchCommand.begin(), pchCommand.end());
     return std::string(pchCommand.data(),
                        pchCommand.data() +
                            strnlen(pchCommand.data(), COMMAND_SIZE));
@@ -192,13 +179,21 @@ bool CMessageHeader::IsValidWithoutConfig(const MessageMagic &magic) const {
 }
 
 bool CMessageHeader::IsOversized(const Config &config) const {
-    // Scale the maximum accepted size with the block size for messages with
-    // block content
-    if (NetMsgType::IsBlockLike(GetCommand())) {
-        return nMessageSize > 2 * config.GetMaxBlockSize();
+    // If the message doesn't not contain a block content, check against
+    // MAX_PROTOCOL_MESSAGE_LENGTH.
+    if (nMessageSize > MAX_PROTOCOL_MESSAGE_LENGTH &&
+        !NetMsgType::IsBlockLike(GetCommand())) {
+        return true;
     }
 
-    return nMessageSize > MAX_PROTOCOL_MESSAGE_LENGTH;
+    // Scale the maximum accepted size with the expected maximum block size (ABLA's 2 * BLOCK_DOWNLOAD_WINDOW lookahead
+    // guess). Note that the correctness of this size check relies on downloads of blocks never being beyond the active
+    // chain tip + BLOCK_DOWNLOAD_WINDOW (enforced elsewhere in the network code).
+    if (nMessageSize > 2u * config.GetMaxBlockSizeLookAheadGuess()) {
+        return true;
+    }
+
+    return false;
 }
 
 ServiceFlags GetDesirableServiceFlags(ServiceFlags services) {
@@ -224,8 +219,8 @@ std::string CInv::GetCommand() const {
             return cmd.append(NetMsgType::MERKLEBLOCK);
         case MSG_CMPCT_BLOCK:
             return cmd.append(NetMsgType::CMPCTBLOCK);
-        case MSG_AVA_PROOF:
-            return cmd.append(NetMsgType::AVAPROOF);
+        case MSG_DOUBLESPENDPROOF:
+             return cmd.append(NetMsgType::DSPROOF);
         default:
             throw std::out_of_range(
                 strprintf("CInv::GetCommand(): type=%d unknown type", type));
@@ -242,49 +237,4 @@ std::string CInv::ToString() const {
 
 const std::vector<std::string> &getAllNetMessageTypes() {
     return allNetMessageTypesVec;
-}
-
-/**
- * Convert a service flag (NODE_*) to a human readable string.
- * It supports unknown service flags which will be returned as "UNKNOWN[...]".
- * @param[in] bit the service flag is calculated as (1 << bit)
- */
-static std::string serviceFlagToStr(const size_t bit) {
-    const uint64_t service_flag = 1ULL << bit;
-    switch (ServiceFlags(service_flag)) {
-        case NODE_NONE:
-            // impossible
-            abort();
-        case NODE_NETWORK:
-            return "NETWORK";
-        case NODE_GETUTXO:
-            return "GETUTXO";
-        case NODE_BLOOM:
-            return "BLOOM";
-        case NODE_NETWORK_LIMITED:
-            return "NETWORK_LIMITED";
-        case NODE_COMPACT_FILTERS:
-            return "COMPACT_FILTERS";
-        case NODE_AVALANCHE:
-            return "AVALANCHE";
-        default:
-            std::ostringstream stream;
-            stream.imbue(std::locale::classic());
-            stream << "UNKNOWN[";
-            stream << "2^" << bit;
-            stream << "]";
-            return stream.str();
-    }
-}
-
-std::vector<std::string> serviceFlagsToStr(const uint64_t flags) {
-    std::vector<std::string> str_flags;
-
-    for (size_t i = 0; i < sizeof(flags) * 8; ++i) {
-        if (flags & (1ULL << i)) {
-            str_flags.emplace_back(serviceFlagToStr(i));
-        }
-    }
-
-    return str_flags;
 }

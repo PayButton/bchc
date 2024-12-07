@@ -21,7 +21,8 @@ use crate::{
     db::{Db, CF, CF_PLUGIN_META, CF_PLUGIN_OUTPUTS},
     index_tx::IndexTx,
     io::{
-        token::ProcessedTokenTxBatch, BlockHeight, GroupUtxoMemData,
+        token::ProcessedTokenTxBatch, BlockHeight, GroupHistoryMemData,
+        GroupHistoryReader, GroupHistoryWriter, GroupUtxoMemData,
         GroupUtxoReader, GroupUtxoWriter, TxNum,
     },
     plugins::{PluginDbError::*, PluginsGroup},
@@ -32,6 +33,10 @@ use crate::{
 pub type PluginsUtxoWriter<'a> = GroupUtxoWriter<'a, PluginsGroup>;
 /// Read UTXOs of plugins in the DB
 pub type PluginsUtxoReader<'a> = GroupUtxoReader<'a, PluginsGroup>;
+/// Index the tx history of plugins in the DB
+pub type PluginsHistoryWriter<'a> = GroupHistoryWriter<'a, PluginsGroup>;
+/// Read tx history of plugins in the DB
+pub type PluginsHistoryReader<'a> = GroupHistoryReader<'a, PluginsGroup>;
 
 struct PluginsCol<'a> {
     db: &'a Db,
@@ -182,9 +187,9 @@ impl<'a> PluginsWriter<'a> {
         txs: &[IndexTx<'_>],
         processed_token_data: &ProcessedTokenTxBatch,
         plugin_name_map: &PluginNameMap,
-    ) -> Result<()> {
+    ) -> Result<BTreeMap<OutPoint, PluginOutput>> {
         if self.ctx.plugins().is_empty() {
-            return Ok(());
+            return Ok(BTreeMap::new());
         }
 
         // Filter out txs that don't match any plugin
@@ -199,7 +204,7 @@ impl<'a> PluginsWriter<'a> {
 
         // Skip outputs
         if !self.col.has_any_outputs()? && plugin_txs.is_empty() {
-            return Ok(());
+            return Ok(BTreeMap::new());
         }
 
         let mut plugin_outputs =
@@ -259,7 +264,16 @@ impl<'a> PluginsWriter<'a> {
             &mut GroupUtxoMemData::default(),
         )?;
 
-        Ok(())
+        let group_history =
+            PluginsHistoryWriter::new(self.col.db, PluginsGroup)?;
+        group_history.insert(
+            batch,
+            txs,
+            &plugin_outputs,
+            &mut GroupHistoryMemData::default(),
+        )?;
+
+        Ok(plugin_outputs)
     }
 
     /// Delete the plugin data of a batch from the DB.
@@ -320,6 +334,15 @@ impl<'a> PluginsWriter<'a> {
             &mut GroupUtxoMemData::default(),
         )?;
 
+        let group_history =
+            PluginsHistoryWriter::new(self.col.db, PluginsGroup)?;
+        group_history.delete(
+            batch,
+            txs,
+            &plugin_outputs,
+            &mut GroupHistoryMemData::default(),
+        )?;
+
         Ok(())
     }
 
@@ -333,6 +356,7 @@ impl<'a> PluginsWriter<'a> {
             rocksdb::Options::default(),
         ));
         PluginsUtxoWriter::add_cfs(columns);
+        PluginsHistoryWriter::add_cfs(columns);
     }
 }
 
@@ -385,6 +409,32 @@ impl<'a> PluginsReader<'a> {
         outpoints: impl IntoIterator<Item = (OutPoint, TxNum)> + Clone,
     ) -> Result<BTreeMap<OutPoint, PluginOutput>> {
         self.col.fetch_plugin_outputs(outpoints)
+    }
+
+    /// Read all plugin inputs and outputs of the given indexed txs
+    pub fn txs_plugin_outputs(
+        &self,
+        txs: &[IndexTx<'_>],
+    ) -> Result<BTreeMap<OutPoint, PluginOutput>> {
+        self.plugin_outputs(txs.iter().flat_map(|index_tx| {
+            let input_outpoints = index_tx
+                .tx
+                .inputs
+                .iter()
+                .zip(index_tx.input_nums.iter())
+                .map(|(input, &input_tx_num)| (input.prev_out, input_tx_num));
+            let outpoint_outpoints =
+                (0..index_tx.tx.outputs.len()).map(|out_idx| {
+                    (
+                        OutPoint {
+                            txid: index_tx.tx.txid(),
+                            out_idx: out_idx as u32,
+                        },
+                        index_tx.tx_num,
+                    )
+                });
+            input_outpoints.chain(outpoint_outpoints)
+        }))
     }
 
     /// Read all the given outpoints by [`DbOutpoint`]s and return them as
@@ -564,7 +614,7 @@ class CounterPlugin(Plugin):
         if tx.inputs:
             value = tx.inputs[0].plugin['counter'].data[0][0]
         value += 1
-        return [PluginOutput(idx=1, data=bytes([value]), group=[])]
+        return [PluginOutput(idx=1, data=bytes([value]), groups=[])]
         ",
         )?;
 
@@ -583,7 +633,7 @@ class SummerPlugin(Plugin):
         return [PluginOutput(
             idx=1,
             data=[bytes([input_sum]), bytes([output_sum])],
-            group=[],
+            groups=[],
         )]",
         )?;
 

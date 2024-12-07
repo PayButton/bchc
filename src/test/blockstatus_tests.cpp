@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,7 +6,7 @@
 
 #include <blockvalidity.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -35,7 +35,7 @@ static void CheckAllPermutations(const BlockStatus base, bool hasData,
                                  bool hasParkedParent) {
     // Check all possible permutations.
     std::set<BlockValidity> baseValidities{
-        BlockValidity::UNKNOWN, BlockValidity::RESERVED,
+        BlockValidity::UNKNOWN, BlockValidity::HEADER,
         BlockValidity::TREE,    BlockValidity::TRANSACTIONS,
         BlockValidity::CHAIN,   BlockValidity::SCRIPTS};
 

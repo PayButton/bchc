@@ -1,23 +1,21 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2015 The Bitcoin Core developers
+// Copyright (c) 2019-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <util/moneystr.h>
 
-#include <consensus/amount.h>
+#include <primitives/transaction.h>
 #include <tinyformat.h>
 #include <util/strencodings.h>
-#include <util/string.h>
 
 std::string FormatMoney(const Amount amt) {
     // Note: not using straight sprintf here because we do NOT want localized
     // number formatting.
     Amount amt_abs = amt > Amount::zero() ? amt : -amt;
-    const auto currency = Currency::get();
     std::string str =
-        strprintf("%d.%0*d", amt_abs / currency.baseunit, currency.decimals,
-                  (amt_abs % currency.baseunit) / currency.subunit);
+        strprintf("%d.%08d", amt_abs / COIN, (amt_abs % COIN) / SATOSHI);
 
     // Right-trim excess zeros before the decimal point:
     int nTrim = 0;
@@ -34,23 +32,21 @@ std::string FormatMoney(const Amount amt) {
     return str;
 }
 
-bool ParseMoney(const std::string &money_string, Amount &nRet) {
-    if (!ValidAsCString(money_string)) {
-        return false;
-    }
-    const std::string str = TrimString(money_string);
-    if (str.empty()) {
-        return false;
-    }
+bool ParseMoney(const std::string &str, Amount &nRet) {
+    return ParseMoney(str.c_str(), nRet);
+}
 
-    const auto &currency = Currency::get();
+bool ParseMoney(const char *pszIn, Amount &nRet) {
     std::string strWhole;
     Amount nUnits = Amount::zero();
-    const char *p = str.c_str();
+    const char *p = pszIn;
+    while (IsSpace(*p)) {
+        p++;
+    }
     for (; *p; p++) {
         if (*p == '.') {
             p++;
-            Amount nMult = currency.baseunit / 10;
+            Amount nMult = COIN / 10;
             while (IsDigit(*p) && (nMult > Amount::zero())) {
                 nUnits += (*p++ - '0') * nMult;
                 nMult /= 10;
@@ -58,31 +54,27 @@ bool ParseMoney(const std::string &money_string, Amount &nRet) {
             break;
         }
         if (IsSpace(*p)) {
-            return false;
+            break;
         }
         if (!IsDigit(*p)) {
             return false;
         }
         strWhole.insert(strWhole.end(), *p);
     }
-    if (*p) {
-        return false;
+    for (; *p; p++) {
+        if (!IsSpace(*p)) {
+            return false;
+        }
     }
-
-    // Make sure the following overflow check is meaningful. It's fine to assert
-    // because it's on no critical path, and it's very unlikely to support a 19
-    // decimal (or more) currency anyway.
-    assert(currency.decimals <= 18);
-
     // guard against 63 bit overflow
-    if (strWhole.size() > (size_t(18) - currency.decimals)) {
+    if (strWhole.size() > 10) {
         return false;
     }
-    if (nUnits < Amount::zero() || nUnits > currency.baseunit) {
+    if (nUnits < Amount::zero() || nUnits > COIN) {
         return false;
     }
 
-    Amount nWhole = atoi64(strWhole) * currency.baseunit;
+    Amount nWhole = atoi64(strWhole) * COIN;
 
     nRet = nWhole + Amount(nUnits);
     return true;

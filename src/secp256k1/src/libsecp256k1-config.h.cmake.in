@@ -5,6 +5,14 @@
 
 #cmakedefine HAVE___INT128
 
+#cmakedefine USE_NUM_GMP
+#cmakedefine USE_FIELD_INV_NUM
+#cmakedefine USE_SCALAR_INV_NUM
+
+#cmakedefine USE_NUM_NONE
+#cmakedefine USE_FIELD_INV_BUILTIN
+#cmakedefine USE_SCALAR_INV_BUILTIN
+
 #cmakedefine USE_SCALAR_4X64
 #cmakedefine USE_FIELD_5X52
 
@@ -14,6 +22,7 @@
 #cmakedefine USE_ASM_X86_64
 #cmakedefine USE_EXTERNAL_ASM
 
+#cmakedefine USE_ENDOMORPHISM
 #cmakedefine USE_EXTERNAL_DEFAULT_CALLBACKS
 
 #cmakedefine USE_ECMULT_STATIC_PRECOMPUTATION
@@ -24,8 +33,6 @@
 #cmakedefine ENABLE_MODULE_MULTISET
 #cmakedefine ENABLE_MODULE_RECOVERY
 #cmakedefine ENABLE_MODULE_SCHNORR
-#cmakedefine ENABLE_MODULE_EXTRAKEYS
-#cmakedefine ENABLE_MODULE_SCHNORRSIG
 
 #cmakedefine COVERAGE
 

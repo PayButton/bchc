@@ -1,34 +1,31 @@
-# Copyright (c) 2015-2019 The Bitcoin Core developers
+#!/usr/bin/env python3
+# Copyright (c) 2015-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Utilities for manipulating blocks and transactions."""
 
-import struct
-import time
-import unittest
-from typing import Optional
-
-from .messages import (
-    XEC,
-    CBlock,
-    COutPoint,
-    CTransaction,
-    CTxIn,
-    CTxOut,
-    FromHex,
-    ToHex,
-)
+from typing import Optional, Tuple, Union
 from .script import (
-    OP_1,
+    CScript,
     OP_CHECKSIG,
     OP_DUP,
     OP_EQUALVERIFY,
     OP_HASH160,
     OP_RETURN,
     OP_TRUE,
-    CScript,
-    CScriptNum,
-    CScriptOp,
+    OP_NOP,
+)
+from .messages import (
+    CBlock,
+    COIN,
+    COutPoint,
+    CTransaction,
+    CTxIn,
+    CTxOut,
+    FromHex,
+    ToHex,
+    TokenOutputData,
+    ser_string,
 )
 from .txtools import pad_tx
 from .util import assert_equal, satoshi_round
@@ -46,135 +43,215 @@ GENESIS_CB_SCRIPT_SIG = CScript(
     b"\x04\xff\xff\x00\x1d\x01\x04EThe Times 03/Jan/2009 Chancellor on brink of "
     b"second bailout for banks"
 )
-
-MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60
-
-# Coinbase transaction outputs can only be spent after this number of new blocks
-# (network rule)
 COINBASE_MATURITY = 100
 
 
-def create_block(
-    hashprev: Optional[int] = None,
-    coinbase: Optional[CTransaction] = None,
-    ntime: Optional[int] = None,
-    *,
-    version: Optional[int] = None,
-    tmpl: Optional[dict] = None,
-) -> CBlock:
-    """Create a block (with regtest difficulty)."""
+def create_block(hashprev: Union[int, str], coinbase: Optional[CTransaction], nTime: Optional[int] = None,
+                 *, txns=None, ctor=True):
+    """Create a block (with regtest difficulty)"""
     block = CBlock()
-    if tmpl is None:
-        tmpl = {}
-    block.nVersion = version or tmpl.get("version", 1)
-    block.nTime = ntime or tmpl.get("curtime", int(time.time() + 600))
-    block.hashPrevBlock = hashprev or int(tmpl["previousblockhash"], 0x10)
-    if tmpl.get("bits") is not None:
-        block.nBits = struct.unpack(">I", bytes.fromhex(tmpl["bits"]))[0]
+    if nTime is None:
+        import time
+        block.nTime = int(time.time() + 600)
     else:
-        # difficulty retargeting is disabled in REGTEST chainparams
-        block.nBits = 0x207FFFFF
-    block.vtx.append(coinbase or create_coinbase(height=tmpl["height"]))
+        assert isinstance(nTime, int)
+        block.nTime = nTime
+    if isinstance(hashprev, str):
+        # Convert hex-encoded headers to an int
+        hashprev = int(hashprev, 16)
+    block.hashPrevBlock = hashprev
+    block.nBits = 0x207fffff  # Will break after a difficulty adjustment...
+    if coinbase:
+        block.vtx.append(coinbase)
+    if txns:
+        if ctor:
+            txns = sorted(txns, key=lambda x: x.hash)
+        block.vtx.extend(txns)
     block.hashMerkleRoot = block.calc_merkle_root()
     block.calc_sha256()
     return block
 
 
-def make_conform_to_ctor(block: CBlock):
+def make_conform_to_ctor(block):
     for tx in block.vtx:
         tx.rehash()
-    block.vtx = [block.vtx[0]] + sorted(block.vtx[1:], key=lambda tx: tx.get_id())
+    block.vtx = [block.vtx[0]] + \
+        sorted(block.vtx[1:], key=lambda tx: tx.get_id())
 
 
-def script_BIP34_coinbase_height(height: int) -> CScript:
-    if height <= 16:
-        res = CScriptOp.encode_op_n(height)
-        # Append dummy to increase scriptSig size above 2
-        # (see bad-cb-length consensus rule)
-        return CScript([res, OP_1])
-    return CScript([CScriptNum(height)])
+def serialize_script_num(value):
+    r = bytearray(0)
+    if value == 0:
+        return r
+    neg = value < 0
+    absvalue = -value if neg else value
+    while (absvalue):
+        r.append(int(absvalue & 0xff))
+        absvalue >>= 8
+    if r[-1] & 0x80:
+        r.append(0x80 if neg else 0)
+    elif neg:
+        r[-1] |= 0x80
+    return r
+
+# Create a coinbase transaction, assuming no miner fees.
+# If pubkey is passed in, the coinbase output will be a P2PK output;
+# otherwise an anyone-can-spend output.
 
 
-def create_coinbase(
-    height: int, pubkey: Optional[bytes] = None, nValue: int = 50_000_000
-) -> CTransaction:
-    """Create a coinbase transaction, assuming no miner fees.
-
-    If pubkey is passed in, the coinbase output will be a P2PK output;
-    otherwise an anyone-can-spend output."""
+def create_coinbase(height, pubkey=None, *, scriptPubKey=None, tokenData=None, pad_to_size=None):
     coinbase = CTransaction()
-    coinbase.vin.append(
-        CTxIn(
-            COutPoint(0, 0xFFFFFFFF), script_BIP34_coinbase_height(height), 0xFFFFFFFF
-        )
-    )
+    coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff),
+                              ser_string(serialize_script_num(height)), 0xffffffff))
     coinbaseoutput = CTxOut()
-    coinbaseoutput.nValue = nValue * XEC
-    if nValue == 50_000_000:
-        halvings = int(height / 150)  # regtest
-        coinbaseoutput.nValue >>= halvings
-    if pubkey is not None:
+    coinbaseoutput.nValue = 50 * COIN
+    halvings = int(height / 150)  # regtest
+    coinbaseoutput.nValue >>= halvings
+    if scriptPubKey is not None:
+        coinbaseoutput.scriptPubKey = scriptPubKey
+    elif pubkey is not None:
         coinbaseoutput.scriptPubKey = CScript([pubkey, OP_CHECKSIG])
     else:
         coinbaseoutput.scriptPubKey = CScript([OP_TRUE])
+    coinbaseoutput.tokenData = tokenData
     coinbase.vout = [coinbaseoutput]
 
-    # Make sure the coinbase is at least 100 bytes
-    pad_tx(coinbase)
+    if pad_to_size is not None:
+        # Caller specified a padding size so pass that down
+        pad_tx(coinbase, pad_to_size=pad_to_size)
+    else:
+        # Caller did not specify a padding size, just use the default for pad_tx() (100 bytes)
+        pad_tx(coinbase)
 
     coinbase.calc_sha256()
     return coinbase
 
 
-def create_tx_with_script(
-    prevtx, n, script_sig=b"", *, amount, script_pub_key=CScript()
-):
-    """Return one-input, one-output transaction object
-    spending the prevtx's n-th output with the given amount.
+def bu_create_coinbase(height, pubkey=None, scriptPubKey=None, *, pad_to_size=100):
+    """BU Version:
+       Create a coinbase transaction, assuming no miner fees.
+       If pubkey is passed in, the coinbase output will be a P2PK output;
+       otherwise an anyone-can-spend output."""
+    assert not (pubkey and scriptPubKey), "cannot both have pubkey and custom scriptPubKey"
+    coinbase = CTransaction()
+    coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff),
+                              ser_string(serialize_script_num(height)), 0xffffffff))
+    coinbaseoutput = CTxOut()
+    coinbaseoutput.nValue = 50 * COIN
+    halvings = int(height / 150)  # regtest
+    coinbaseoutput.nValue >>= halvings
+    if pubkey is not None:
+        coinbaseoutput.scriptPubKey = CScript([pubkey, OP_CHECKSIG])
+    else:
+        if scriptPubKey is None:
+            scriptPubKey = CScript([OP_NOP])
+        coinbaseoutput.scriptPubKey = CScript(scriptPubKey)
+    coinbase.vout = [coinbaseoutput]
 
-    Can optionally pass scriptPubKey and scriptSig, default is anyone-can-spend output.
+    # Make sure the coinbase is at least pad_to_size bytes
+    coinbase_size = len(coinbase.serialize())
+    if coinbase_size < pad_to_size:
+        coinbase.vin[0].scriptSig += b'x' * (pad_to_size - coinbase_size)
+
+    coinbase.calc_sha256()
+    return coinbase
+
+
+def create_tx_with_script(prevtx, n, script_sig=b"",
+                          amount=1, script_pub_key=CScript(),
+                          *, token_data=None, pad_to_size=None):
+    """Return one-input, one-output transaction object
+       spending the prevtx's n-th output with the given amount.
+
+       Can optionally pass scriptPubKey and scriptSig, default is anyone-can-spend output.
     """
     tx = CTransaction()
     assert n < len(prevtx.vout)
-    tx.vin.append(CTxIn(COutPoint(prevtx.sha256, n), script_sig, 0xFFFFFFFF))
-    tx.vout.append(CTxOut(amount, script_pub_key))
-    pad_tx(tx)
+    tx.vin.append(CTxIn(COutPoint(prevtx.sha256, n), script_sig, 0xffffffff))
+    tx.vout.append(CTxOut(amount, script_pub_key, tokenData=token_data))
+    if pad_to_size is not None:
+        # Caller specified a padding size so pass that down
+        pad_tx(tx, pad_to_size=pad_to_size)
+    else:
+        # Caller did not specify a padding size, just use the default for pad_tx() (100 bytes)
+        pad_tx(tx)
     tx.calc_sha256()
     return tx
 
 
-def create_transaction(node, txid, to_address, *, amount):
-    """Return signed transaction spending the first output of the
-    input txid. Note that the node must be able to sign for the
-    output that is being spent, and the node must not be running
-    multiple wallets.
+def create_transaction(node, txid, to_address, amount, *, token_data=None):
+    """ Return signed transaction spending the first output of the
+        input txid. Note that the node must be able to sign for the
+        output that is being spent, and the node must not be running
+        multiple wallets.
     """
-    raw_tx = create_raw_transaction(node, txid, to_address, amount=amount)
+    raw_tx = create_raw_transaction(node, txid, to_address, amount, token_data=token_data)
     tx = FromHex(CTransaction(), raw_tx)
     return tx
 
 
-def create_raw_transaction(node, txid, to_address, *, amount):
-    """Return raw signed transaction spending the first output of the
-    input txid. Note that the node must be able to sign for the
-    output that is being spent, and the node must not be running
-    multiple wallets.
+def add_token_data_to_transaction(tx: Union[str, CTransaction], output_num: int,
+                                  token_data: TokenOutputData) -> Tuple[str, CTransaction]:
+    if not isinstance(tx, CTransaction):
+        rawtx = tx
+        tx = CTransaction()
+        FromHex(tx, rawtx)
+    assert isinstance(token_data, TokenOutputData)
+    assert output_num < len(tx.vout)
+    tx.vout[output_num].tokenData = token_data
+    rawtx = ToHex(tx)
+    tx = CTransaction()
+    FromHex(tx, rawtx)
+    assert tx.vout[output_num].tokenData == token_data, "Verification of token_data re-serialization failed"
+    tx.rehash()
+    return rawtx, tx
+
+
+def create_raw_transaction(node, txid, to_address, amount, vout=0, *, sighashtype="ALL|FORKID",
+                           token_data=None):
+    """ Return raw signed transaction spending an output (the first
+        by default) output of the input txid.
+        Note that the node must be able to sign for the
+        output that is being spent, and the node must not be running
+        multiple wallets.
     """
-    rawtx = node.createrawtransaction(
-        inputs=[{"txid": txid, "vout": 0}], outputs={to_address: amount}
-    )
-    signresult = node.signrawtransactionwithwallet(rawtx)
+    inputs = [{"txid": txid, "vout": vout}]
+    outputs = {to_address: amount}
+    rawtx = node.createrawtransaction(inputs, outputs)
+    if token_data is not None:
+        # Since createrawtransaction API doesn't (yet) support specifying token data, we do it "manually"
+        rawtx, tx = add_token_data_to_transaction(rawtx, 0, token_data)
+        assert tx.vout[0].nValue == amount, "Unexpected amount for output 0, unable to add token_data"
+    signresult = node.signrawtransactionwithwallet(rawtx, None, sighashtype)
     assert_equal(signresult["complete"], True)
-    return signresult["hex"]
+    return signresult['hex']
 
 
-def create_confirmed_utxos(test_framework, node, count, age=101, **kwargs):
+def get_legacy_sigopcount_block(block, fAccurate=True):
+    count = 0
+    for tx in block.vtx:
+        count += get_legacy_sigopcount_tx(tx, fAccurate)
+    return count
+
+
+def get_legacy_sigopcount_tx(tx, fAccurate=True):
+    count = 0
+    for i in tx.vout:
+        count += i.scriptPubKey.GetSigOpCount(fAccurate)
+    for j in tx.vin:
+        # scriptSig might be of type bytes, so convert to CScript for the
+        # moment
+        count += CScript(j.scriptSig).GetSigOpCount(fAccurate)
+    return count
+
+
+def create_confirmed_utxos(test_framework, node, count, age=101):
     """
     Helper to create at least "count" utxos
     """
     to_generate = int(0.5 * count) + age
     while to_generate > 0:
-        test_framework.generate(node, min(25, to_generate), **kwargs)
+        test_framework.generate(node, min(25, to_generate))
         to_generate -= 25
     utxos = node.listunspent()
     iterations = count - len(utxos)
@@ -187,8 +264,8 @@ def create_confirmed_utxos(test_framework, node, count, age=101, **kwargs):
         inputs = []
         inputs.append({"txid": t["txid"], "vout": t["vout"]})
         outputs = {}
-        outputs[addr1] = satoshi_round(t["amount"] / 2)
-        outputs[addr2] = satoshi_round(t["amount"] / 2)
+        outputs[addr1] = satoshi_round(t['amount'] / 2)
+        outputs[addr2] = satoshi_round(t['amount'] / 2)
         raw_tx = node.createrawtransaction(inputs, outputs)
         ctx = FromHex(CTransaction(), raw_tx)
         fee = node.calculate_fee(ctx) // 2
@@ -199,8 +276,8 @@ def create_confirmed_utxos(test_framework, node, count, age=101, **kwargs):
         signed_tx = node.signrawtransactionwithwallet(ToHex(ctx))["hex"]
         node.sendrawtransaction(signed_tx)
 
-    while node.getmempoolinfo()["size"] > 0:
-        test_framework.generate(node, 1, **kwargs)
+    while (node.getmempoolinfo()['size'] > 0):
+        test_framework.generate(node, 1)
 
     utxos = node.listunspent()
     assert len(utxos) >= count
@@ -221,7 +298,6 @@ def mine_big_block(test_framework, node, utxos=None):
 
 def send_big_transactions(node, utxos, num, fee_multiplier):
     from .cashaddr import decode
-
     txids = []
     padding = "1" * 512
     addrHash = decode(node.getnewaddress())[2]
@@ -229,26 +305,18 @@ def send_big_transactions(node, utxos, num, fee_multiplier):
     for _ in range(num):
         ctx = CTransaction()
         utxo = utxos.pop()
-        txid = int(utxo["txid"], 16)
+        txid = int(utxo['txid'], 16)
         ctx.vin.append(CTxIn(COutPoint(txid, int(utxo["vout"])), b""))
         ctx.vout.append(
-            CTxOut(
-                int(satoshi_round(utxo["amount"] * XEC)),
-                CScript([OP_DUP, OP_HASH160, addrHash, OP_EQUALVERIFY, OP_CHECKSIG]),
-            )
-        )
+            CTxOut(int(satoshi_round(utxo['amount'] * COIN)),
+                   CScript([OP_DUP, OP_HASH160, addrHash, OP_EQUALVERIFY, OP_CHECKSIG])))
         for i in range(0, 127):
-            ctx.vout.append(CTxOut(0, CScript([OP_RETURN, bytes(padding, "utf-8")])))
+            ctx.vout.append(CTxOut(0, CScript(
+                [OP_RETURN, bytes(padding, 'utf-8')])))
         # Create a proper fee for the transaction to be mined
         ctx.vout[0].nValue -= int(fee_multiplier * node.calculate_fee(ctx))
-        signresult = node.signrawtransactionwithwallet(ToHex(ctx), None, "NONE|FORKID")
-        txid = node.sendrawtransaction(signresult["hex"], 0)
+        signresult = node.signrawtransactionwithwallet(
+            ToHex(ctx), None, "NONE|FORKID")
+        txid = node.sendrawtransaction(signresult["hex"], True)
         txids.append(txid)
     return txids
-
-
-class TestFrameworkBlockTools(unittest.TestCase):
-    def test_create_coinbase(self):
-        height = 20
-        coinbase_tx = create_coinbase(height=height)
-        assert_equal(CScriptNum.decode(coinbase_tx.vin[0].scriptSig), height)

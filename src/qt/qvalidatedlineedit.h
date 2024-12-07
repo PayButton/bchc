@@ -1,11 +1,12 @@
 // Copyright (c) 2011-2015 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_QVALIDATEDLINEEDIT_H
-#define BITCOIN_QT_QVALIDATEDLINEEDIT_H
+#pragma once
 
 #include <QLineEdit>
+#include <QValidator>
 
 /** Line edit that can be marked as "invalid" to show input validation feedback.
    When marked as invalid,
@@ -25,19 +26,19 @@ protected:
     void focusOutEvent(QFocusEvent *evt) override;
 
 private:
-    bool valid;
+    QValidator::State state;
     const QValidator *checkValidator;
 
 public Q_SLOTS:
-    void setValid(bool valid);
+    void setValid(bool valid=true);
+    void setValid(QValidator::State _state);
     void setEnabled(bool enabled);
+    bool validate();
+    void fixup();
 
 Q_SIGNALS:
     void validationDidChange(QValidatedLineEdit *validatedLineEdit);
 
 private Q_SLOTS:
     void markValid();
-    void checkValidity();
 };
-
-#endif // BITCOIN_QT_QVALIDATEDLINEEDIT_H

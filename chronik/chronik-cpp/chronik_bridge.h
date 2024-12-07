@@ -20,9 +20,9 @@ namespace Consensus {
 struct Params;
 } // namespace Consensus
 
-namespace node {
+//namespace node {
 struct NodeContext;
-} // namespace node
+//} // namespace node
 class uint256;
 
 namespace chronik_bridge {
@@ -31,6 +31,7 @@ struct BlockInfo;
 struct Block;
 struct Tx;
 struct OutPoint;
+struct WrappedBlockHash;
 struct RawBlockHeader;
 
 class block_index_not_found : public std::exception {
@@ -58,10 +59,10 @@ void log_print_chronik(const rust::Str logging_function,
  * Bridge to bitcoind to access the node.
  */
 class ChronikBridge {
-    const node::NodeContext &m_node;
+    const NodeContext &m_node;
 
 public:
-    ChronikBridge(const node::NodeContext &node);
+    ChronikBridge(const NodeContext &node);
 
     const CBlockIndex &get_chain_tip() const;
 
@@ -71,6 +72,8 @@ public:
 
     rust::Vec<RawBlockHeader> get_block_headers_by_range(int start,
                                                          int end) const;
+    rust::Vec<WrappedBlockHash> get_block_hashes_by_range(int start,
+                                                          int end) const;
 
     std::unique_ptr<CBlock> load_block(const CBlockIndex &bindex) const;
 
@@ -95,7 +98,7 @@ public:
     bool shutdown_requested() const;
 };
 
-std::unique_ptr<ChronikBridge> make_bridge(const node::NodeContext &node);
+std::unique_ptr<ChronikBridge> make_bridge(const NodeContext &node);
 
 Tx bridge_tx(const CTransaction &tx, const std::vector<Coin> &spent_coins);
 
@@ -119,6 +122,8 @@ int64_t default_max_raw_tx_fee_rate_per_kb();
 void sync_with_validation_interface_queue();
 
 bool init_error(const rust::Str msg);
+
+rust::String format_full_version();
 
 } // namespace chronik_bridge
 

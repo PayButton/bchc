@@ -1,32 +1,36 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CORE_MEMUSAGE_H
-#define BITCOIN_CORE_MEMUSAGE_H
+#pragma once
 
 #include <memusage.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 
-static inline size_t RecursiveDynamicUsage(const CScript &script) {
+inline size_t RecursiveDynamicUsage(const CScript &script) {
     return memusage::DynamicUsage(*static_cast<const CScriptBase *>(&script));
 }
 
-static inline size_t RecursiveDynamicUsage(const COutPoint &out) {
+inline constexpr size_t RecursiveDynamicUsage(const COutPoint &) {
     return 0;
 }
 
-static inline size_t RecursiveDynamicUsage(const CTxIn &in) {
+inline size_t RecursiveDynamicUsage(const CTxIn &in) {
     return RecursiveDynamicUsage(in.scriptSig) +
            RecursiveDynamicUsage(in.prevout);
 }
 
-static inline size_t RecursiveDynamicUsage(const CTxOut &out) {
-    return RecursiveDynamicUsage(out.scriptPubKey);
+inline size_t RecursiveDynamicUsage(const token::OutputDataPtr &p) {
+    return memusage::DynamicUsage(p) + (p ? memusage::DynamicUsage(p->GetCommitment()) : 0);
 }
 
-static inline size_t RecursiveDynamicUsage(const CTransaction &tx) {
+inline size_t RecursiveDynamicUsage(const CTxOut &out) {
+    return RecursiveDynamicUsage(out.scriptPubKey) + RecursiveDynamicUsage(out.tokenDataPtr);
+}
+
+inline size_t RecursiveDynamicUsage(const CTransaction &tx) {
     size_t mem =
         memusage::DynamicUsage(tx.vin) + memusage::DynamicUsage(tx.vout);
     for (std::vector<CTxIn>::const_iterator it = tx.vin.begin();
@@ -40,7 +44,7 @@ static inline size_t RecursiveDynamicUsage(const CTransaction &tx) {
     return mem;
 }
 
-static inline size_t RecursiveDynamicUsage(const CMutableTransaction &tx) {
+inline size_t RecursiveDynamicUsage(const CMutableTransaction &tx) {
     size_t mem =
         memusage::DynamicUsage(tx.vin) + memusage::DynamicUsage(tx.vout);
     for (std::vector<CTxIn>::const_iterator it = tx.vin.begin();
@@ -55,8 +59,6 @@ static inline size_t RecursiveDynamicUsage(const CMutableTransaction &tx) {
 }
 
 template <typename X>
-static inline size_t RecursiveDynamicUsage(const std::shared_ptr<X> &p) {
+inline size_t RecursiveDynamicUsage(const std::shared_ptr<X> &p) {
     return p ? memusage::DynamicUsage(p) + RecursiveDynamicUsage(*p) : 0;
 }
-
-#endif // BITCOIN_CORE_MEMUSAGE_H

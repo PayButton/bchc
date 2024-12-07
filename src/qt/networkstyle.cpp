@@ -1,4 +1,5 @@
 // Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2020-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,81 +7,77 @@
 
 #include <qt/guiconstants.h>
 
-#include <chainparamsbase.h>
-#include <tinyformat.h>
-
 #include <QApplication>
+
+#include <cstring>
+#include <type_traits>
+#include <vector>
 
 static const struct {
     const char *networkId;
     const char *appName;
-    const int iconColorHueShift;
-    const int iconColorSaturationReduction;
-} network_styles[] = {{"main", QAPP_APP_NAME_DEFAULT, 0, 0},
-                      {"test", QAPP_APP_NAME_TESTNET, 70, 30},
-                      {"regtest", QAPP_APP_NAME_REGTEST, 160, 30}};
+    const int iconColorHue;
+    const char *titleAddText;
+} network_styles[] = {{"main",    QAPP_APP_NAME_DEFAULT,    0, ""                                             },
+                      {"test",    QAPP_APP_NAME_TESTNET,  120, QT_TRANSLATE_NOOP("SplashScreen", "[testnet]") },
+                      {"test4",   QAPP_APP_NAME_TESTNET4, 300, QT_TRANSLATE_NOOP("SplashScreen", "[testnet4]")},
+                      {"scale",   QAPP_APP_NAME_SCALENET, 240, QT_TRANSLATE_NOOP("SplashScreen", "[scalenet]")},
+                      {"chip",    QAPP_APP_NAME_CHIPNET,   60, QT_TRANSLATE_NOOP("SplashScreen", "[chipnet]")},
+                      {"regtest", QAPP_APP_NAME_TESTNET,  180, "[regtest]"                                   }};
+static const unsigned network_styles_count =
+    sizeof(network_styles) / sizeof(*network_styles);
 
 // titleAddText needs to be const char* for tr()
-NetworkStyle::NetworkStyle(const QString &_appName, const int iconColorHueShift,
-                           const int iconColorSaturationReduction,
-                           const char *_titleAddText)
-    : appName(_appName),
-      titleAddText(qApp->translate("SplashScreen", _titleAddText)) {
+NetworkStyle::NetworkStyle(const QString &_appName, int iconColorHue, const char *_titleAddText)
+    : appName(_appName), titleAddText(qApp->translate("SplashScreen", _titleAddText)) {
+
     // load pixmap
-    QPixmap pixmap(":/icons/bitcoin");
+    QPixmap pixmaps[] = { {":/icons/bitcoin_splash"}, {":icons/bitcoin_noletters"} };
 
-    if (iconColorHueShift != 0 && iconColorSaturationReduction != 0) {
-        // generate QImage from QPixmap
-        QImage img = pixmap.toImage();
+    if (iconColorHue) {
+        for (auto & pixmap : pixmaps) {
 
-        int h, s, l, a;
+            // generate QImage from QPixmap
+            QImage img = pixmap.toImage();
+            std::vector<QRgb> scanLineBuffer(img.width());
 
-        // traverse though lines
-        for (int y = 0; y < img.height(); y++) {
-            QRgb *scL = reinterpret_cast<QRgb *>(img.scanLine(y));
+            // traverse though lines
+            for (int y = 0; y < img.height(); y++) {
+                QRgb *scL = scanLineBuffer.data();
+                // copy scanLine to our buffer to guarantee aligned access
+                static_assert(std::is_trivially_constructible_v<QRgb> && std::is_trivially_copyable_v<QRgb>);
+                std::memcpy(scL, img.scanLine(y), img.width() * sizeof(QRgb));
 
-            // loop through pixels
-            for (int x = 0; x < img.width(); x++) {
-                // preserve alpha because QColor::getHsl doesn't return the
-                // alpha value
-                a = qAlpha(scL[x]);
-                QColor col(scL[x]);
+                // loop through pixels
+                for (int x = 0; x < img.width(); x++) {
 
-                // get hue value
-                col.getHsl(&h, &s, &l);
+                    int r, g, b, a;
+                    a = qAlpha(scL[x]);
+                    QColor col(scL[x]);
+                    col.getRgb(&r, &g, &b);
 
-                // rotate color on RGB color circle
-                // 70° should end up with the typical "testnet" green
-                h += iconColorHueShift;
-
-                // change saturation value
-                if (s > iconColorSaturationReduction) {
-                    s -= iconColorSaturationReduction;
+                    // set the pixel
+                    col.setHsl(iconColorHue, 128, qGray(r, g, b), a);
+                    scL[x] = col.rgba();
                 }
-                col.setHsl(h, s, l, a);
 
-                // set the pixel
-                scL[x] = col.rgba();
+                // copy changes back to image scanLine
+                std::memcpy(img.scanLine(y), scL, img.width() * sizeof(QRgb));
             }
-        }
 
-        // convert back to QPixmap
-        pixmap.convertFromImage(img);
+            // convert back to QPixmap
+            pixmap.convertFromImage(img);
+        }
     }
 
-    appIcon = QIcon(pixmap);
-    trayAndWindowIcon = QIcon(pixmap.scaled(QSize(256, 256)));
+    splashIcon = QIcon(pixmaps[0]);
+    trayAndWindowIcon = QIcon(pixmaps[1].scaled(QSize(256, 256)));
 }
 
-const NetworkStyle *NetworkStyle::instantiate(const std::string &networkId) {
-    std::string titleAddText =
-        networkId == CBaseChainParams::MAIN ? "" : strprintf("[%s]", networkId);
-    for (const auto &network_style : network_styles) {
-        if (networkId == network_style.networkId) {
-            return new NetworkStyle(network_style.appName,
-                                    network_style.iconColorHueShift,
-                                    network_style.iconColorSaturationReduction,
-                                    titleAddText.c_str());
+const NetworkStyle *NetworkStyle::instantiate(const QString &networkId) {
+    for (unsigned x = 0; x < network_styles_count; ++x) {
+        if (networkId == network_styles[x].networkId) {
+            return new NetworkStyle(network_styles[x].appName, network_styles[x].iconColorHue, network_styles[x].titleAddText);
         }
     }
     return nullptr;

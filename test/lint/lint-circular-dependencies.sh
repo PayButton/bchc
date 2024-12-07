@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # Copyright (c) 2018 The Bitcoin Core developers
+# Copyright (c) 2023 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
@@ -8,38 +9,45 @@
 
 export LC_ALL=C
 
-set -euo pipefail
-
-: "${TOPLEVEL:=$(git rev-parse --show-toplevel)}"
-
 EXPECTED_CIRCULAR_DEPENDENCIES=(
+    "index/txindex -> validation -> index/txindex"
     "node/blockstorage -> validation -> node/blockstorage"
-    "node/utxo_snapshot -> validation -> node/utxo_snapshot"
+    "policy/policy -> validation -> policy/policy"
     "qt/addresstablemodel -> qt/walletmodel -> qt/addresstablemodel"
+    "qt/bantablemodel -> qt/clientmodel -> qt/bantablemodel"
+    "qt/bitcoingui -> qt/utilitydialog -> qt/bitcoingui"
     "qt/bitcoingui -> qt/walletframe -> qt/bitcoingui"
+    "qt/bitcoingui -> qt/walletview -> qt/bitcoingui"
+    "qt/clientmodel -> qt/peertablemodel -> qt/clientmodel"
+    "qt/paymentserver -> qt/walletmodel -> qt/paymentserver"
     "qt/recentrequeststablemodel -> qt/walletmodel -> qt/recentrequeststablemodel"
     "qt/transactiontablemodel -> qt/walletmodel -> qt/transactiontablemodel"
+    "qt/walletmodel -> qt/walletmodeltransaction -> qt/walletmodel"
+    "txmempool -> validation -> txmempool"
+    "validation -> validationinterface -> validation"
+    "wallet/coincontrol -> wallet/wallet -> wallet/coincontrol"
     "wallet/fees -> wallet/wallet -> wallet/fees"
     "wallet/rpcwallet -> wallet/wallet -> wallet/rpcwallet"
     "wallet/wallet -> wallet/walletdb -> wallet/wallet"
-    "avalanche/processor -> validation -> avalanche/processor"
-    "avalanche/processor -> policy/block/stakingrewards -> avalanche/processor"
+    "qt/addressbookpage -> qt/bitcoingui -> qt/walletview -> qt/addressbookpage"
+    "txmempool -> validation -> validationinterface -> txmempool"
+    "qt/addressbookpage -> qt/bitcoingui -> qt/walletview -> qt/receivecoinsdialog -> qt/addressbookpage"
+    "qt/addressbookpage -> qt/bitcoingui -> qt/walletview -> qt/signverifymessagedialog -> qt/addressbookpage"
+    "qt/addressbookpage -> qt/bitcoingui -> qt/walletview -> qt/sendcoinsdialog -> qt/sendcoinsentry -> qt/addressbookpage"
     "chainparams -> protocol -> chainparams"
-    "chainparamsbase -> common/args -> chainparamsbase"
+    "chainparamsbase -> util/system -> chainparamsbase"
     "script/scriptcache -> validation -> script/scriptcache"
     "seeder/bitcoin -> seeder/db -> seeder/bitcoin"
     "chainparams -> protocol -> config -> chainparams"
-    "avalanche/peermanager -> avalanche/proofpool -> avalanche/peermanager"
-    "kernel/coinstats -> validation -> kernel/coinstats"
-    "kernel/mempool_persist -> validation -> kernel/mempool_persist"
-    "kernel/disconnected_transactions -> validation -> kernel/disconnected_transactions"
+    "config -> policy/policy -> validation -> config"
+    "config -> policy/policy -> validation -> protocol -> config"
+    "psbt -> script/script_execution_context -> psbt"
+    "rpc/blockchain -> rpc/mining -> rpc/blockchain"
 )
 
 EXIT_CODE=0
 
 CIRCULAR_DEPENDENCIES=()
-
-pushd "${TOPLEVEL}"
 
 IFS=$'\n'
 for CIRC in $(cd src && ../contrib/devtools/circular-dependencies.py {*,*/*,*/*/*}.{h,cpp} | sed -e 's/^Circular dependency: //'); do
@@ -74,7 +82,5 @@ for EXPECTED_CIRC in "${EXPECTED_CIRCULAR_DEPENDENCIES[@]}"; do
         EXIT_CODE=1
     fi
 done
-
-popd
 
 exit ${EXIT_CODE}

@@ -1,10 +1,10 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SCRIPT_BITCOINCONSENSUS_H
-#define BITCOIN_SCRIPT_BITCOINCONSENSUS_H
+#pragma once
 
 #include <cstdint>
 
@@ -87,5 +87,3 @@ EXPORT_SYMBOL unsigned int bitcoinconsensus_version();
 #endif
 
 #undef EXPORT_SYMBOL
-
-#endif // BITCOIN_SCRIPT_BITCOINCONSENSUS_H

@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2020 The Bitcoin developers
+// Copyright (c) 2018-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,7 +6,7 @@
 #include <script/interpreter.h>
 
 #include <test/lcg.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -37,8 +37,8 @@ struct KeyData {
     }
 };
 
-static void CheckError(uint32_t flags, const stacktype &original_stack,
-                       const CScript &script, ScriptError expected) {
+static
+void CheckError(uint32_t flags, const stacktype &original_stack, const CScript &script, ScriptError expected) {
     BaseSignatureChecker sigchecker;
     ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
@@ -47,8 +47,8 @@ static void CheckError(uint32_t flags, const stacktype &original_stack,
     BOOST_CHECK(err == expected);
 }
 
-static void CheckPass(uint32_t flags, const stacktype &original_stack,
-                      const CScript &script, const stacktype &expected) {
+static
+void CheckPass(uint32_t flags, const stacktype &original_stack, const CScript &script, const stacktype &expected) {
     BaseSignatureChecker sigchecker;
     ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};

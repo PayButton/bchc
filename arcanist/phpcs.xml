@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
-<ruleset name="BitcoinABC Standard" namespace="BitcoinABC\CS\Standard">
+<ruleset name="BitcoinCashNode Standard" namespace="BitcoinCashNode\CS\Standard">
 
     <description>
-        BitcoinABC PHP coding standard.
+        BitcoinCashNode PHP coding standard.
     </description>
 
     <rule ref="Generic">
@@ -27,7 +27,6 @@
         <exclude name="Generic.Functions.OpeningFunctionBraceBsdAllman" />
         <exclude name="Generic.Metrics.CyclomaticComplexity.TooHigh" />
         <exclude name="Generic.PHP.ClosingPHPTag" />
-        <exclude name="Generic.PHP.NoSilencedErrors.Discouraged" />
         <exclude name="Generic.PHP.RequireStrictTypes.MissingDeclaration" />
         <exclude name="Generic.PHP.UpperCaseConstant" />
         <exclude name="Generic.WhiteSpace.DisallowSpaceIndent" />
@@ -55,5 +54,7 @@
     </rule>
 
     <rule ref="PSR2.Files.ClosingTag" />
+
+    <rule ref="Squiz.WhiteSpace.SuperfluousWhitespace" />
 
 </ruleset>

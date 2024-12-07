@@ -1,12 +1,13 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2019 The Bitcoin Core developers
+// Copyright (c) 2019-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <flatfile.h>
 #include <logging.h>
 #include <tinyformat.h>
-#include <util/fs_helpers.h>
+#include <util/system.h>
 
 #include <stdexcept>
 
@@ -30,18 +31,20 @@ FILE *FlatFileSeq::Open(const FlatFilePos &pos, bool read_only) {
         return nullptr;
     }
     fs::path path = FileName(pos);
-    fs::create_directories(path.parent_path());
     FILE *file = fsbridge::fopen(path, read_only ? "rb" : "rb+");
+    if (!file) {
+        fs::create_directories(path.parent_path());
+    }
     if (!file && !read_only) {
         file = fsbridge::fopen(path, "wb+");
     }
     if (!file) {
-        LogPrintf("Unable to open file %s\n", fs::PathToString(path));
+        LogPrintf("Unable to open file %s\n", path.string());
         return nullptr;
     }
     if (pos.nPos && fseek(file, pos.nPos, SEEK_SET)) {
         LogPrintf("Unable to seek to position %u of %s\n", pos.nPos,
-                  fs::PathToString(path));
+                  path.string());
         fclose(file);
         return nullptr;
     }
@@ -63,9 +66,8 @@ size_t FlatFileSeq::Allocate(const FlatFilePos &pos, size_t add_size,
         if (CheckDiskSpace(m_dir, inc_size)) {
             FILE *file = Open(pos);
             if (file) {
-                LogPrint(BCLog::VALIDATION,
-                         "Pre-allocating up to position 0x%x in %s%05u.dat\n",
-                         new_size, m_prefix, pos.nFile);
+                LogPrintf("Pre-allocating up to position 0x%x in %s%05u.dat\n",
+                          new_size, m_prefix, pos.nFile);
                 AllocateFileRange(file, pos.nPos, inc_size);
                 fclose(file);
                 return inc_size;
@@ -91,7 +93,6 @@ bool FlatFileSeq::Flush(const FlatFilePos &pos, bool finalize) {
         fclose(file);
         return error("%s: failed to commit file %d", __func__, pos.nFile);
     }
-    DirectoryCommit(m_dir);
 
     fclose(file);
     return true;

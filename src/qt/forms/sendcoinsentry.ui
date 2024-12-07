@@ -17,6 +17,9 @@
    <bool>false</bool>
   </property>
   <widget class="QFrame" name="SendCoins">
+   <property name="toolTip">
+    <string>This is a normal payment.</string>
+   </property>
    <property name="frameShape">
     <enum>QFrame::NoFrame</enum>
    </property>
@@ -54,7 +57,7 @@
       <item>
        <widget class="QValidatedLineEdit" name="payTo">
         <property name="toolTip">
-         <string>The Bitcoin address to send the payment to</string>
+         <string>The Bitcoin Cash address to send the payment to</string>
         </property>
        </widget>
       </item>
@@ -144,9 +147,6 @@
       <property name="toolTip">
        <string>Enter a label for this address to add it to the list of used addresses</string>
       </property>
-      <property name="placeholderText">
-       <string>Enter a label for this address to add it to your address book</string>
-      </property>
      </widget>
     </item>
     <item row="2" column="0">
@@ -165,11 +165,7 @@
     <item row="2" column="1">
      <layout class="QHBoxLayout" name="horizontalLayoutAmount" stretch="0,1,0">
       <item>
-       <widget class="BitcoinAmountField" name="payAmount">
-         <property name="toolTip">
-          <string>The amount to send in the selected unit</string>
-         </property>
-       </widget>
+       <widget class="BitcoinAmountField" name="payAmount"/>
       </item>
       <item>
        <widget class="QCheckBox" name="checkboxSubtractFeeFromAmount">

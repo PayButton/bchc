@@ -3000,7 +3000,7 @@
     </message>
 </context>
 <context>
-    <name>bitcoin-abc</name>
+    <name>bitcoin-cash-node</name>
     <message>
         <source>Options:</source>
         <translation>オプション:</translation>
@@ -3070,7 +3070,7 @@
         <translation>HTTPサーバを開始できませんでした。詳細はデバッグログをご確認ください。</translation>
     </message>
     <message>
-        <source>Bitcoin ABC</source>
+        <source>Bitcoin Cash Node</source>
         <translation>Bitcoin のコア</translation>
     </message>
     <message>
@@ -3671,8 +3671,8 @@
         <translation>mempool内でトランザクションを &lt;n&gt; 時間以上保持しない (初期値: %u)</translation>
     </message>
     <message>
-        <source>Equivalent bytes per sigop in transactions for relay and mining (default: %u)</source>
-        <translation>中継や採掘を行う際のトランザクション内の、sigopあたりバイト数の相当量 (初期値: %u)</translation>
+        <source>Equivalent bytes per sigcheck in transactions for relay and mining (default: %u)</source>
+        <translation>中継や採掘を行う際のトランザクション内の、sigcheckあたりバイト数の相当量 (初期値: %u)</translation>
     </message>
     <message>
         <source>Fees (in %s/kB) smaller than this are considered zero fee for transaction creation (default: %s)</source>

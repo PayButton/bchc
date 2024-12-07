@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,7 +8,10 @@
 #include <qt/forms/ui_receivecoinsdialog.h>
 #include <qt/receivecoinsdialog.h>
 
+#include <qt/addressbookpage.h>
 #include <qt/addresstablemodel.h>
+#include <qt/bitcoinunits.h>
+#include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/receiverequestdialog.h>
@@ -16,6 +20,7 @@
 
 #include <QAction>
 #include <QCursor>
+#include <QItemSelection>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QTextDocument>
@@ -107,12 +112,12 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model) {
 
         // Set the button to be enabled or disabled based on whether the wallet
         // can give out new addresses.
-        ui->receiveButton->setEnabled(model->wallet().canGetAddresses());
+        ui->receiveButton->setEnabled(model->canGetAddresses());
 
         // Enable/disable the receive button if the wallet is now able/unable to
         // give out new addresses.
         connect(model, &WalletModel::canGetAddressesChanged, [this] {
-            ui->receiveButton->setEnabled(model->wallet().canGetAddresses());
+            ui->receiveButton->setEnabled(model->canGetAddresses());
         });
     }
 }
@@ -155,41 +160,17 @@ void ReceiveCoinsDialog::on_receiveButton_clicked() {
     OutputType address_type = model->wallet().getDefaultAddressType();
     address = model->getAddressTableModel()->addRow(AddressTableModel::Receive,
                                                     label, "", address_type);
-
-    switch (model->getAddressTableModel()->getEditStatus()) {
-        case AddressTableModel::EditStatus::OK: {
-            // Success
-            SendCoinsRecipient info(address, label, ui->reqAmount->value(),
-                                    ui->reqMessage->text());
-            ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
-            dialog->setAttribute(Qt::WA_DeleteOnClose);
-            dialog->setModel(model);
-            dialog->setInfo(info);
-            dialog->show();
-
-            /* Store request for later reference */
-            model->getRecentRequestsTableModel()->addNewRequest(info);
-            break;
-        }
-        case AddressTableModel::EditStatus::WALLET_UNLOCK_FAILURE:
-            QMessageBox::critical(this, windowTitle(),
-                                  tr("Could not unlock wallet."),
-                                  QMessageBox::Ok, QMessageBox::Ok);
-            break;
-        case AddressTableModel::EditStatus::KEY_GENERATION_FAILURE:
-            QMessageBox::critical(this, windowTitle(),
-                                  tr("Could not generate new %1 address")
-                                      .arg(QString::fromStdString(
-                                          FormatOutputType(address_type))),
-                                  QMessageBox::Ok, QMessageBox::Ok);
-            break;
-        // These aren't valid return values for our action
-        case AddressTableModel::EditStatus::INVALID_ADDRESS:
-        case AddressTableModel::EditStatus::DUPLICATE_ADDRESS:
-        case AddressTableModel::EditStatus::NO_CHANGES:
-            assert(false);
-    }
+    SendCoinsRecipient info(address, label, ui->reqAmount->value(),
+                            ui->reqMessage->text());
+    ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setModel(model);
+    dialog->setInfo(info);
+    dialog->show();
     clear();
+
+    /* Store request for later reference */
+    model->getRecentRequestsTableModel()->addNewRequest(info);
 }
 
 void ReceiveCoinsDialog::on_recentRequestsView_doubleClicked(
@@ -246,6 +227,20 @@ void ReceiveCoinsDialog::on_removeRequestButton_clicked() {
 void ReceiveCoinsDialog::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
     columnResizingFixer->stretchColumnWidth(RecentRequestsTableModel::Message);
+}
+
+void ReceiveCoinsDialog::keyPressEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Return) {
+        // press return -> submit form
+        if (ui->reqLabel->hasFocus() || ui->reqAmount->hasFocus() ||
+            ui->reqMessage->hasFocus()) {
+            event->ignore();
+            on_receiveButton_clicked();
+            return;
+        }
+    }
+
+    this->QDialog::keyPressEvent(event);
 }
 
 QModelIndex ReceiveCoinsDialog::selectedRow() {

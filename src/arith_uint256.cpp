@@ -1,5 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,8 +8,10 @@
 
 #include <crypto/common.h>
 #include <uint256.h>
+#include <util/strencodings.h>
 
-#include <cmath>
+#include <cstdio>
+#include <cstring>
 
 template <unsigned int BITS>
 base_uint<BITS>::base_uint(const std::string &str) {
@@ -106,7 +109,7 @@ base_uint<BITS> &base_uint<BITS>::operator/=(const base_uint &b) {
         if (num >= div) {
             num -= div;
             // set a bit of the result.
-            pn[shift / 32] |= (1U << (shift & 31));
+            pn[shift / 32] |= (1 << (shift & 31));
         }
         // shift back.
         div >>= 1;
@@ -241,21 +244,11 @@ uint32_t arith_uint256::GetCompact(bool fNegative) const {
         nCompact >>= 8;
         nSize++;
     }
-    assert((nCompact & ~0x007fffffU) == 0);
+    assert((nCompact & ~0x007fffff) == 0);
     assert(nSize < 256);
     nCompact |= nSize << 24;
     nCompact |= (fNegative && (nCompact & 0x007fffff) ? 0x00800000 : 0);
     return nCompact;
-}
-
-arith_uint256 arith_uint256::fromDouble(double d) {
-    arith_uint256 b;
-    for (int i = b.WIDTH - 1; i >= 0; i--) {
-        const double fact = std::pow(4294967296.0, i);
-        b.pn[i] = uint32_t(d / fact);
-        d -= fact * b.pn[i];
-    }
-    return b;
 }
 
 uint256 ArithToUint256(const arith_uint256 &a) {

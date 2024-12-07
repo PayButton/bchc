@@ -1,19 +1,22 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/bantablemodel.h>
 
+#include <qt/clientmodel.h>
+#include <qt/guiconstants.h>
+#include <qt/guiutil.h>
+
 #include <interfaces/node.h>
-#include <net_types.h> // For banmap_t
+#include <sync.h>
+#include <util/time.h>
 
-#include <utility>
+#include <algorithm>
 
-#include <QDateTime>
+#include <QDebug>
 #include <QList>
-#include <QLocale>
-#include <QModelIndex>
-#include <QVariant>
 
 bool BannedNodeLessThan::operator()(const CCombinedBan &left,
                                     const CCombinedBan &right) const {
@@ -47,12 +50,12 @@ public:
 
     /** Pull a full list of banned nodes from CNode into our cache */
     void refreshBanlist(interfaces::Node &node) {
-        banmap_t banMap;
+        BanTables banMap;
         node.getBanned(banMap);
 
         cachedBanlist.clear();
         cachedBanlist.reserve(banMap.size());
-        for (const auto &entry : banMap) {
+        for (const auto &entry : banMap.toAggregatedMap()) {
             CCombinedBan banEntry;
             banEntry.subnet = entry.first;
             banEntry.banEntry = entry.second;
@@ -78,8 +81,8 @@ public:
     }
 };
 
-BanTableModel::BanTableModel(interfaces::Node &node, QObject *parent)
-    : QAbstractTableModel(parent), m_node(node) {
+BanTableModel::BanTableModel(interfaces::Node &node, ClientModel *parent)
+    : QAbstractTableModel(parent), m_node(node), clientModel(parent) {
     columns << tr("IP/Netmask") << tr("Banned Until");
     priv.reset(new BanTablePriv());
 
@@ -113,9 +116,7 @@ QVariant BanTableModel::data(const QModelIndex &index, int role) const {
             case Address:
                 return QString::fromStdString(rec->subnet.ToString());
             case Bantime:
-                QDateTime date = QDateTime::fromMSecsSinceEpoch(0);
-                date = date.addSecs(rec->banEntry.nBanUntil);
-                return date.toString(QLocale().dateTimeFormat());
+                return GUIUtil::dateTimeStrLong(rec->banEntry.nBanUntil);
         }
     }
 

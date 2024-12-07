@@ -1,11 +1,11 @@
-// Copyright (c) 2019 The Bitcoin developers
+// Copyright (c) 2019-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <script/interpreter.h>
 
 #include <test/lcg.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -35,8 +35,8 @@ struct KeyData {
     }
 };
 
-static void CheckError(uint32_t flags, const stacktype &original_stack,
-                       const CScript &script, ScriptError expected) {
+static
+void CheckError(uint32_t flags, const stacktype &original_stack, const CScript &script, ScriptError expected) {
     BaseSignatureChecker sigchecker;
     ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
@@ -45,8 +45,8 @@ static void CheckError(uint32_t flags, const stacktype &original_stack,
     BOOST_CHECK(err == expected);
 }
 
-static void CheckPass(uint32_t flags, const stacktype &original_stack,
-                      const CScript &script, const stacktype &expected) {
+static
+void CheckPass(uint32_t flags, const stacktype &original_stack, const CScript &script, const stacktype &expected) {
     BaseSignatureChecker sigchecker;
     ScriptError err = ScriptError::OK;
     stacktype stack{original_stack};
@@ -104,14 +104,14 @@ BOOST_AUTO_TEST_CASE(opcodes_random_flags) {
     for (int i = 0; i < 4096; i++) {
         uint32_t flags = lcg.next();
 
-        const bool hasForkId = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
+        const bool hasFork = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
         const bool hasNullFail = (flags & SCRIPT_VERIFY_NULLFAIL) != 0;
 
         // Prepare 65-byte transaction sigs with right hashtype byte.
         valtype DER64_with_hashtype =
-            SignatureWithHashType(DER64, SigHashType().withForkId(hasForkId));
+            SignatureWithHashType(DER64, SigHashType().withFork(hasFork));
         valtype Zero64_with_hashtype =
-            SignatureWithHashType(Zero64, SigHashType().withForkId(hasForkId));
+            SignatureWithHashType(Zero64, SigHashType().withFork(hasFork));
 
         // Test CHECKSIG & CHECKDATASIG with he non-DER sig, which can fail from
         // encoding, otherwise upon verification.

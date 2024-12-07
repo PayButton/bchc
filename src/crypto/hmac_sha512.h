@@ -2,17 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CRYPTO_HMAC_SHA512_H
-#define BITCOIN_CRYPTO_HMAC_SHA512_H
+#pragma once
 
 #include <crypto/sha512.h>
+#include <span.h>
 
+#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 
 /** A hasher class for HMAC-SHA-512. */
 class CHMAC_SHA512 {
-private:
     CSHA512 outer;
     CSHA512 inner;
 
@@ -25,6 +25,8 @@ public:
         return *this;
     }
     void Finalize(uint8_t hash[OUTPUT_SIZE]);
-};
 
-#endif // BITCOIN_CRYPTO_HMAC_SHA512_H
+    // Support Span-style API
+    CHMAC_SHA512 &Write(Span<const uint8_t> data) { return Write(data.data(), data.size()); }
+    void Finalize(Span<uint8_t> hash) { assert(hash.size() == OUTPUT_SIZE); Finalize(hash.data()); }
+};

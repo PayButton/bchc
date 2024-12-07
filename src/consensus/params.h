@@ -1,32 +1,19 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CONSENSUS_PARAMS_H
-#define BITCOIN_CONSENSUS_PARAMS_H
+#pragma once
 
+#include <consensus/abla.h>
 #include <primitives/blockhash.h>
 #include <uint256.h>
 
-#include <chrono>
 #include <limits>
+#include <optional>
 
 namespace Consensus {
-
-enum BuriedDeployment : int16_t {
-    // buried deployments get negative values to avoid overlap with
-    // DeploymentPos
-    DEPLOYMENT_P2SH = std::numeric_limits<int16_t>::min(),
-    DEPLOYMENT_HEIGHTINCB,
-    DEPLOYMENT_CLTV,
-    DEPLOYMENT_DERSIG,
-    DEPLOYMENT_CSV,
-};
-
-constexpr bool ValidDeployment(BuriedDeployment dep) {
-    return dep <= DEPLOYMENT_CSV;
-}
 
 /**
  * Parameters that influence chain consensus.
@@ -55,54 +42,61 @@ struct Params {
     int gravitonHeight;
     /** Block height at which the phonon activation becomes active */
     int phononHeight;
-    /** Block height at which the axion activation becomes active */
-    int axionHeight;
-    /** Block height at which the wellington activation becomes active */
-    int wellingtonHeight;
-    /** Block height at which the Cowperthwaite activation becomes active */
-    int cowperthwaiteHeight;
-    /** Unix time used for MTP activation of 15 Nov 2024 12:00:00 UTC upgrade */
-    int augustoActivationTime;
+    /** Unix time used for MTP activation of 15 Nov 2020 12:00:00 UTC upgrade */
+    int axionActivationTime;
 
-    /** Enable or disable the miner fund by default */
-    bool enableMinerFund;
+    /** Note: Unix time used for MTP activation of the 15 May 2021 12:00:00 UTC upgrade was 1621080000, but since
+     *  it was a relay-rules-only upgrade, so we no longer track this time for blockchain consensus. */
+    /** Block height at which the May 15, 2022 rules became active (this is one less than the upgrade block itself) */
+    int upgrade8Height;
+    /** Block height at which the May 15, 2023 rules became active (this is one less than the upgrade block itself) */
+    int upgrade9Height;
+    /** Block height at which the May 15, 2024 rules became active (this is one less than the upgrade block itself) */
+    int upgrade10Height;
+    /** Unix time used for MTP activation of 15 May 2025 12:00:00 UTC upgrade */
+    int64_t upgrade11ActivationTime;
+    /** Unix time used for tentative MTP activation of 15 May 2026 12:00:00 UTC upgrade */
+    int64_t upgrade12ActivationTime;
 
-    /** Enable or disable the staking rewards by default */
-    bool enableStakingRewards;
+    /** Default blocksize limit -- can be overridden with the -excessiveblocksize= command-line switch.
+        After activation of upgrade 10, this is the minimum max block size, since the ABLA algorithm allows for
+        growing the limit based on demand.*/
+    uint64_t nDefaultConsensusBlockSize;
+    /**
+     * Chain-specific default for -percentblockmaxsize, which controls the maximum size of blocks that the
+     * mining code will create. This value is stored as a double precision percentage to support scalenet's
+     * 8 MB default which is 3.125% of 256 MB. Valid values [0.0, 100.0].
+     */
+    double nDefaultGeneratedBlockSizePercent;
+
+    uint64_t GetDefaultGeneratedBlockSizeBytes() const {
+        return nDefaultConsensusBlockSize * (nDefaultGeneratedBlockSizePercent / 100.0);
+    }
 
     /** Proof of work parameters */
     uint256 powLimit;
     bool fPowAllowMinDifficultyBlocks;
     bool fPowNoRetargeting;
-    int64_t nDAAHalfLife;
     int64_t nPowTargetSpacing;
+    int64_t nASERTHalfLife;
     int64_t nPowTargetTimespan;
-    std::chrono::seconds PowTargetSpacing() const {
-        return std::chrono::seconds{nPowTargetSpacing};
-    }
     int64_t DifficultyAdjustmentInterval() const {
         return nPowTargetTimespan / nPowTargetSpacing;
     }
     uint256 nMinimumChainWork;
     BlockHash defaultAssumeValid;
 
-    int DeploymentHeight(BuriedDeployment dep) const {
-        switch (dep) {
-            case DEPLOYMENT_P2SH:
-                return BIP16Height;
-            case DEPLOYMENT_HEIGHTINCB:
-                return BIP34Height;
-            case DEPLOYMENT_CLTV:
-                return BIP65Height;
-            case DEPLOYMENT_DERSIG:
-                return BIP66Height;
-            case DEPLOYMENT_CSV:
-                return CSVHeight;
-        } // no default case, so the compiler can warn about missing cases
-        return std::numeric_limits<int>::max();
-    }
+    /** Used by the ASERT DAA activated after Nov. 15, 2020 */
+    struct ASERTAnchor {
+        int nHeight;
+        uint32_t nBits;
+        int64_t nPrevBlockTime;
+    };
+
+    /** For chains with a checkpoint after the ASERT anchor block, this is always defined */
+    std::optional<ASERTAnchor> asertAnchorParams;
+
+    /** For upgrade10 -- the ABLA config (adjustable block limit algorithm) */
+    abla::Config ablaConfig;
 };
-
 } // namespace Consensus
-
-#endif // BITCOIN_CONSENSUS_PARAMS_H

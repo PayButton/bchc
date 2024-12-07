@@ -4,7 +4,12 @@
 
 //! Module for [`Group`] and [`GroupQuery`].
 
-use bitcoinsuite_core::tx::{Tx, TxOutput};
+use std::borrow::Cow;
+
+use bitcoinsuite_core::{
+    hash::Sha256,
+    tx::{Tx, TxOutput},
+};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +32,27 @@ pub struct MemberItem<M> {
     pub idx: usize,
     /// Member of this item.
     pub member: M,
+}
+
+/// Various ways of querying a the db for a group member
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupMember<M> {
+    /// By member
+    Member(M),
+    /// By member hash
+    MemberHash(Sha256),
+}
+
+impl<M: Clone> GroupMember<M> {
+    /// Converts from &GroupMember<M> to GroupMember<&M>.
+    pub fn as_ref(&self) -> GroupMember<Cow<'_, M>> {
+        match self {
+            GroupMember::Member(member) => {
+                GroupMember::Member(Cow::Borrowed(member))
+            }
+            GroupMember::MemberHash(hash) => GroupMember::MemberHash(*hash),
+        }
+    }
 }
 
 /// Groups txs and determines which members they are.
@@ -86,6 +112,11 @@ pub trait Group {
 
     /// Serialize the given member.
     fn ser_member(&self, member: &Self::Member<'_>) -> Self::MemberSer;
+
+    /// Hash the given member.
+    /// This is currently only used for ScriptGroup to create a
+    /// scripthash to script index for the ElectrumX API.
+    fn ser_hash_member(&self, member: &Self::Member<'_>) -> [u8; 32];
 
     /// The [`GroupHistoryConf`] for this group.
     fn tx_history_conf() -> GroupHistoryConf;

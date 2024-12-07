@@ -1,4 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,31 +9,29 @@
 
 #include <qt/optionsmodel.h>
 
-#include <common/args.h>
+#include <amount.h>
 #include <interfaces/node.h>
 #include <mapport.h>
 #include <net.h>
 #include <netbase.h>
 #include <qt/bitcoinunits.h>
-#include <qt/guiconstants.h>
 #include <qt/guiutil.h>
-#include <txdb.h> // for -dbcache defaults
-#include <util/string.h>
+#include <qt/intro.h>
+#include <txdb.h>       // for -dbcache defaults
 #include <validation.h> // For DEFAULT_SCRIPTCHECK_THREADS
 
-#include <QDebug> // needed by qInfo()
-#ifdef ENABLE_BIP70
-#include <QNetworkProxy>
-#endif
+#include <QDebug>
 #include <QSettings>
 #include <QStringList>
+#include <QUrl>
 
 const char *DEFAULT_GUI_PROXY_HOST = "127.0.0.1";
 
 static const QString GetDefaultProxyAddress();
 
-OptionsModel::OptionsModel(QObject *parent, bool resetSettings)
-    : QAbstractListModel(parent) {
+OptionsModel::OptionsModel(interfaces::Node &node, QObject *parent,
+                           bool resetSettings)
+    : QAbstractListModel(parent), m_node(node) {
     Init(resetSettings);
 }
 
@@ -76,10 +75,18 @@ void OptionsModel::Init(bool resetSettings) {
     fMinimizeOnClose = settings.value("fMinimizeOnClose").toBool();
 
     // Display
-    if (!settings.contains("nDisplayUnit")) {
-        settings.setValue("nDisplayUnit", BitcoinUnits::base);
+    constexpr auto defaultDisplayUnit = BitcoinUnits::BCH;
+    if (!settings.contains("nDisplayUnit_v2")) {
+        settings.setValue("nDisplayUnit_v2", defaultDisplayUnit);
     }
-    nDisplayUnit = settings.value("nDisplayUnit").toInt();
+    nDisplayUnit = settings.value("nDisplayUnit_v2").toInt();
+    if (!BitcoinUnits::valid(nDisplayUnit)) {
+        // User might be running us after having run a new version that saved
+        // a unit we don't know about, so just default back to BCH.
+        qWarning() << "Unrecognized display unit (" << nDisplayUnit << ") read from settings, setting display unit back to"
+                   <<  BitcoinUnits::ticker(defaultDisplayUnit);
+        nDisplayUnit = defaultDisplayUnit;
+    }
 
     if (!settings.contains("strThirdPartyTxUrls")) {
         settings.setValue("strThirdPartyTxUrls", "");
@@ -106,14 +113,20 @@ void OptionsModel::Init(bool resetSettings) {
         settings.setValue("bPrune", false);
     }
     if (!settings.contains("nPruneSize")) {
-        settings.setValue("nPruneSize", DEFAULT_PRUNE_TARGET_GB);
+        settings.setValue("nPruneSize", 2);
     }
-    SetPruneEnabled(settings.value("bPrune").toBool());
+    // Convert prune size to MB:
+    const uint64_t nPruneSizeMB = settings.value("nPruneSize").toInt() * 1000;
+    if (!m_node.softSetArg("-prune", settings.value("bPrune").toBool()
+                                         ? std::to_string(nPruneSizeMB)
+                                         : "0")) {
+        addOverriddenOption("-prune");
+    }
 
     if (!settings.contains("nDatabaseCache")) {
-        settings.setValue("nDatabaseCache", (qint64)DEFAULT_DB_CACHE_MB);
+        settings.setValue("nDatabaseCache", (qint64)nDefaultDbCache);
     }
-    if (!gArgs.SoftSetArg(
+    if (!m_node.softSetArg(
             "-dbcache",
             settings.value("nDatabaseCache").toString().toStdString())) {
         addOverriddenOption("-dbcache");
@@ -122,48 +135,52 @@ void OptionsModel::Init(bool resetSettings) {
     if (!settings.contains("nThreadsScriptVerif")) {
         settings.setValue("nThreadsScriptVerif", DEFAULT_SCRIPTCHECK_THREADS);
     }
-    if (!gArgs.SoftSetArg(
+    if (!m_node.softSetArg(
             "-par",
             settings.value("nThreadsScriptVerif").toString().toStdString())) {
         addOverriddenOption("-par");
     }
 
     if (!settings.contains("strDataDir")) {
-        settings.setValue("strDataDir", GUIUtil::getDefaultDataDirectory());
+        settings.setValue("strDataDir", Intro::getDefaultDataDirectory());
     }
 
 // Wallet
 #ifdef ENABLE_WALLET
+    settings.setValue("fAllowLegacyP2SH", gArgs.GetBoolArg("-allowlegacyp2sh", false));
     if (!settings.contains("bSpendZeroConfChange")) {
         settings.setValue("bSpendZeroConfChange", true);
     }
-    if (!gArgs.SoftSetBoolArg(
+    if (!m_node.softSetBoolArg(
             "-spendzeroconfchange",
             settings.value("bSpendZeroConfChange").toBool())) {
         addOverriddenOption("-spendzeroconfchange");
     }
+    if (!settings.contains("fAllowLegacyP2PKH")) {
+        settings.setValue("fAllowLegacyP2PKH", false);
+    }
+
 #endif
 
     // Network
     if (!settings.contains("fUseUPnP")) {
         settings.setValue("fUseUPnP", DEFAULT_UPNP);
     }
-    if (!gArgs.SoftSetBoolArg("-upnp", settings.value("fUseUPnP").toBool())) {
+    if (!m_node.softSetBoolArg("-upnp", settings.value("fUseUPnP").toBool())) {
         addOverriddenOption("-upnp");
     }
 
     if (!settings.contains("fUseNatpmp")) {
         settings.setValue("fUseNatpmp", DEFAULT_NATPMP);
     }
-    if (!gArgs.SoftSetBoolArg("-natpmp",
-                              settings.value("fUseNatpmp").toBool())) {
+    if (!m_node.softSetBoolArg("-natpmp", settings.value("fUseNatpmp").toBool())) {
         addOverriddenOption("-natpmp");
     }
 
     if (!settings.contains("fListen")) {
         settings.setValue("fListen", DEFAULT_LISTEN);
     }
-    if (!gArgs.SoftSetBoolArg("-listen", settings.value("fListen").toBool())) {
+    if (!m_node.softSetBoolArg("-listen", settings.value("fListen").toBool())) {
         addOverriddenOption("-listen");
     }
 
@@ -175,7 +192,7 @@ void OptionsModel::Init(bool resetSettings) {
     }
     // Only try to set -proxy, if user has enabled fUseProxy
     if (settings.value("fUseProxy").toBool() &&
-        !gArgs.SoftSetArg(
+        !m_node.softSetArg(
             "-proxy", settings.value("addrProxy").toString().toStdString())) {
         addOverriddenOption("-proxy");
     } else if (!settings.value("fUseProxy").toBool() &&
@@ -191,7 +208,7 @@ void OptionsModel::Init(bool resetSettings) {
     }
     // Only try to set -onion, if user has enabled fUseSeparateProxyTor
     if (settings.value("fUseSeparateProxyTor").toBool() &&
-        !gArgs.SoftSetArg(
+        !m_node.softSetArg(
             "-onion",
             settings.value("addrSeparateProxyTor").toString().toStdString())) {
         addOverriddenOption("-onion");
@@ -204,7 +221,7 @@ void OptionsModel::Init(bool resetSettings) {
     if (!settings.contains("language")) {
         settings.setValue("language", "");
     }
-    if (!gArgs.SoftSetArg(
+    if (!m_node.softSetArg(
             "-lang", settings.value("language").toString().toStdString())) {
         addOverriddenOption("-lang");
     }
@@ -224,8 +241,8 @@ static void CopySettings(QSettings &dst, const QSettings &src) {
 
 /** Back up a QSettings to an ini-formatted file. */
 static void BackupSettings(const fs::path &filename, const QSettings &src) {
-    qInfo() << "Backing up GUI settings to"
-            << GUIUtil::boostPathToQString(filename);
+    qWarning() << "Backing up GUI settings to"
+               << GUIUtil::boostPathToQString(filename);
     QSettings dst(GUIUtil::boostPathToQString(filename), QSettings::IniFormat);
     dst.clear();
     CopySettings(dst, src);
@@ -235,10 +252,10 @@ void OptionsModel::Reset() {
     QSettings settings;
 
     // Backup old settings to chain-specific datadir for troubleshooting
-    BackupSettings(gArgs.GetDataDirNet() / "guisettings.ini.bak", settings);
+    BackupSettings(GetDataDir(true) / "guisettings.ini.bak", settings);
 
     // Save the strDataDir setting
-    QString dataDir = GUIUtil::getDefaultDataDirectory();
+    QString dataDir = Intro::getDefaultDataDirectory();
     dataDir = settings.value("strDataDir", dataDir).toString();
 
     // Remove all entries from our QSettings object
@@ -295,30 +312,6 @@ static const QString GetDefaultProxyAddress() {
         .arg(DEFAULT_GUI_PROXY_PORT);
 }
 
-void OptionsModel::SetPruneEnabled(bool prune, bool force) {
-    QSettings settings;
-    settings.setValue("bPrune", prune);
-    const int64_t prune_target_mib =
-        PruneGBtoMiB(settings.value("nPruneSize").toInt());
-    std::string prune_val = prune ? ToString(prune_target_mib) : "0";
-    if (force) {
-        gArgs.ForceSetArg("-prune", prune_val);
-        return;
-    }
-    if (!gArgs.SoftSetArg("-prune", prune_val)) {
-        addOverriddenOption("-prune");
-    }
-}
-
-void OptionsModel::SetPruneTargetGB(int prune_target_gb, bool force) {
-    const bool prune = prune_target_gb > 0;
-    if (prune) {
-        QSettings settings;
-        settings.setValue("nPruneSize", prune_target_gb);
-    }
-    SetPruneEnabled(prune, force);
-}
-
 // read QSettings values and return them
 QVariant OptionsModel::data(const QModelIndex &index, int role) const {
     if (role == Qt::EditRole) {
@@ -364,6 +357,8 @@ QVariant OptionsModel::data(const QModelIndex &index, int role) const {
 #ifdef ENABLE_WALLET
             case SpendZeroConfChange:
                 return settings.value("bSpendZeroConfChange");
+            case AllowLegacyP2PKH:
+                return settings.value("fAllowLegacyP2PKH");
 #endif
             case DisplayUnit:
                 return nDisplayUnit;
@@ -388,6 +383,25 @@ QVariant OptionsModel::data(const QModelIndex &index, int role) const {
         }
     }
     return QVariant();
+}
+
+bool OptionsModel::isValidThirdPartyTxUrlString(QString value)
+{
+    // Check that the URLs are valid, and https or https.
+    // Requiring http(s) ensures that certain schemes that auto-execute
+    // cannot be used.  Although the user would need to explicitly
+    // configure such to happen, preventing this configuration protects
+    // the average user.
+    QStringList listUrls = GUIUtil::splitSkipEmptyParts(value, "|");
+    for (auto &urlStr : listUrls) {
+        // Remove whitespace and replace our tx placeholder with some
+        // valid URL data for validity checking.
+        const QUrl url(urlStr.replace("%s", "tx").trimmed(), QUrl::StrictMode);
+        if (!url.isValid() || (url.scheme().toLower() != "https" && url.scheme().toLower() != "http")) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // write QSettings values
@@ -477,16 +491,20 @@ bool OptionsModel::setData(const QModelIndex &index, const QVariant &value,
                     setRestartRequired(true);
                 }
                 break;
+            case AllowLegacyP2PKH:
+                settings.setValue("fAllowLegacyP2PKH", value);
+                break;
 #endif
             case DisplayUnit:
                 setDisplayUnit(value);
                 break;
             case ThirdPartyTxUrls:
                 if (strThirdPartyTxUrls != value.toString()) {
-                    strThirdPartyTxUrls = value.toString();
-                    settings.setValue("strThirdPartyTxUrls",
-                                      strThirdPartyTxUrls);
-                    setRestartRequired(true);
+                    if (isValidThirdPartyTxUrlString(value.toString())) {
+                        strThirdPartyTxUrls = value.toString();
+                        settings.setValue("strThirdPartyTxUrls", strThirdPartyTxUrls);
+                        setRestartRequired(true);
+                    }
                 }
                 break;
             case Language:
@@ -546,29 +564,10 @@ void OptionsModel::setDisplayUnit(const QVariant &value) {
     if (!value.isNull()) {
         QSettings settings;
         nDisplayUnit = value.toInt();
-        settings.setValue("nDisplayUnit", nDisplayUnit);
+        settings.setValue("nDisplayUnit_v2", nDisplayUnit);
         Q_EMIT displayUnitChanged(nDisplayUnit);
     }
 }
-
-#ifdef ENABLE_BIP70
-bool OptionsModel::getProxySettings(QNetworkProxy &proxy) const {
-    // Directly query current base proxy, because
-    // GUI settings can be overridden with -proxy.
-    proxyType curProxy;
-    if (node().getProxy(NET_IPV4, curProxy)) {
-        proxy.setType(QNetworkProxy::Socks5Proxy);
-        proxy.setHostName(QString::fromStdString(curProxy.proxy.ToStringIP()));
-        proxy.setPort(curProxy.proxy.GetPort());
-
-        return true;
-    } else {
-        proxy.setType(QNetworkProxy::NoProxy);
-    }
-
-    return false;
-}
-#endif
 
 void OptionsModel::setRestartRequired(bool fRequired) {
     QSettings settings;
@@ -595,7 +594,7 @@ void OptionsModel::checkAndMigrate() {
         // force people to upgrade to the new value if they are using 100MB
         if (settingsVersion < 130000 && settings.contains("nDatabaseCache") &&
             settings.value("nDatabaseCache").toLongLong() == 100) {
-            settings.setValue("nDatabaseCache", (qint64)DEFAULT_DB_CACHE_MB);
+            settings.setValue("nDatabaseCache", (qint64)nDefaultDbCache);
         }
 
         settings.setValue(strSettingsVersionKey, CLIENT_VERSION);
@@ -613,5 +612,15 @@ void OptionsModel::checkAndMigrate() {
     if (settings.contains("addrSeparateProxyTor") &&
         settings.value("addrSeparateProxyTor").toString().endsWith("%2")) {
         settings.setValue("addrSeparateProxyTor", GetDefaultProxyAddress());
+    }
+
+    // Previous to version 0.21.1, we called this config key "nDisplayUnit",
+    // but then we subsequently renamed it to "nDiplayUnit_v2" after adding the
+    // Satoshi (sats) unit type. See issue #47.
+    if (settings.contains("nDisplayUnit") && !settings.contains("nDisplayUnit_v2")) {
+        const int oldVal = settings.value("nDisplayUnit").toInt();
+        if (BitcoinUnits::valid(oldVal))
+            // legacy value is valid, use it.
+            settings.setValue("nDisplayUnit_v2", oldVal);
     }
 }

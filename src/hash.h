@@ -1,14 +1,15 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2024 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_HASH_H
-#define BITCOIN_HASH_H
+#pragma once
 
 #include <crypto/common.h>
 #include <crypto/ripemd160.h>
 #include <crypto/sha256.h>
+#include <crypto/siphash.h>
 #include <prevector.h>
 #include <serialize.h>
 #include <uint256.h>
@@ -71,62 +72,55 @@ public:
 };
 
 /** Compute the 256-bit hash of an object. */
-template <typename T> inline uint256 Hash(const T &in1) {
-    uint256 result;
-    CHash256().Write(MakeUCharSpan(in1)).Finalize(result);
+template <typename T>
+inline uint256 Hash(const T &in1) {
+    uint256 result{uint256::Uninitialized};
+    CHash256().Write(MakeUInt8Span(in1)).Finalize(result);
     return result;
 }
 
 /** Compute the 256-bit hash of the concatenation of two objects. */
 template <typename T1, typename T2>
 inline uint256 Hash(const T1 &in1, const T2 &in2) {
-    uint256 result;
-    CHash256()
-        .Write(MakeUCharSpan(in1))
-        .Write(MakeUCharSpan(in2))
-        .Finalize(result);
+    uint256 result{uint256::Uninitialized};
+    CHash256().Write(MakeUInt8Span(in1)).Write(MakeUInt8Span(in2)).Finalize(result);
     return result;
 }
 
 /** Compute the 160-bit hash an object. */
-template <typename T1> inline uint160 Hash160(const T1 &in1) {
-    uint160 result;
-    CHash160().Write(MakeUCharSpan(in1)).Finalize(result);
+template <typename T1>
+inline uint160 Hash160(const T1 &in1) {
+    uint160 result{uint160::Uninitialized};
+    CHash160().Write(MakeUInt8Span(in1)).Finalize(result);
     return result;
 }
 
-/** A writer stream (for serialization) that computes a 256-bit hash. */
-class HashWriter {
-private:
-    CSHA256 ctx;
+/** A generic writer stream (for serialization) that computes a hash given a HasherT. */
+template <typename HasherT>
+class GenericHashWriter {
+    HasherT ctx;
+
+    const int nType;
+    const int nVersion;
+
+    size_t nBytesWritten{};
 
 public:
-    void write(Span<const std::byte> src) {
-        ctx.Write(UCharCast(src.data()), src.size());
+    GenericHashWriter(int nTypeIn, int nVersionIn)
+        : nType(nTypeIn), nVersion(nVersionIn) {}
+
+    int GetType() const { return nType; }
+    int GetVersion() const { return nVersion; }
+
+    void write(const char *pch, size_t size) {
+        ctx.Write({UInt8Cast(pch), size});
+        nBytesWritten += size;
     }
 
-    /**
-     * Compute the double-SHA256 hash of all data written to this object.
-     *
-     * Invalidates this object.
-     */
+    // invalidates the object
     uint256 GetHash() {
-        uint256 result;
-        ctx.Finalize(result.begin());
-        ctx.Reset()
-            .Write(result.begin(), CSHA256::OUTPUT_SIZE)
-            .Finalize(result.begin());
-        return result;
-    }
-
-    /**
-     * Compute the SHA256 hash of all data written to this object.
-     *
-     * Invalidates this object.
-     */
-    uint256 GetSHA256() {
-        uint256 result;
-        ctx.Finalize(result.begin());
+        uint256 result{uint256::Uninitialized};
+        ctx.Finalize(result);
         return result;
     }
 
@@ -134,67 +128,69 @@ public:
      * Returns the first 64 bits from the resulting hash.
      */
     inline uint64_t GetCheapHash() {
-        uint256 result = GetHash();
-        return ReadLE64(result.begin());
+        uint8_t result[CHash256::OUTPUT_SIZE];
+        ctx.Finalize(result);
+        return ReadLE64(result);
     }
 
-    template <typename T> HashWriter &operator<<(const T &obj) {
-        ::Serialize(*this, obj);
-        return *this;
-    }
-};
-
-class CHashWriter : public HashWriter {
-private:
-    const int nType;
-    const int nVersion;
-
-public:
-    CHashWriter(int nTypeIn, int nVersionIn)
-        : nType(nTypeIn), nVersion(nVersionIn) {}
-
-    int GetType() const { return nType; }
-    int GetVersion() const { return nVersion; }
-
-    template <typename T> CHashWriter &operator<<(const T &obj) {
+    template <typename T> GenericHashWriter &operator<<(const T &obj) {
         // Serialize to this stream
         ::Serialize(*this, obj);
         return (*this);
     }
+
+    /// Returns the total number of bytes written across all previous calls to write() above.
+    /// Note: We could have named this .size() but if we did, then it might then not be so obvious what this method
+    /// returns in that case (is it the resulting hash size or the bytes written size?).
+    size_t GetNumBytesWritten() const { return nBytesWritten; }
 };
+
+/** A writer stream (for serialization) that computes a double sha-256 hash. */
+using CHashWriter = GenericHashWriter<CHash256>;
+
+/** A writer stream (for serialization) that computes a *single* sha-256 hash. */
+using Sha256SingleHashWriter = GenericHashWriter<CSHA256>;
 
 /**
  * Reads data from an underlying stream, while hashing the read data.
  */
-template <typename Source> class CHashVerifier : public CHashWriter {
-private:
+template <typename Source, typename HasherT>
+class GenericHashVerifier : public GenericHashWriter<HasherT> {
     Source *source;
 
 public:
-    explicit CHashVerifier(Source *source_)
-        : CHashWriter(source_->GetType(), source_->GetVersion()),
+    explicit GenericHashVerifier(Source *source_)
+        : GenericHashWriter<HasherT>(source_->GetType(), source_->GetVersion()),
           source(source_) {}
 
-    void read(Span<std::byte> dst) {
-        source->read(dst);
-        this->write(dst);
+    void read(char *pch, size_t nSize) {
+        source->read(pch, nSize);
+        this->write(pch, nSize);
     }
 
     void ignore(size_t nSize) {
-        std::byte data[1024];
+        char data[1024];
         while (nSize > 0) {
             size_t now = std::min<size_t>(nSize, 1024);
-            read({data, now});
+            read(data, now);
             nSize -= now;
         }
     }
 
-    template <typename T> CHashVerifier<Source> &operator>>(T &&obj) {
+    template <typename T> GenericHashVerifier &operator>>(T &&obj) {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
         return (*this);
     }
 };
+
+// Type alias to support extant code which uses CHashVerifier to mean a sha256d verifier
+template <typename Source>
+using CHashVerifier = GenericHashVerifier<Source, CHash256>;
+
+// Support hash verification for sha256 *single* hashing
+template <typename Source>
+using Sha256SingleHashVerifier = GenericHashVerifier<Source, CSHA256>;
 
 /** Compute the 256-bit hash of an object's serialization. */
 template <typename T>
@@ -205,9 +201,48 @@ uint256 SerializeHash(const T &obj, int nType = SER_GETHASH,
     return ss.GetHash();
 }
 
-uint32_t MurmurHash3(uint32_t nHashSeed, Span<const uint8_t> vDataToHash);
+// MurmurHash3: ultra-fast hash suitable for hash tables but not cryptographically secure
+uint32_t MurmurHash3(uint32_t nHashSeed,
+                     const uint8_t *pDataToHash, size_t nDataLen /* bytes */);
+inline uint32_t MurmurHash3(uint32_t nHashSeed, Span<const uint8_t> vDataToHash) {
+    return MurmurHash3(nHashSeed, vDataToHash.data(), vDataToHash.size());
+}
 
 void BIP32Hash(const ChainCode &chainCode, uint32_t nChild, uint8_t header,
                const uint8_t data[32], uint8_t output[64]);
 
-#endif // BITCOIN_HASH_H
+/// Hash writer for fast SipHash - Used to get a fast hash for any serializable type
+class CSipHashWriter
+{
+    CSipHasher hasher;
+    const int nType, nVersion;
+public:
+    CSipHashWriter(uint64_t k0, uint64_t k1, int nTypeIn, int nVersionIn) noexcept
+        : hasher(k0, k1), nType(nTypeIn), nVersion(nVersionIn)
+    {}
+
+    int GetType() const { return nType; }
+    int GetVersion() const { return nVersion; }
+
+    void write(const char *pch, size_t size) {
+        hasher.Write(reinterpret_cast<const uint8_t *>(pch), size);
+    }
+
+    template <typename T> CSipHashWriter &operator<<(const T &obj) {
+        // Serialize to this stream
+        ::Serialize(*this, obj);
+        return *this;
+    }
+
+    // Invalidates hasher
+    uint64_t GetHash() const { return hasher.Finalize(); }
+};
+
+/** Compute the Sip hash of an object's serialization. */
+template <typename T>
+uint64_t SerializeSipHash(const T &obj, uint64_t k0, uint64_t k1,
+                          int nType = SER_GETHASH, int nVersion = PROTOCOL_VERSION) {
+    CSipHashWriter ss(k0, k1, nType, nVersion);
+    ss << obj;
+    return ss.GetHash();
+}

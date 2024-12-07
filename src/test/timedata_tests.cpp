@@ -1,4 +1,5 @@
-// Copyright (c) 2011-2019 The Bitcoin Core developers
+// Copyright (c) 2011-2015 The Bitcoin Core developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 //
@@ -6,16 +7,13 @@
 
 #include <netaddress.h>
 #include <noui.h>
-#include <test/util/logging.h>
-#include <util/string.h>
-#include <util/translation.h>
 #include <warnings.h>
 
-#include <test/util/setup_common.h>
-
-#include <boost/test/unit_test.hpp>
+#include <test/setup_common.h>
 
 #include <string>
+
+#include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(timedata_tests, BasicTestingSetup)
 
@@ -41,13 +39,17 @@ BOOST_AUTO_TEST_CASE(util_MedianFilter) {
 
     filter.input(0); // [0 3 7 18 30]
     BOOST_CHECK_EQUAL(filter.median(), 7);
+
+    // lastly, check the .sorted() array matches what we expect
+    const auto expectedSorted = decltype(filter.sorted()) {{0, 3, 7, 18, 30}};
+    BOOST_CHECK(filter.sorted() == expectedSorted);
 }
 
 static void MultiAddTimeData(int n, int64_t offset) {
     static int cnt = 0;
     for (int i = 0; i < n; ++i) {
         CNetAddr addr;
-        addr.SetInternal(ToString(++cnt));
+        addr.SetInternal(std::to_string(++cnt));
         AddTimeData(addr, offset);
     }
 }
@@ -61,15 +63,12 @@ BOOST_AUTO_TEST_CASE(addtimedata) {
     // Filter size is 1 + 3 = 4: It is always initialized with a single element
     // (offset 0)
 
-    {
-        ASSERT_DEBUG_LOG(
-            "Please check that your computer's date and time are correct!");
-        // filter size 5
-        MultiAddTimeData(1, DEFAULT_MAX_TIME_ADJUSTMENT + 1);
-    }
+    noui_suppress();
+    // filter size 5
+    MultiAddTimeData(1, DEFAULT_MAX_TIME_ADJUSTMENT + 1);
+    noui_reconnect();
 
-    BOOST_CHECK(GetWarnings(true).original.find("clock is wrong") !=
-                std::string::npos);
+    BOOST_CHECK(GetWarnings("gui").find("clock is wrong") != std::string::npos);
 
     // nTimeOffset is not changed if the median of offsets exceeds
     // DEFAULT_MAX_TIME_ADJUSTMENT
@@ -105,11 +104,10 @@ BOOST_AUTO_TEST_CASE(addtimedata) {
 
     // filter median is 100 now, but nTimeOffset will not change
     MultiAddTimeData(2, 100);
-    // We want this test to end with nTimeOffset==0, otherwise subsequent tests
-    // of the suite will fail.
     BOOST_CHECK_EQUAL(GetTimeOffset(), 0);
 
-    TestOnlyResetTimeData();
+    // We want this test to end with nTimeOffset==0, otherwise subsequent tests
+    // of the suite will fail.
 }
 
 BOOST_AUTO_TEST_SUITE_END()

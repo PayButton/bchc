@@ -1,20 +1,19 @@
 // Copyright (c) 2018 The Bitcoin Core developers
+// Copyright (c) 2022 The Bitcoin Cash Node developers
+// Copyright (c) 2019-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_INTERFACES_WALLET_H
-#define BITCOIN_INTERFACES_WALLET_H
+#pragma once
 
-#include <consensus/amount.h>
-#include <interfaces/chain.h> // For ChainClient
-#include <primitives/blockhash.h>
+#include <amount.h>                 // For Amount
+#include <dsproof/dsproof.h>        // For DoubleSpendProof
 #include <primitives/transaction.h> // For CTxOut
-#include <pubkey.h> // For CKeyID and CScriptID (definitions needed in CTxDestination instantiation)
-#include <script/sighashtype.h>
+#include <pubkey.h> // For CKeyID and ScriptID (definitions needed in CTxDestination instantiation)
+#include <script/ismine.h>             // For isminefilter, isminetype
 #include <script/standard.h>           // For CTxDestination
 #include <support/allocators/secure.h> // For SecureString
-#include <util/message.h>
-#include <util/ui_change_type.h>
+#include <ui_interface.h>              // For ChangeType
 
 #include <cstdint>
 #include <functional>
@@ -32,20 +31,14 @@ class CMutableTransaction;
 class COutPoint;
 class CTransaction;
 class CWallet;
-enum class FeeReason;
 enum class OutputType;
-enum class TransactionError;
-enum isminetype : unsigned int;
 struct CRecipient;
-struct PartiallySignedTransaction;
-struct WalletContext;
-typedef uint8_t isminefilter;
 struct TxId;
-struct bilingual_str;
 
 namespace interfaces {
 
 class Handler;
+class PendingWalletTx;
 struct WalletAddress;
 struct WalletBalances;
 struct WalletTx;
@@ -92,19 +85,18 @@ public:
     //! Get chainparams.
     virtual const CChainParams &getChainParams() = 0;
 
-    // Get a new address.
-    virtual bool getNewDestination(const OutputType type,
-                                   const std::string label,
-                                   CTxDestination &dest) = 0;
+    //! Get set of addresses corresponding to a given label.
+    virtual std::set<CTxDestination>
+    getLabelAddresses(const std::string &label) = 0;
+
+    //! Get key from pool.
+    virtual bool getKeyFromPool(bool internal, CPubKey &pub_key) = 0;
 
     //! Get public key.
-    virtual bool getPubKey(const CScript &script, const CKeyID &address,
-                           CPubKey &pub_key) = 0;
+    virtual bool getPubKey(const CKeyID &address, CPubKey &pub_key) = 0;
 
-    //! Sign message
-    virtual SigningResult signMessage(const std::string &message,
-                                      const PKHash &pkhash,
-                                      std::string &str_sig) = 0;
+    //! Get private key.
+    virtual bool getPrivKey(const CKeyID &address, CKey &key) = 0;
 
     //! Return whether wallet has private key.
     virtual bool isSpendable(const CTxDestination &dest) = 0;
@@ -126,6 +118,10 @@ public:
 
     //! Get wallet address list.
     virtual std::vector<WalletAddress> getAddresses() = 0;
+
+    //! Add scripts to key store so old so software versions opening the wallet
+    //! database can detect payments to newer address types.
+    virtual void learnRelatedScripts(const CPubKey &key, OutputType type) = 0;
 
     //! Add dest data.
     virtual bool addDestData(const CTxDestination &dest, const std::string &key,
@@ -152,15 +148,11 @@ public:
     virtual void listLockedCoins(std::vector<COutPoint> &outputs) = 0;
 
     //! Create transaction.
-    virtual CTransactionRef
+    virtual std::unique_ptr<PendingWalletTx>
     createTransaction(const std::vector<CRecipient> &recipients,
                       const CCoinControl &coin_control, bool sign,
                       int &change_pos, Amount &fee,
-                      bilingual_str &fail_reason) = 0;
-
-    //! Commit transaction.
-    virtual void commitTransaction(CTransactionRef tx, WalletValueMap value_map,
-                                   WalletOrderForm order_form) = 0;
+                      std::string &fail_reason) = 0;
 
     //! Return whether transaction can be abandoned.
     virtual bool transactionCanBeAbandoned(const TxId &txid) = 0;
@@ -188,18 +180,11 @@ public:
                                         WalletOrderForm &order_form,
                                         bool &in_mempool, int &num_blocks) = 0;
 
-    //! Fill PSBT.
-    virtual TransactionError fillPSBT(SigHashType sighash_type, bool sign,
-                                      bool bip32derivs,
-                                      PartiallySignedTransaction &psbtx,
-                                      bool &complete) const = 0;
-
     //! Get balances.
     virtual WalletBalances getBalances() = 0;
 
     //! Get balances if possible without blocking.
-    virtual bool tryGetBalances(WalletBalances &balances,
-                                BlockHash &block_hash) = 0;
+    virtual bool tryGetBalances(WalletBalances &balances, int &num_blocks) = 0;
 
     //! Get balance.
     virtual Amount getBalance() = 0;
@@ -240,22 +225,16 @@ public:
     virtual bool hdEnabled() = 0;
 
     // Return whether the wallet is blank.
-    virtual bool canGetAddresses() const = 0;
+    virtual bool canGetAddresses() = 0;
 
-    // Return whether private keys enabled.
-    virtual bool privateKeysDisabled() = 0;
+    // Check if a certain wallet flag is set.
+    virtual bool IsWalletFlagSet(uint64_t flag) = 0;
 
     // Get default address type.
     virtual OutputType getDefaultAddressType() = 0;
 
-    //! Get max tx fee.
-    virtual Amount getDefaultMaxTxFee() = 0;
-
-    // Remove wallet.
-    virtual void remove() = 0;
-
-    //! Return whether is a legacy wallet
-    virtual bool isLegacy() = 0;
+    // Get default change type.
+    virtual OutputType getDefaultChangeType() = 0;
 
     //! Register handler for unload message.
     using UnloadFn = std::function<void()>;
@@ -293,41 +272,20 @@ public:
     using CanGetAddressesChangedFn = std::function<void()>;
     virtual std::unique_ptr<Handler>
     handleCanGetAddressesChanged(CanGetAddressesChangedFn fn) = 0;
-
-    //! Return pointer to internal wallet class, useful for testing.
-    virtual CWallet *wallet() { return nullptr; }
 };
 
-//! Wallet chain client that in addition to having chain client methods for
-//! starting up, shutting down, and registering RPCs, also has additional
-//! methods (called by the GUI) to load and create wallets.
-class WalletClient : public ChainClient {
+//! Tracking object returned by CreateTransaction and passed to
+//! CommitTransaction.
+class PendingWalletTx {
 public:
-    //! Create new wallet.
-    virtual std::unique_ptr<Wallet>
-    createWallet(const std::string &name, const SecureString &passphrase,
-                 uint64_t wallet_creation_flags, bilingual_str &error,
-                 std::vector<bilingual_str> &warnings) = 0;
+    virtual ~PendingWalletTx() {}
 
-    //! Load existing wallet.
-    virtual std::unique_ptr<Wallet>
-    loadWallet(const std::string &name, bilingual_str &error,
-               std::vector<bilingual_str> &warnings) = 0;
+    //! Get transaction data.
+    virtual const CTransaction &get() = 0;
 
-    //! Return default wallet directory.
-    virtual std::string getWalletDir() = 0;
-
-    //! Return available wallets in wallet directory.
-    virtual std::vector<std::string> listWalletDir() = 0;
-
-    //! Return interfaces for accessing wallets (if any).
-    virtual std::vector<std::unique_ptr<Wallet>> getWallets() = 0;
-
-    //! Register handler for load wallet messages. This callback is triggered by
-    //! createWallet and loadWallet above, and also triggered when wallets are
-    //! loaded at startup or by RPC.
-    using LoadWalletFn = std::function<void(std::unique_ptr<Wallet> wallet)>;
-    virtual std::unique_ptr<Handler> handleLoadWallet(LoadWalletFn fn) = 0;
+    //! Send pending transaction and commit to wallet.
+    virtual bool commit(WalletValueMap value_map, WalletOrderForm order_form,
+                        std::string &reject_reason) = 0;
 };
 
 //! Information about one wallet address.
@@ -377,6 +335,7 @@ struct WalletTx {
     int64_t time;
     std::map<std::string, std::string> value_map;
     bool is_coinbase;
+    DoubleSpendProof dsProof;
 };
 
 //! Updated transaction status.
@@ -386,10 +345,12 @@ struct WalletTxStatus {
     int depth_in_main_chain;
     unsigned int time_received;
     uint32_t lock_time;
+    bool is_final;
     bool is_trusted;
     bool is_abandoned;
     bool is_coinbase;
     bool is_in_main_chain;
+    bool is_double_spent;
 };
 
 //! Wallet transaction output.
@@ -404,10 +365,4 @@ struct WalletTxOut {
 //! dummywallet.cpp and throws if the wallet component is not compiled.
 std::unique_ptr<Wallet> MakeWallet(const std::shared_ptr<CWallet> &wallet);
 
-//! Return implementation of ChainClient interface for a wallet client. This
-//! function will be undefined in builds where ENABLE_WALLET is false.
-std::unique_ptr<WalletClient> MakeWalletClient(Chain &chain, ArgsManager &args);
-
 } // namespace interfaces
-
-#endif // BITCOIN_INTERFACES_WALLET_H

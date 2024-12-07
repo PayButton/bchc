@@ -1,12 +1,12 @@
 // Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2019-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <util/strencodings.h>
 #include <wallet/crypter.h>
 
-#include <test/util/random.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -25,16 +25,12 @@ public:
         crypt.SetKeyFromPassphrase(passphrase, vchSalt, rounds, 0);
 
         if (!correctKey.empty()) {
-            BOOST_CHECK_MESSAGE(memcmp(crypt.vchKey.data(), correctKey.data(),
-                                       crypt.vchKey.size()) == 0,
-                                HexStr(crypt.vchKey) + std::string(" != ") +
-                                    HexStr(correctKey));
+            BOOST_CHECK_MESSAGE(memcmp(crypt.vchKey.data(), correctKey.data(), crypt.vchKey.size()) == 0,
+                                HexStr(crypt.vchKey) + std::string(" != ") + HexStr(correctKey));
         }
         if (!correctIV.empty()) {
-            BOOST_CHECK_MESSAGE(memcmp(crypt.vchIV.data(), correctIV.data(),
-                                       crypt.vchIV.size()) == 0,
-                                HexStr(crypt.vchIV) + std::string(" != ") +
-                                    HexStr(correctIV));
+            BOOST_CHECK_MESSAGE(memcmp(crypt.vchIV.data(), correctIV.data(), crypt.vchIV.size()) == 0,
+                                HexStr(crypt.vchIV) + std::string(" != ") + HexStr(correctIV));
         }
     }
 
@@ -106,7 +102,7 @@ BOOST_AUTO_TEST_CASE(passphrase) {
 
     std::string hash(GetRandHash().ToString());
     std::vector<uint8_t> vchSalt(8);
-    GetRandBytes(vchSalt);
+    GetRandBytes(vchSalt.data(), vchSalt.size());
     uint32_t rounds = InsecureRand32();
     if (rounds > 30000) {
         rounds = 30000;

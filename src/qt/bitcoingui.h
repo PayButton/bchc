@@ -1,18 +1,17 @@
 // Copyright (c) 2011-2019 The Bitcoin Core developers
+// Copyright (c) 2020-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_BITCOINGUI_H
-#define BITCOIN_QT_BITCOINGUI_H
+#pragma once
 
 #if defined(HAVE_CONFIG_H)
 #include <config/bitcoin-config.h>
 #endif
 
-#include <qt/clientmodel.h>
 #include <qt/optionsdialog.h>
 
-#include <consensus/amount.h>
+#include <amount.h>
 
 #include <QLabel>
 #include <QMainWindow>
@@ -20,31 +19,27 @@
 #include <QPoint>
 #include <QSystemTrayIcon>
 
-#ifdef Q_OS_MAC
-#include <qt/macos_appnap.h>
-#endif
-
 #include <memory>
 
-class Config;
-class HelpMessageDialog;
-class ModalOverlay;
+class ClientModel;
 class NetworkStyle;
 class Notificator;
 class OptionsModel;
 class PlatformStyle;
 class RPCConsole;
 class SendCoinsRecipient;
-enum class SynchronizationState;
 class UnitDisplayStatusBarControl;
 class WalletController;
 class WalletFrame;
 class WalletModel;
+class HelpMessageDialog;
+class ModalOverlay;
+
+class Config;
 
 namespace interfaces {
 class Handler;
 class Node;
-struct BlockAndHeaderTipInfo;
 } // namespace interfaces
 
 QT_BEGIN_NAMESPACE
@@ -82,11 +77,9 @@ public:
      * The client model represents the part of the core that communicates with
      * the P2P network, and is wallet-agnostic.
      */
-    void setClientModel(ClientModel *clientModel = nullptr,
-                        interfaces::BlockAndHeaderTipInfo *tip_info = nullptr);
+    void setClientModel(ClientModel *clientModel);
 #ifdef ENABLE_WALLET
     void setWalletController(WalletController *wallet_controller);
-    WalletController *getWalletController();
 #endif
 
 #ifdef ENABLE_WALLET
@@ -101,16 +94,9 @@ public:
 #endif // ENABLE_WALLET
     bool enableWallet = false;
 
+
     /** Disconnect core signals from GUI client */
     void unsubscribeFromCoreSignals();
-
-    bool isPrivacyModeActivated() const;
-
-    /**
-     * Get the tray icon status.
-     * Some systems have not "system tray" or "notification area" available.
-     */
-    bool hasTrayIcon() const { return trayIcon; }
 
 protected:
     void changeEvent(QEvent *e) override;
@@ -149,7 +135,6 @@ private:
     QAction *usedReceivingAddressesAction = nullptr;
     QAction *signMessageAction = nullptr;
     QAction *verifyMessageAction = nullptr;
-    QAction *m_load_psbt_action = nullptr;
     QAction *aboutAction = nullptr;
     QAction *receiveCoinsAction = nullptr;
     QAction *receiveCoinsMenuAction = nullptr;
@@ -162,14 +147,13 @@ private:
     QAction *openRPCConsoleAction = nullptr;
     QAction *openAction = nullptr;
     QAction *showHelpMessageAction = nullptr;
-    QAction *m_create_wallet_action{nullptr};
-    QAction *m_open_wallet_action{nullptr};
-    QMenu *m_open_wallet_menu{nullptr};
-    QAction *m_close_wallet_action{nullptr};
-    QAction *m_close_all_wallets_action{nullptr};
     QAction *m_wallet_selector_label_action = nullptr;
     QAction *m_wallet_selector_action = nullptr;
-    QAction *m_mask_values_action{nullptr};
+
+    /** Only set to non-nullptr in constructor on OSX */
+    QAction *m_main_window_action = nullptr;
+
+    QVector<QAction *> m_node_actions;
 
     QLabel *m_wallet_selector_label = nullptr;
     QComboBox *m_wallet_selector = nullptr;
@@ -180,10 +164,6 @@ private:
     RPCConsole *rpcConsole = nullptr;
     HelpMessageDialog *helpMessageDialog = nullptr;
     ModalOverlay *modalOverlay = nullptr;
-
-#ifdef Q_OS_MAC
-    CAppNapInhibitor *m_app_nap_inhibitor = nullptr;
-#endif
 
     /** Keep track of previous number of blocks, to detect progress */
     int prevBlocks = 0;
@@ -207,15 +187,16 @@ private:
     /** Enable or disable all wallet-related actions */
     void setWalletActionsEnabled(bool enabled);
 
-    /** Connect core signals to GUI client */
+    /** @brief Enable or disable all the main window-related actions */
+    void setWindowActionsEnabled(bool enabled);
+
+     /** Connect core signals to GUI client */
     void subscribeToCoreSignals();
 
     /** Update UI with latest network info from model. */
     void updateNetworkState();
 
     void updateHeadersSyncProgressLabel();
-    void updateHeadersPresyncProgressLabel(int64_t height,
-                                           const QDateTime &blockDate);
 
     /** Open the OptionsDialog on the specified tab index */
     void openOptionsDialogWithTab(OptionsDialog::Tab tab);
@@ -225,33 +206,27 @@ Q_SIGNALS:
     void receivedURI(const QString &uri);
     /** Signal raised when RPC console shown */
     void consoleShown(RPCConsole *console);
-    void setPrivacy(bool privacy);
 
 public Q_SLOTS:
     /** Set number of connections shown in the UI */
     void setNumConnections(int count);
     /** Set network state shown in the UI */
     void setNetworkActive(bool networkActive);
-    /** Set number of blocks and last block date shown in the UI */
-    void setNumBlocks(int count, const QDateTime &blockDate,
-                      double nVerificationProgress, SyncType synctype,
-                      SynchronizationState sync_state);
+    /** Set number of blocks, last block date and last block hash shown in the UI */
+    void setNumBlocks(int count, const QDateTime& blockDate, const QString& blockHash, double nVerificationProgress, bool headers);
 
-    /**
-     * Notify the user of an event from the core network or transaction
-     * handling code.
-     * @param[in] title     the message box / notification title
-     * @param[in] message   the displayed text
-     * @param[in] style     modality and style definitions (icon and used
-     * buttons - buttons only for message boxes)
-     *                      @see CClientUIInterface::MessageBoxFlags
-     * @param[in] ret       pointer to a bool that will be modified to whether
-     * Ok was clicked (modal only)
-     * @param[in] detailed_message  the text to be displayed in the details area
+    /** Notify the user of an event from the core network or transaction
+       handling code.
+       @param[in] title     the message box / notification title
+       @param[in] message   the displayed text
+       @param[in] style     modality and style definitions (icon and used
+       buttons - buttons only for message boxes)
+                            @see CClientUIInterface::MessageBoxFlags
+       @param[in] ret       pointer to a bool that will be modified to whether
+       Ok was clicked (modal only)
      */
-    void message(const QString &title, QString message, unsigned int style,
-                 bool *ret = nullptr,
-                 const QString &detailed_message = QString());
+    void message(const QString &title, const QString &message,
+                 unsigned int style, bool *ret = nullptr);
 
 #ifdef ENABLE_WALLET
     void setCurrentWallet(WalletModel *wallet_model);
@@ -268,10 +243,10 @@ private:
     void setEncryptionStatus(int status);
 
     /** Set the hd-enabled status as shown in the UI.
-     @param[in] hdEnabled         current hd enabled status
+     @param[in] status            current hd enabled status
      @see WalletModel::EncryptionStatus
      */
-    void setHDStatus(bool privkeyDisabled, int hdEnabled);
+    void setHDStatus(int hdEnabled);
 
 public Q_SLOTS:
     bool handlePaymentRequest(const SendCoinsRecipient &recipient);
@@ -302,8 +277,6 @@ public Q_SLOTS:
     void gotoSignMessageTab(QString addr = "");
     /** Show Sign/Verify Message dialog and switch to verify message tab */
     void gotoVerifyMessageTab(QString addr = "");
-    /** Show load Partially Signed Bitcoin Transaction dialog */
-    void gotoLoadPSBT();
 
     /** Show open dialog */
     void openClicked();
@@ -336,7 +309,10 @@ public Q_SLOTS:
     /** called by a timer to check if ShutdownRequested() has been set **/
     void detectShutdown();
 
-    /** Show progress dialog e.g. for verifychain */
+    /** Show progress dialog e.g. for verifychain
+     *  Calling this method for values <100 will create a new dialog if it
+     *  doesn't exist, or update the existing dialog if it does.
+     *  When nProgress >= 100 any existing dialog is closed & deleted. */
     void showProgress(const QString &title, int nProgress);
 
     /** When hideTrayIcon setting is changed in OptionsModel hide or show the
@@ -375,5 +351,3 @@ private Q_SLOTS:
     /** Tells underlying optionsModel to update its current display unit. */
     void onMenuSelection(QAction *action);
 };
-
-#endif // BITCOIN_QT_BITCOINGUI_H

@@ -1,11 +1,11 @@
-/***********************************************************************
- * Copyright (c) 2017 Tomas van der Wansem                             *
- * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
- ***********************************************************************/
+/**********************************************************************
+ * Copyright (c) 2017 Tomas van der Wansem                            *
+ * Distributed under the MIT software license, see the accompanying   *
+ * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
+ **********************************************************************/
 
-#ifndef SECP256K1_MODULE_MULTISET_MAIN_H
-#define SECP256K1_MODULE_MULTISET_MAIN_H
+#ifndef _SECP256K1_MODULE_MULTISET_MAIN_
+#define _SECP256K1_MODULE_MULTISET_MAIN_
 
 
 #include "include/secp256k1_multiset.h"
@@ -201,10 +201,79 @@ int secp256k1_multiset_init(const secp256k1_context* ctx, secp256k1_multiset *mu
     const secp256k1_gej inf = SECP256K1_GEJ_CONST_INFINITY;
 
     VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(multiset != NULL);
 
     multiset_from_gej_var(multiset, &inf);
 
     return 1;
 }
 
-#endif /* SECP256K1_MODULE_MULTISET_MAIN_H */
+/** Checks if the multiset is empty (at infinity). */
+int secp256k1_multiset_is_empty(const secp256k1_context* ctx, const secp256k1_multiset *multiset) {
+    secp256k1_gej gej;
+
+    VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(multiset != NULL);
+
+    gej_from_multiset_var(&gej, multiset);
+
+    return gej.infinity ? 1 : 0;
+}
+
+/** Serialize a multiset to a 33-byte representation, identical to the pubkey repr, with the exception
+ *  that if the set is empty, the 33-byte buffer will be all zeroes. */
+int secp256k1_multiset_serialize(const secp256k1_context* ctx, unsigned char *output, const secp256k1_multiset *multiset) {
+    secp256k1_ge ge;
+    secp256k1_gej gej;
+    secp256k1_pubkey pubkey;
+    size_t size = 33;
+
+    VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(output != NULL);
+    ARG_CHECK(multiset != NULL);
+
+    gej_from_multiset_var(&gej, multiset);
+
+    if (gej.infinity) {
+        /* Special case: if the set is empty, return all zeroes as the serialized pubkey data */
+        memset(output, 0, 33);
+        return 1;
+    }
+
+    /* We must convert to affine first */
+    secp256k1_ge_set_gej(&ge, &gej);
+    secp256k1_pubkey_save(&pubkey, &ge);
+    return secp256k1_ec_pubkey_serialize(ctx, output, &size, &pubkey, SECP256K1_EC_COMPRESSED);
+}
+
+/** Unserialize a multiset from a 33-byte representation. */
+int secp256k1_multiset_parse(const secp256k1_context* ctx, secp256k1_multiset *multiset, const unsigned char *input) {
+    secp256k1_ge ge;
+    secp256k1_gej gej;
+    secp256k1_pubkey pubkey;
+
+    VERIFY_CHECK(ctx != NULL);
+    ARG_CHECK(multiset != NULL);
+    ARG_CHECK(input != NULL);
+
+    if (input[0] == 0x00u) {
+        /* Special case: prefix of zero indicates an empty multiset */
+        return secp256k1_multiset_init(ctx, multiset);
+    }
+
+    if (secp256k1_ec_pubkey_parse(ctx, &pubkey, input, 33) != 1) {
+        return 0;
+    }
+
+    if (secp256k1_pubkey_load(ctx, &ge, &pubkey) != 1) {
+        return 0;
+    }
+
+    /* Extracted affine, convert to jacobi */
+    secp256k1_gej_set_ge(&gej, &ge);
+    multiset_from_gej_var(multiset, &gej);
+
+    return 1;
+}
+
+#endif /* _SECP256K1_MODULE_MULTISET_MAIN_ */

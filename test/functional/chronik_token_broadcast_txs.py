@@ -177,8 +177,8 @@ Reason(s): Insufficient token input output sum: 3000 < 3001.""",
         assert_equal(
             error.msg,
             """\
-400: Broadcast failed: Transaction rejected by mempool: \
-mandatory-script-verify-flag-failed (Operation not valid with the current stack size)\
+400: Broadcast failed: \
+mandatory-script-verify-flag-failed (Operation not valid with the current stack size) (code 16)\
 """,
         )
         chronik.tx(ok_tx.hash).ok()

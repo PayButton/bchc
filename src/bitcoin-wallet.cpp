@@ -1,4 +1,5 @@
 // Copyright (c) 2016-2018 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,77 +9,66 @@
 
 #include <chainparams.h>
 #include <chainparamsbase.h>
-#include <common/args.h>
-#include <common/system.h>
-#include <currencyunit.h>
+#include <consensus/consensus.h>
 #include <logging.h>
-#include <util/exception.h>
-#include <util/translation.h>
+#include <util/defer.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <wallet/wallettool.h>
 
-#include <functional>
+#include <cstdio>
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
-static void SetupWalletToolArgs(ArgsManager &argsman) {
-    SetupHelpOptions(argsman);
-    SetupChainParamsBaseOptions(argsman);
-    SetupCurrencyUnitOptions(argsman);
+static void SetupWalletToolArgs() {
+    SetupChainParamsBaseOptions();
 
-    argsman.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
-                   OptionsCategory::OPTIONS);
-    argsman.AddArg("-datadir=<dir>", "Specify data directory",
-                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-wallet=<wallet-name>", "Specify wallet name",
-                   ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
-                   OptionsCategory::OPTIONS);
-    argsman.AddArg("-debug=<category>",
-                   "Output debugging information (default: 0).",
-                   ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
-    argsman.AddArg(
-        "-printtoconsole",
-        "Send trace/debug info to console (default: 1 when no -debug "
-        "is true, 0 otherwise).",
-        ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-?", "This help message", ArgsManager::ALLOW_ANY,
+                 OptionsCategory::OPTIONS);
+    gArgs.AddArg("-datadir=<dir>", "Specify data directory",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-wallet=<wallet-name>", "Specify wallet name",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-debug=<category>",
+                 "Output debugging information (default: 0).",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-printtoconsole",
+                 "Send trace/debug info to console (default: 1 when no -debug "
+                 "is true, 0 otherwise.",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
 
-    argsman.AddArg("info", "Get wallet info", ArgsManager::ALLOW_ANY,
-                   OptionsCategory::COMMANDS);
-    argsman.AddArg("create", "Create new wallet file", ArgsManager::ALLOW_ANY,
-                   OptionsCategory::COMMANDS);
-    argsman.AddArg("salvage",
-                   "Attempt to recover private keys from a corrupt wallet",
-                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    gArgs.AddArg("info", "Get wallet info", ArgsManager::ALLOW_ANY,
+                 OptionsCategory::COMMANDS);
+    gArgs.AddArg("create", "Create new wallet file", ArgsManager::ALLOW_ANY,
+                 OptionsCategory::COMMANDS);
+
+    // Hidden
+    gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
 }
 
 static bool WalletAppInit(int argc, char *argv[]) {
-    SetupWalletToolArgs(gArgs);
+    SetupWalletToolArgs();
     std::string error_message;
     if (!gArgs.ParseParameters(argc, argv, error_message)) {
-        tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
-                    error_message);
+        std::fprintf(stderr, "Error parsing command line arguments: %s\n",
+                     error_message.c_str());
         return false;
     }
-    if (argc < 2 || HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
+    if (argc < 2 || HelpRequested(gArgs)) {
         std::string usage =
             strprintf("%s bitcoin-wallet version", PACKAGE_NAME) + " " +
-            FormatFullVersion() + "\n";
+                      FormatFullVersion() + "\n\n" +
+                      "wallet-tool is an offline tool for creating and interacting with "
+                      "Bitcoin Cash Node wallet files.\n" +
+                      "By default wallet-tool will act on wallets in the default mainnet "
+                      "wallet directory in the datadir.\n" +
+                      "To change the target wallet, use the -datadir, -wallet and "
+                      "-testnet/-regtest arguments.\n\n" +
+                      "Usage:\n" + "  bitcoin-wallet [options] <command>\n\n" +
+                      gArgs.GetHelpMessage();
 
-        if (gArgs.IsArgSet("-version")) {
-            usage += FormatParagraph(LicenseInfo());
-        } else {
-            usage +=
-                "\n"
-                "bitcoin-wallet is an offline tool for creating and "
-                "interacting with " PACKAGE_NAME " wallet files.\n"
-                "By default bitcoin-wallet will act on wallets in the default "
-                "mainnet wallet directory in the datadir.\n"
-                "To change the target wallet, use the -datadir, -wallet and "
-                "-testnet/-regtest arguments.\n\n"
-                "Usage:\n"
-                "  bitcoin-wallet [options] <command>\n";
-            usage += "\n" + gArgs.GetHelpMessage();
-        }
-        tfm::format(std::cout, "%s", usage);
+        std::fprintf(stdout, "%s", usage.c_str());
         return false;
     }
 
@@ -86,10 +76,10 @@ static bool WalletAppInit(int argc, char *argv[]) {
     LogInstance().m_print_to_console =
         gArgs.GetBoolArg("-printtoconsole", gArgs.GetBoolArg("-debug", false));
 
-    if (!CheckDataDirOption(gArgs)) {
-        tfm::format(std::cerr,
-                    "Error: Specified data directory \"%s\" does not exist.\n",
-                    gArgs.GetArg("-datadir", ""));
+    if (!fs::is_directory(GetDataDir(false))) {
+        std::fprintf(stderr,
+                     "Error: Specified data directory \"%s\" does not exist.\n",
+                     gArgs.GetArg("-datadir", "").c_str());
         return false;
     }
     // Check for -testnet or -regtest parameter (Params() calls are only valid
@@ -101,7 +91,7 @@ static bool WalletAppInit(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
 #ifdef WIN32
-    common::WinCmdLineArgs winArgs;
+    util::WinCmdLineArgs winArgs;
     std::tie(argc, argv) = winArgs.get();
 #endif
     SetupEnvironment();
@@ -122,10 +112,10 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; ++i) {
         if (!IsSwitchChar(argv[i][0])) {
             if (!method.empty()) {
-                tfm::format(std::cerr,
-                            "Error: two methods provided (%s and %s). Only one "
-                            "method should be provided.\n",
-                            method, argv[i]);
+                std::fprintf(stderr,
+                             "Error: two methods provided (%s and %s). Only one "
+                             "method should be provided.\n",
+                             method.c_str(), argv[i]);
                 return EXIT_FAILURE;
             }
             method = argv[i];
@@ -133,17 +123,14 @@ int main(int argc, char *argv[]) {
     }
 
     if (method.empty()) {
-        tfm::format(std::cerr,
-                    "No method provided. Run `bitcoin-wallet -help` for "
-                    "valid methods.\n");
+        std::fprintf(stderr, "No method provided. Run `bitcoin-wallet -help` for "
+                     "valid methods.\n");
         return EXIT_FAILURE;
     }
 
     // A name must be provided when creating a file
     if (method == "create" && !gArgs.IsArgSet("-wallet")) {
-        tfm::format(
-            std::cerr,
-            "Wallet name must be provided when creating a new wallet.\n");
+        std::fprintf(stderr, "Wallet name must be provided when creating a new wallet.\n");
         return EXIT_FAILURE;
     }
 
@@ -151,9 +138,9 @@ int main(int argc, char *argv[]) {
 
     ECCVerifyHandle globalVerifyHandle;
     ECC_Start();
+    Defer eccStopper([&]{ ECC_Stop(); });
     if (!WalletTool::ExecuteWalletToolFunc(method, name)) {
         return EXIT_FAILURE;
     }
-    ECC_Stop();
     return EXIT_SUCCESS;
 }

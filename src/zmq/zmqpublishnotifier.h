@@ -1,21 +1,18 @@
 // Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_ZMQ_ZMQPUBLISHNOTIFIER_H
-#define BITCOIN_ZMQ_ZMQPUBLISHNOTIFIER_H
+#pragma once
 
 #include <zmq/zmqabstractnotifier.h>
 
-#include <functional>
-
-class CBlock;
 class CBlockIndex;
 
 class CZMQAbstractPublishNotifier : public CZMQAbstractNotifier {
 private:
     //! upcounting per message sequence number
-    uint32_t nSequence{0U};
+    uint32_t nSequence;
 
 public:
     /* send zmq multipart message
@@ -41,14 +38,7 @@ public:
 };
 
 class CZMQPublishRawBlockNotifier : public CZMQAbstractPublishNotifier {
-private:
-    const std::function<bool(CBlock &, const CBlockIndex &)>
-        m_get_block_by_index;
-
 public:
-    CZMQPublishRawBlockNotifier(
-        std::function<bool(CBlock &, const CBlockIndex &)> get_block_by_index)
-        : m_get_block_by_index{std::move(get_block_by_index)} {}
     bool NotifyBlock(const CBlockIndex *pindex) override;
 };
 
@@ -57,14 +47,13 @@ public:
     bool NotifyTransaction(const CTransaction &transaction) override;
 };
 
-class CZMQPublishSequenceNotifier : public CZMQAbstractPublishNotifier {
+
+class CZMQPublishHashDoubleSpendNotifier : public CZMQAbstractPublishNotifier {
 public:
-    bool NotifyBlockConnect(const CBlockIndex *pindex) override;
-    bool NotifyBlockDisconnect(const CBlockIndex *pindex) override;
-    bool NotifyTransactionAcceptance(const CTransaction &transaction,
-                                     uint64_t mempool_sequence) override;
-    bool NotifyTransactionRemoval(const CTransaction &transaction,
-                                  uint64_t mempool_sequence) override;
+    bool NotifyDoubleSpend(const CTransaction &transaction) override;
 };
 
-#endif // BITCOIN_ZMQ_ZMQPUBLISHNOTIFIER_H
+class CZMQPublishRawDoubleSpendNotifier : public CZMQAbstractPublishNotifier {
+public:
+    bool NotifyDoubleSpend(const CTransaction &transaction) override;
+};

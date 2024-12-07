@@ -1,12 +1,9 @@
 // Copyright (c) 2009-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CLIENTVERSION_H
-#define BITCOIN_CLIENTVERSION_H
-
-#include <util/macros.h>
+#pragma once
 
 #if defined(HAVE_CONFIG_H)
 #include <config/bitcoin-config.h>
@@ -19,6 +16,14 @@
     !defined(CLIENT_VERSION_IS_RELEASE)
 #error Client version information missing: version is not defined by bitcoin-config.h nor defined any other way
 #endif
+
+/**
+ * Converts the parameter X to a string after macro replacement on X has been
+ * performed.
+ * Don't merge these into one macro!
+ */
+#define STRINGIZE(X) DO_STRINGIZE(X)
+#define DO_STRINGIZE(X) #X
 
 //! Copyright string used in Windows .rc files
 #define COPYRIGHT_STR                                                          \
@@ -39,19 +44,13 @@ static constexpr int CLIENT_VERSION = 1000000 * CLIENT_VERSION_MAJOR +
                                       10000 * CLIENT_VERSION_MINOR +
                                       100 * CLIENT_VERSION_REVISION;
 
+static constexpr int CLIENT_VERSION_ABLA_BLOCKINDEX_DATA = 26010100;
+
 extern const std::string CLIENT_NAME;
 extern const std::string CLIENT_BUILD;
 
-std::string FormatVersion(int nVersion);
 std::string FormatFullVersion();
-std::string FormatUserAgent(const std::string &name, const std::string &version,
-                            const std::vector<std::string> &comments);
-
-std::string CopyrightHolders(const std::string &strPrefix);
-
-/** Returns licensing information (for -version) */
-std::string LicenseInfo();
+std::string FormatSubVersion(const std::string &name, int nClientVersion,
+                             const std::vector<std::string> &comments);
 
 #endif // WINDRES_PREPROC
-
-#endif // BITCOIN_CLIENTVERSION_H

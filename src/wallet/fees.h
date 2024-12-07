@@ -1,13 +1,12 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2017 The Bitcoin Core developers
-// Copyright (c) 2018-2020 The Bitcoin developers
+// Copyright (c) 2018-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_WALLET_FEES_H
-#define BITCOIN_WALLET_FEES_H
+#pragma once
 
-#include <consensus/amount.h>
+#include <amount.h>
 #include <feerate.h>
 
 class CCoinControl;
@@ -25,7 +24,7 @@ Amount GetRequiredFee(const CWallet &wallet, unsigned int nTxBytes);
  * and the required fee
  */
 Amount GetMinimumFee(const CWallet &wallet, unsigned int nTxBytes,
-                     const CCoinControl &coin_control);
+                     const CCoinControl &coin_control, const CTxMemPool &pool);
 
 /**
  * Return the minimum required feerate taking into account the
@@ -38,6 +37,5 @@ CFeeRate GetRequiredFeeRate(const CWallet &wallet);
  * and the required fee
  */
 CFeeRate GetMinimumFeeRate(const CWallet &wallet,
-                           const CCoinControl &coin_control);
-
-#endif // BITCOIN_WALLET_FEES_H
+                           const CCoinControl &coin_control,
+                           const CTxMemPool &pool);

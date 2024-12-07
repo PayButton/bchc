@@ -4,9 +4,6 @@ export LC_ALL=C
 
 set -euxo pipefail
 
-# Do not leave any dangling subprocesses when this script exits
-trap "kill 0" SIGINT
-
 TOPLEVEL=$(git rev-parse --show-toplevel)
 DEFAULT_BITCOIND="${TOPLEVEL}/build/src/bitcoind"
 DEFAULT_LOG_FILE=~/".bitcoin/debug.log"
@@ -77,40 +74,25 @@ if [ -z "${GREP_PATTERN}" ]; then
   echo "Error: A grep pattern was not specified."
   echo ""
   help_message
-  exit 2
+  exit 1
 fi
 
 # Make sure the debug log exists so that tail does not fail
 touch "${LOG_FILE}"
 
 # Launch bitcoind using custom parameters
-read -a BITCOIND_PARAMS <<< "${BITCOIND_PARAMS}"
-
-BITCOIND_PID_FILE=/tmp/bitcoind-exit-on-log.pid
-# Make sure the PID file doesn't already exist for some reason
-rm -f "${BITCOIND_PID_FILE}"
-BITCOIND_PARAMS+=("-pid=${BITCOIND_PID_FILE}")
-BITCOIND_PARAMS+=("-daemon")
-
+read -ar BITCOIND_PARAMS <<< "${BITCOIND_PARAMS}"
 START_TIME=$(date +%s)
-"${BITCOIND}" "${BITCOIND_PARAMS[@]}"
-
-# The PID file will not exist immediately, so wait for it
-PID_WAIT_COUNT=0
-while [ ! -e "${BITCOIND_PID_FILE}" ]; do
-  ((PID_WAIT_COUNT+=1))
-  if [ "${PID_WAIT_COUNT}" -gt 10 ]; then
-    echo "Timed out waiting for bitcoind PID file"
-    exit 10
-  fi
-  sleep 0.5
-done
-BITCOIND_PID=$(cat "${BITCOIND_PID_FILE}")
+if [ "${#BITCOIND_PARAMS[@]}" -gt 0 ]; then
+  "${BITCOIND}" "${BITCOIND_PARAMS[@]}" &
+else
+  "${BITCOIND}" &
+fi
+BITCOIND_PID=$!
 
 # Wait for log checking to finish and kill the daemon
 (
   # When this subshell finishes, kill bitcoind
-  # shellcheck disable=SC2317
   log_subshell_cleanup() {
     echo "Cleaning up bitcoin daemon (PID: ${BITCOIND_PID})."
     kill ${BITCOIND_PID}
@@ -137,18 +119,15 @@ BITCOIND_PID=$(cat "${BITCOIND_PID_FILE}")
 LOG_PID=$!
 
 # Wait for bitcoind to exit, whether it exited on its own or the log subshell finished
-set +x
-while [ -e "${BITCOIND_PID_FILE}" ]; do sleep 0.5; done
-set -x
+wait ${BITCOIND_PID}
+BITCOIND_EXIT_CODE=$?
 
-# If the log subshell is still running, then GREP_PATTERN was not found
-if [ -e /proc/${LOG_PID} ]; then
-  echo "bitcoind exited unexpectedly. See '${LOG_FILE}' for details."
-  exit 20
+if [ "${BITCOIND_EXIT_CODE}" -ne "0" ]; then
+  echo "bitcoind exited unexpectedly with code: ${BITCOIND_EXIT_CODE}"
+  exit ${BITCOIND_EXIT_CODE}
 fi
 
 # Get the exit code for the log subshell, which should have exited already
-# if GREP_PATTERN was found
 wait ${LOG_PID}
 LOG_EXIT_CODE=$?
 

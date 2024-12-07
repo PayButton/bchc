@@ -2,12 +2,13 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blockindex.h>
+#include <chain.h>
 #include <chronik-cpp/util/hash.h>
 #include <chronik_lib/src/ffi.rs.h>
 #include <node/context.h>
 #include <primitives/block.h>
 #include <txmempool.h>
+#include <validation.h>
 #include <validationinterface.h>
 
 namespace chronik {
@@ -17,7 +18,7 @@ namespace chronik {
  */
 class ChronikValidationInterface final : public CValidationInterface {
 public:
-    ChronikValidationInterface(const node::NodeContext &node,
+    ChronikValidationInterface(const NodeContext &node,
                                rust::Box<chronik_bridge::Chronik> chronik_box)
         : m_node(node), m_chronik(std::move(chronik_box)) {}
 
@@ -27,28 +28,33 @@ public:
 
 private:
     rust::Box<chronik_bridge::Chronik> m_chronik;
-    const node::NodeContext &m_node;
+    const NodeContext &m_node;
 
     void TransactionAddedToMempool(
         const CTransactionRef &ptx,
-        std::shared_ptr<const std::vector<Coin>> spent_coins,
-        uint64_t mempool_sequence) override {
-        const TxMempoolInfo info = m_node.mempool->info(ptx->GetId());
-        m_chronik->handle_tx_added_to_mempool(*ptx, *spent_coins,
-                                              info.m_time.count());
+        std::shared_ptr<const std::vector<Coin>> spent_coins/*,
+        uint64_t mempool_sequence*/) override {
+        const TxMempoolInfo info = g_mempool.info(ptx->GetId());
+        m_chronik->handle_tx_added_to_mempool(*ptx, *spent_coins, info.nTime);
     }
 
-    void TransactionRemovedFromMempool(const CTransactionRef &ptx,
+    void TransactionRemovedFromMempool(const CTransactionRef &ptx/*,
                                        MemPoolRemovalReason reason,
-                                       uint64_t mempool_sequence) override {
+                                       uint64_t mempool_sequence*/) override {
         m_chronik->handle_tx_removed_from_mempool(
             chronik::util::HashToArray(ptx->GetId()));
     }
 
-    void BlockConnected(const std::shared_ptr<const CBlock> &block,
-                        const CBlockIndex *pindex) override {
+    void
+    BlockConnected(const std::shared_ptr<const CBlock> &block,
+                   const CBlockIndex *pindex,
+                   const std::vector<CTransactionRef> &txnConflicted) override {
         // We can safely pass T& here as Rust guarantees us that no references
         // can be kept after the below function call completed.
+        for (const CTransactionRef &ptx : txnConflicted) {
+            m_chronik->handle_tx_removed_from_mempool(
+                chronik::util::HashToArray(ptx->GetId()));
+        }
         m_chronik->handle_block_connected(*block, *pindex);
     }
 
@@ -58,16 +64,21 @@ private:
         m_chronik->handle_block_disconnected(*block, *pindex);
     }
 
-    void BlockFinalized(const CBlockIndex *pindex) override {
+    /*void BlockFinalized(const CBlockIndex *pindex) override {
         m_chronik->handle_block_finalized(*pindex);
     }
+
+    void BlockInvalidated(const CBlockIndex *pindex,
+                          const std::shared_ptr<const CBlock> &block) override {
+        m_chronik->handle_block_invalidated(*block, *pindex);
+    }
+    }*/
 };
 
 std::unique_ptr<ChronikValidationInterface> g_chronik_validation_interface;
 
 void StartChronikValidationInterface(
-    const node::NodeContext &node,
-    rust::Box<chronik_bridge::Chronik> chronik_box) {
+    const NodeContext &node, rust::Box<chronik_bridge::Chronik> chronik_box) {
     g_chronik_validation_interface =
         std::make_unique<ChronikValidationInterface>(node,
                                                      std::move(chronik_box));

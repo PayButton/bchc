@@ -1,26 +1,25 @@
 // Copyright (c) 2018 The Bitcoin Core developers
+// Copyright (c) 2020-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <wallet/bdb.h>
+#include <wallet/db.h>
 
-#include <util/fs.h>
+#include <fs.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
-#include <fstream>
 #include <memory>
-#include <string>
 
 BOOST_FIXTURE_TEST_SUITE(db_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(getwalletenv_file) {
     std::string test_name = "test_name.dat";
-    const fs::path datadir = gArgs.GetDataDirNet();
+    fs::path datadir = SetDataDir("tempdir");
     fs::path file_path = datadir / test_name;
-    std::ofstream f{file_path};
+    std::ofstream f(file_path.string());
     f.close();
 
     std::string filename;
@@ -32,7 +31,7 @@ BOOST_AUTO_TEST_CASE(getwalletenv_file) {
 
 BOOST_AUTO_TEST_CASE(getwalletenv_directory) {
     std::string expected_name = "wallet.dat";
-    const fs::path datadir = gArgs.GetDataDirNet();
+    fs::path datadir = SetDataDir("tempdir");
 
     std::string filename;
     std::shared_ptr<BerkeleyEnvironment> env = GetWalletEnv(datadir, filename);
@@ -41,8 +40,8 @@ BOOST_AUTO_TEST_CASE(getwalletenv_directory) {
 }
 
 BOOST_AUTO_TEST_CASE(getwalletenv_g_dbenvs_multiple) {
-    fs::path datadir = gArgs.GetDataDirNet() / "1";
-    fs::path datadir_2 = gArgs.GetDataDirNet() / "2";
+    fs::path datadir = SetDataDir("tempdir");
+    fs::path datadir_2 = SetDataDir("tempdir_2");
     std::string filename;
 
     std::shared_ptr<BerkeleyEnvironment> env_1 =
@@ -57,8 +56,8 @@ BOOST_AUTO_TEST_CASE(getwalletenv_g_dbenvs_multiple) {
 }
 
 BOOST_AUTO_TEST_CASE(getwalletenv_g_dbenvs_free_instance) {
-    fs::path datadir = gArgs.GetDataDirNet() / "1";
-    fs::path datadir_2 = gArgs.GetDataDirNet() / "2";
+    fs::path datadir = SetDataDir("tempdir");
+    fs::path datadir_2 = SetDataDir("tempdir_2");
     std::string filename;
 
     std::shared_ptr<BerkeleyEnvironment> env_1_a =

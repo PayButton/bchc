@@ -1,14 +1,18 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2022 The Bitcoin Cash Node developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_WALLETVIEW_H
-#define BITCOIN_QT_WALLETVIEW_H
+#pragma once
 
-#include <consensus/amount.h>
+#include <amount.h>
+#include <dsproof/dspid.h>
+#include <primitives/txid.h>
 
 #include <QStackedWidget>
 
+class BitcoinGUI;
 class ClientModel;
 class OverviewPage;
 class PlatformStyle;
@@ -39,6 +43,7 @@ public:
                QWidget *parent);
     ~WalletView();
 
+    void setBitcoinGUI(BitcoinGUI *gui);
     /**
      * Set the client model.
      * The client model represents the part of the core that communicates with
@@ -57,6 +62,8 @@ public:
 
     void showOutOfSyncWarning(bool fShow);
 
+    void transactionDoubleSpent(const TxId txId, const DspId dsp);
+
 private:
     ClientModel *clientModel;
     WalletModel *walletModel;
@@ -70,7 +77,7 @@ private:
 
     TransactionView *transactionView;
 
-    QProgressDialog *progressDialog{nullptr};
+    QProgressDialog *progressDialog;
     const PlatformStyle *platformStyle;
 
 public Q_SLOTS:
@@ -87,8 +94,6 @@ public Q_SLOTS:
     void gotoSignMessageTab(QString addr = "");
     /** Show Sign/Verify Message dialog and switch to verify message tab */
     void gotoVerifyMessageTab(QString addr = "");
-    /** Load Partially Signed Bitcoin Transaction */
-    void gotoLoadPSBT();
 
     /**
      * Show incoming transaction notification for new transactions.
@@ -98,7 +103,7 @@ public Q_SLOTS:
      */
     void processNewTransaction(const QModelIndex &parent, int start, int end);
     /** Encrypt the wallet */
-    void encryptWallet();
+    void encryptWallet(bool status);
     /** Backup the wallet */
     void backupWallet();
     /** Change encrypted wallet passphrase */
@@ -121,9 +126,8 @@ public Q_SLOTS:
     void requestedSyncWarningInfo();
 
 Q_SIGNALS:
-    void setPrivacy(bool privacy);
-    void transactionClicked();
-    void coinsSent();
+    /** Signal that we want to show the main window */
+    void showNormalIfMinimized();
     /**  Fired when a message should be reported to the user */
     void message(const QString &title, const QString &message,
                  unsigned int style);
@@ -138,5 +142,3 @@ Q_SIGNALS:
     /** Notify that the out of sync warning icon has been pressed */
     void outOfSyncWarningClicked();
 };
-
-#endif // BITCOIN_QT_WALLETVIEW_H

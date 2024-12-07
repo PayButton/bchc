@@ -1,9 +1,8 @@
-// Copyright (c) 2018 The Bitcoin developers
+// Copyright (c) 2018-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_BLOCKVALIDITY_H
-#define BITCOIN_BLOCKVALIDITY_H
+#pragma once
 
 #include <cstdint>
 
@@ -14,9 +13,10 @@ enum class BlockValidity : uint32_t {
     UNKNOWN = 0,
 
     /**
-     * Reserved (was HEADER).
+     * Parsed, version ok, hash satisfies claimed PoW, 1 <= vtx count <= max,
+     * timestamp not in future.
      */
-    RESERVED = 1,
+    HEADER = 1,
 
     /**
      * All parent headers found, difficulty matches, timestamp >= median
@@ -28,8 +28,8 @@ enum class BlockValidity : uint32_t {
      * Only first tx is coinbase, 2 <= coinbase input script length <= 100,
      * transactions valid, no duplicate txids, size, merkle root.
      * Implies all parents are at least TREE but not necessarily TRANSACTIONS.
-     * When all parent blocks also have TRANSACTIONS, CBlockIndex::nChainTx and
-     * CBlockIndex::nChainSize will be set.
+     * When all parent blocks also have TRANSACTIONS, CBlockIndex::nChainTx will
+     * be set.
      */
     TRANSACTIONS = 3,
 
@@ -45,5 +45,3 @@ enum class BlockValidity : uint32_t {
      */
     SCRIPTS = 5,
 };
-
-#endif // BITCOIN_BLOCKVALIDITY_H

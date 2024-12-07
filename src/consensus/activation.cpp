@@ -1,14 +1,14 @@
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <consensus/activation.h>
 
 #include <chain.h>
-#include <common/args.h>
 #include <consensus/params.h>
+#include <util/system.h>
 
-bool IsUAHFenabled(const Consensus::Params &params, int nHeight) {
+static bool IsUAHFenabled(const Consensus::Params &params, int nHeight) {
     return nHeight >= params.uahfHeight;
 }
 
@@ -21,7 +21,7 @@ bool IsUAHFenabled(const Consensus::Params &params,
     return IsUAHFenabled(params, pindexPrev->nHeight);
 }
 
-bool IsDAAEnabled(const Consensus::Params &params, int nHeight) {
+static bool IsDAAEnabled(const Consensus::Params &params, int nHeight) {
     return nHeight >= params.daaHeight;
 }
 
@@ -75,56 +75,86 @@ bool IsPhononEnabled(const Consensus::Params &params,
     return IsPhononEnabled(params, pindexPrev->nHeight);
 }
 
-static bool IsAxionEnabled(const Consensus::Params &params, int32_t nHeight) {
-    return nHeight >= params.axionHeight;
-}
-
 bool IsAxionEnabled(const Consensus::Params &params,
                     const CBlockIndex *pindexPrev) {
     if (pindexPrev == nullptr) {
         return false;
     }
 
-    return IsAxionEnabled(params, pindexPrev->nHeight);
+    if (params.asertAnchorParams) {
+        // This chain has a checkpointed anchor block, do simple height check
+        return pindexPrev->nHeight >= params.asertAnchorParams->nHeight;
+    }
+
+    // Otherwise, do the MTP check
+    return pindexPrev->GetMedianTimePast() >=
+           gArgs.GetArg("-axionactivationtime", params.axionActivationTime);
 }
 
-bool IsWellingtonEnabled(const Consensus::Params &params, int32_t nHeight) {
-    return nHeight >= params.wellingtonHeight;
-}
-
-bool IsWellingtonEnabled(const Consensus::Params &params,
-                         const CBlockIndex *pindexPrev) {
+bool IsUpgrade8Enabled(const Consensus::Params &params, const CBlockIndex *pindexPrev) {
     if (pindexPrev == nullptr) {
         return false;
     }
 
-    return IsWellingtonEnabled(params, pindexPrev->nHeight);
+    return pindexPrev->nHeight >= params.upgrade8Height;
 }
 
-bool IsCowperthwaiteEnabled(const Consensus::Params &params, int32_t nHeight) {
-    return nHeight >= params.cowperthwaiteHeight;
+std::optional<int32_t> g_Upgrade9HeightOverride;
+
+int32_t GetUpgrade9ActivationHeight(const Consensus::Params &params) {
+    return g_Upgrade9HeightOverride.value_or(params.upgrade9Height);
 }
 
-bool IsCowperthwaiteEnabled(const Consensus::Params &params,
-                            const CBlockIndex *pindexPrev) {
+bool IsUpgrade9EnabledForHeightPrev(const Consensus::Params &params, const int32_t nHeightPrev) {
+    return nHeightPrev >= GetUpgrade9ActivationHeight(params);
+}
+
+bool IsUpgrade9Enabled(const Consensus::Params &params, const CBlockIndex *pindexPrev) {
     if (pindexPrev == nullptr) {
         return false;
     }
 
-    return IsCowperthwaiteEnabled(params, pindexPrev->nHeight);
+    return IsUpgrade9EnabledForHeightPrev(params, pindexPrev->nHeight);
 }
 
-bool IsAugustoEnabled(const Consensus::Params &params,
-                      int64_t nMedianTimePast) {
-    return nMedianTimePast >= gArgs.GetIntArg("-augustoactivationtime",
-                                              params.augustoActivationTime);
+std::optional<int32_t> g_Upgrade10HeightOverride;
+
+int32_t GetUpgrade10ActivationHeight(const Consensus::Params &params) {
+    return g_Upgrade10HeightOverride.value_or(params.upgrade10Height);
 }
 
-bool IsAugustoEnabled(const Consensus::Params &params,
-                      const CBlockIndex *pindexPrev) {
+static bool IsUpgrade10EnabledForHeightPrev(const Consensus::Params &params, const int32_t nHeightPrev) {
+    return nHeightPrev >= GetUpgrade10ActivationHeight(params);
+}
+
+bool IsUpgrade10Enabled(const Consensus::Params &params, const CBlockIndex *pindexPrev) {
     if (pindexPrev == nullptr) {
         return false;
     }
 
-    return IsAugustoEnabled(params, pindexPrev->GetMedianTimePast());
+    return IsUpgrade10EnabledForHeightPrev(params, pindexPrev->nHeight);
+}
+
+static bool IsUpgrade11Enabled(const Consensus::Params &params, const int64_t nMedianTimePast) {
+    return nMedianTimePast >= gArgs.GetArg("-upgrade11activationtime", params.upgrade11ActivationTime);
+}
+
+bool IsUpgrade11Enabled(const Consensus::Params &params, const CBlockIndex *pindexPrev) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+
+    return IsUpgrade11Enabled(params, pindexPrev->GetMedianTimePast());
+}
+
+static bool IsUpgrade12Enabled(const Consensus::Params &params, const int64_t nMedianTimePast) {
+    return nMedianTimePast >= gArgs.GetArg("-upgrade12activationtime", params.upgrade12ActivationTime);
+}
+
+bool IsUpgrade12Enabled(const Consensus::Params &params, const CBlockIndex *pindexPrev) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+
+    return IsUpgrade12Enabled(params, pindexPrev->GetMedianTimePast());
 }

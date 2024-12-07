@@ -1,21 +1,16 @@
 // Copyright (c) 2016 Jeremy Rubin
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_CUCKOOCACHE_H
-#define BITCOIN_CUCKOOCACHE_H
+#pragma once
 
-#include <util/fastrange.h>
-
-#include <algorithm> // std::find
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <memory>
-#include <optional>
-#include <utility>
 #include <vector>
 
 /**
@@ -94,7 +89,7 @@ public:
      * ordering) to bit_is_set(s) == true.
      */
     inline void bit_set(uint32_t s) {
-        mem[s >> 3].fetch_or(uint8_t(1 << (s & 7)), std::memory_order_relaxed);
+        mem[s >> 3].fetch_or(1 << (s & 7), std::memory_order_relaxed);
     }
 
     /**
@@ -105,8 +100,7 @@ public:
      * ordering) to bit_is_set(s) == false.
      */
     inline void bit_unset(uint32_t s) {
-        mem[s >> 3].fetch_and(uint8_t(~(1 << (s & 7))),
-                              std::memory_order_relaxed);
+        mem[s >> 3].fetch_and(~(1 << (s & 7)), std::memory_order_relaxed);
     }
 
     /**
@@ -243,8 +237,15 @@ private:
      * compute the constants for exact division based on the size, as described
      * in "{N}-bit Unsigned Division via {N}-bit Multiply-Add" by Arch D.
      * Robison in 2005. But that code is somewhat complicated and the result is
-     * still slower than an even simpler option: see the FastRange32 function in
-     * util/fastrange.h.
+     * still slower than other options:
+     *
+     * Instead we treat the 32-bit random number as a Q32 fixed-point number in
+     * the range [0, 1) and simply multiply it by the size. Then we just shift
+     * the result down by 32-bits to get our bucket number. The result has
+     * non-uniformity the same as a mod, but it is much faster to compute. More
+     * about this technique can be found at
+     *  http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+     * .
      *
      * The resulting non-uniformity is also more equally distributed which would
      * be advantageous for something like linear probing, though it shouldn't
@@ -255,19 +256,35 @@ private:
      * high 32 bits of a 32*32->64 multiply, which means the operation is
      * reasonably fast even on a typical 32-bit processor.
      *
-     * @param k The element whose hashes will be returned
-     * @returns Deterministic hashes derived from `k` uniformly mapped onto the
+     * @param e The element whose hashes will be returned
+     * @returns Deterministic hashes derived from `e` uniformly mapped onto the
      * range [0, size)
      */
     inline std::array<uint32_t, 8> compute_hashes(const Key &k) const {
-        return {{FastRange32(hash_function.template operator()<0>(k), size),
-                 FastRange32(hash_function.template operator()<1>(k), size),
-                 FastRange32(hash_function.template operator()<2>(k), size),
-                 FastRange32(hash_function.template operator()<3>(k), size),
-                 FastRange32(hash_function.template operator()<4>(k), size),
-                 FastRange32(hash_function.template operator()<5>(k), size),
-                 FastRange32(hash_function.template operator()<6>(k), size),
-                 FastRange32(hash_function.template operator()<7>(k), size)}};
+        return {{uint32_t(uint64_t(hash_function.template operator()<0>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<1>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<2>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<3>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<4>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<5>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<6>(k)) *
+                              uint64_t(size) >>
+                          32),
+                 uint32_t(uint64_t(hash_function.template operator()<7>(k)) *
+                              uint64_t(size) >>
+                          32)}};
     }
 
     /**
@@ -349,7 +366,7 @@ public:
 
     /**
      * setup initializes the container to store no more than new_size
-     * elements and no less than 2 elements.
+     * elements.
      *
      * setup should only be called once.
      *
@@ -358,8 +375,9 @@ public:
      */
     uint32_t setup(uint32_t new_size) {
         // depth_limit must be at least one otherwise errors can occur.
+        depth_limit = static_cast<uint8_t>(
+            std::log2(static_cast<float>(std::max((uint32_t)2, new_size))));
         size = std::max<uint32_t>(2, new_size);
-        depth_limit = static_cast<uint8_t>(std::log2(static_cast<float>(size)));
         table.resize(size);
         collection_flags.setup(size);
         epoch_flags.resize(size);
@@ -380,20 +398,11 @@ public:
      *
      * @param bytes the approximate number of bytes to use for this data
      * structure
-     * @returns A pair of the maximum number of elements storable (see setup()
-     * documentation for more detail) and the approxmiate total size of these
-     * elements in bytes or std::nullopt if the size requested is too large.
+     * @returns the maximum number of elements storable (see setup()
+     * documentation for more detail)
      */
-    std::optional<std::pair<uint32_t, size_t>> setup_bytes(size_t bytes) {
-        size_t requested_num_elems = bytes / sizeof(Element);
-        if (std::numeric_limits<uint32_t>::max() < requested_num_elems) {
-            return std::nullopt;
-        }
-
-        auto num_elems = setup(bytes / sizeof(Element));
-
-        size_t approx_size_bytes = num_elems * sizeof(Element);
-        return std::make_pair(num_elems, approx_size_bytes);
+    uint32_t setup_bytes(size_t bytes) {
+        return setup(bytes / sizeof(Element));
     }
 
     /**
@@ -413,9 +422,9 @@ public:
      *
      * is not guaranteed to return true.
      *
-     * @param e  The element to insert
-     * @param replace  Whether to replace if an existing element with the same
-     *                 key is found.
+     * @param e the element to insert
+     * @param weither to replace if an existing element with the same key is
+     * found.
      * @post one of the following: All previously inserted elements and e are
      * now in the table, one previously inserted element is evicted from the
      * table, the entry attempted to be inserted is evicted. If replace is true
@@ -516,8 +525,8 @@ public:
      * obtains the found element (for Elements that contain key and value,
      * this has the effect of obtaining the found value).
      *
-     * @param e The element to check
-     * @param erase Whether to attempt setting the garbage collect flag
+     * @param e the element to check
+     * @param erase
      *
      * @post If the element is found, it is copied into e. If erase is true
      * and the element is found, then the garbage collect flag is set.
@@ -563,5 +572,3 @@ template <typename T> struct KeyOnly : public T {
 };
 
 } // namespace CuckooCache
-
-#endif // BITCOIN_CUCKOOCACHE_H

@@ -1,22 +1,36 @@
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SEEDER_BITCOIN_H
-#define BITCOIN_SEEDER_BITCOIN_H
+#pragma once
 
 #include <chainparams.h>
+#include <compat.h>
 #include <protocol.h>
 #include <streams.h>
-#include <util/time.h>
 
-#include <chrono>
-#include <cstdint>
 #include <string>
 #include <vector>
 
-static inline uint16_t GetDefaultPort() {
+static inline unsigned short GetDefaultPort() {
     return Params().GetDefaultPort();
+}
+
+// Returns a pointer to the latest checkpoint, or nullptr if the selected network lacks checkpoints
+static inline const std::pair<const int, BlockHash> *GetCheckpoint() {
+    const auto &mapCheckpoints = Params().Checkpoints().mapCheckpoints;
+    if (!mapCheckpoints.empty()) {
+        return &*mapCheckpoints.rbegin();
+    }
+    return nullptr;
+}
+
+// If we have a checkpoint, returns its height, otherwise returns 0.
+static inline int GetRequireHeight() {
+    if (auto *pair = GetCheckpoint()) {
+        return pair->first;
+    }
+    return 0;
 }
 
 // After the 1000th addr, the seeder will only add one more address per addr
@@ -28,29 +42,24 @@ enum class PeerMessagingState {
     Finished,
 };
 
-class Sock;
-
-namespace {
-class CSeederNodeTest;
-}
-
 class CSeederNode {
-    friend class ::CSeederNodeTest;
-
-private:
-    std::unique_ptr<Sock> sock;
+protected:
+    SOCKET sock;
     CDataStream vSend;
     CDataStream vRecv;
-    int nVersion{0};
+    uint32_t nHeaderStart;
+    uint32_t nMessageStart;
+    int nVersion;
     std::string strSubVer;
-    int nStartingHeight{0};
+    int nStartingHeight;
     std::vector<CAddress> *vAddr;
-    int ban{0};
-    NodeSeconds doneAfter{NodeSeconds{0s}};
-    CService you;
-    ServiceFlags yourServices{ServiceFlags(NODE_NETWORK)};
+    int ban;
+    int64_t doneAfter;
+    CAddress you;
+    bool checkpointVerified;
+    bool needAddrReply = false;
 
-    std::chrono::seconds GetTimeout() { return you.IsTor() ? 120s : 30s; }
+    int GetTimeout() const { return you.IsTor() ? 120 : 30; }
 
     void BeginMessage(const char *pszCommand);
 
@@ -64,24 +73,27 @@ private:
 
     bool ProcessMessages();
 
-protected:
-    PeerMessagingState ProcessMessage(std::string strCommand,
+    PeerMessagingState ProcessMessage(const std::string &msg_type,
                                       CDataStream &recv);
 
 public:
     CSeederNode(const CService &ip, std::vector<CAddress> *vAddrIn);
+    ~CSeederNode();
 
     bool Run();
 
-    int GetBan() { return ban; }
+    int GetBan() const { return ban; }
 
-    int GetClientVersion() { return nVersion; }
+    int GetClientVersion() const { return nVersion; }
 
-    std::string GetClientSubVersion() { return strSubVer; }
+    const std::string & GetClientSubVersion() const { return strSubVer; }
 
-    int GetStartingHeight() { return nStartingHeight; }
+    int GetStartingHeight() const { return nStartingHeight; }
 
-    uint64_t GetServices() { return yourServices; }
+    ServiceFlags GetServices() const { return you.nServices; }
+
+    bool IsCheckpointVerified() const { return checkpointVerified; }
 };
 
-#endif // BITCOIN_SEEDER_BITCOIN_H
+bool TestNode(const CService &cip, int &ban, int &client, std::string &clientSV,
+              int &blocks, std::vector<CAddress> *vAddr, ServiceFlags &services, bool &checkpointVerified);

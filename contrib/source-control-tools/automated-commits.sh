@@ -8,94 +8,119 @@ export LC_ALL=C.UTF-8
 
 set -euxo pipefail
 
+DEFAULT_PARENT_COMMIT="origin/master"
+
 help_message() {
-  cat <<EOF
-$0 [options] [script] [script_args...]
-Generate a commit from available recipes.
-
-The given script may produce a commit. If a commit is generated this way, it will be landed.
-
-Options:
-  -h, --help                Display this help message.
-
-Environment Variables:
-  DRY_RUN                   If set to 'no', this script will push the generated changes upstream. Default: 'yes'
-EOF
+  set +x
+  echo "Generate a commit from available recipes."
+  echo
+  echo "Options:"
+  echo "-p, --parent              The parent commit to build ontop of. Default: '${DEFAULT_PARENT_COMMIT}'"
+  echo "                            Note: This should only be used for testing since the behavior of setting"
+  echo "                            this to a particular commit varies slightly from the default."
+  echo "-h, --help                Display this help message."
+  echo
+  echo "Environment Variables:"
+  echo "COMMIT_TYPE               (required) The commit recipe to run."
+  echo "DRY_RUN                   If set to 'no', this script will push the generated changes upstream. Default: 'yes'"
+  set -x
 }
 
-SCRIPT=""
-SCRIPT_ARGS=()
+PARENT_COMMIT="${DEFAULT_PARENT_COMMIT}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
 case $1 in
+  -p|--parent)
+    PARENT_COMMIT=$(git rev-parse "$2")
+    shift # shift past argument
+    shift # shift past value
+    ;;
   -h|--help)
     help_message
     exit 0
     ;;
   *)
-    SCRIPT="$1"
-    shift
-    SCRIPT_ARGS=("$@")
-    break
+    echo "Unknown argument: $1"
+    help_message
+    exit 1
     ;;
 esac
 done
 
-LAND_PATCH_ARGS=()
+: "${COMMIT_TYPE:=}"
+if [ -z "${COMMIT_TYPE}" ]; then
+  echo "Error: Environment variable COMMIT_TYPE must be set"
+  exit 2
+fi
+
+GIT_PUSH_OPTIONS=("--verbose")
 case ${DRY_RUN:=yes} in
   no|NO|false|FALSE)
-    # Nothing to do
+    if [ "${PARENT_COMMIT}" != "${DEFAULT_PARENT_COMMIT}" ]; then
+      echo "Error: Running with DRY_RUN=no on a commit parent other than '${DEFAULT_PARENT_COMMIT}'"
+      exit 3
+    fi
     ;;
   *)
-    LAND_PATCH_ARGS+=("--dry-run")
+    GIT_PUSH_OPTIONS+=("--dry-run")
     ;;
 esac
 
-OLD_HEAD="$(git rev-parse HEAD)"
+echo "Building automated commit '${COMMIT_TYPE}'..."
 
-echo "Building automated commit using '${SCRIPT}'..."
-
+BOT_PREFIX="[Automated]"
 TOPLEVEL=$(git rev-parse --show-toplevel)
 
-BUILD_DIR="${TOPLEVEL}/abc-ci-builds/automated-commit-$(basename ${SCRIPT})"
-mkdir -p "${BUILD_DIR}"
-export BUILD_DIR
+CHAINPARAMS_SCRIPTS_DIR="${TOPLEVEL}"/contrib/devtools/chainparams
 
 # Make sure tree is clean
-if [ -n "$(git status --porcelain)" ]; then
-  echo "Error: The source tree has unexpected changes. Clean up any changes (try 'git stash') and try again."
-  exit 10
+git checkout master
+git reset --hard "${PARENT_COMMIT}"
+
+case "${COMMIT_TYPE}" in
+  update-chainparams)
+    # Assumes bitcoind instances are already running on mainnet and testnet
+    pushd "${CHAINPARAMS_SCRIPTS_DIR}"
+    CHAINPARAMS_MAINNET_TXT="chainparams_main.txt"
+    ./make_chainparams.py > "${CHAINPARAMS_MAINNET_TXT}"
+    git add "${CHAINPARAMS_MAINNET_TXT}"
+
+    CHAINPARAMS_TESTNET_TXT="chainparams_test.txt"
+    ./make_chainparams.py -a 127.0.0.1:18332 > "${CHAINPARAMS_TESTNET_TXT}"
+    git add "${CHAINPARAMS_TESTNET_TXT}"
+
+    CHAINPARAMS_CONSTANTS="${TOPLEVEL}"/src/chainparamsconstants.h
+    ./generate_chainparams_constants.py . > "${CHAINPARAMS_CONSTANTS}"
+    git add "${CHAINPARAMS_CONSTANTS}"
+    popd
+
+    git commit -m "${BOT_PREFIX} Update chainparams"
+    ;;
+
+  *)
+    echo "Error: Invalid commit name '${COMMIT_TYPE}'"
+    exit 10
+    ;;
+esac
+
+echo "Sanity checks..."
+
+LINT_OUTPUT=$(arc lint --never-apply-patches)
+LINT_EXIT_CODE=$?
+# If there is more than one line of output, then lint advice lines are likely present.
+# We treat these as errors because code generators should always produce lint-free code.
+LINT_NUM_LINES=$(wc -l <<< "${LINT_OUTPUT}")
+if [ "${LINT_EXIT_CODE}" -ne 0 ] || [ "${LINT_NUM_LINES}" -gt 1 ]; then
+  echo "Error: The linter found issues with the automated commit. Correct the issue in the code generator and try again."
+  exit 20
 fi
 
-if [ ! -f "${SCRIPT}" ]; then
-  echo "Error: '${SCRIPT}' does not exist"
-  exit 10
-fi
+echo "Pushing automated commit '${COMMIT_TYPE}'..."
 
-"${SCRIPT}" "${SCRIPT_ARGS[@]}"
+# Make sure master is up-to-date. If there is a merge conflict, this script
+# will not attempt to resolve it and simply fail.
+git fetch origin master
+git rebase "${PARENT_COMMIT}"
 
-# Bail early if there's nothing to land
-if [ "$(git rev-parse HEAD)" == "${OLD_HEAD}" ]; then
-  echo "No new changes. Nothing to do."
-  exit 0
-fi
-
-# Auto-generated changes. These are amended to the patch rather than landed as
-# their own commit.
-for AUTOGEN_SCRIPT in "${TOPLEVEL}"/contrib/source-control-tools/autogen-recipes/* ; do
-  "${AUTOGEN_SCRIPT}"
-done
-
-echo "The following staged changes will be amended to your patch:"
-git --no-pager diff --cached
-
-# Amend the commit, preserving committer info
-GIT_COMMITTER_EMAIL="$(git show -s --format='%ce')"
-GIT_COMMITTER_NAME="$(git show -s --format='%cn')"
-export GIT_COMMITTER_EMAIL
-export GIT_COMMITTER_NAME
-git commit --amend --no-edit
-
-# Land the generated commit
-"${TOPLEVEL}"/contrib/source-control-tools/land-patch.sh "${LAND_PATCH_ARGS[@]}"
+git push "${GIT_PUSH_OPTIONS[@]}" origin master

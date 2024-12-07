@@ -25,7 +25,7 @@ class ChronikServeTest(BitcoinTestFramework):
             chronik = ChronikClient(
                 ip,
                 port,
-                timeout=DEFAULT_TIMEOUT * self.nodes[0].timeout_factor,
+                timeout=DEFAULT_TIMEOUT,
             )
             response = chronik._request_get("/path/does/not/exist", pb_type=None)
             assert_equal(response.err(404).msg, "404: Not found: /path/does/not/exist")

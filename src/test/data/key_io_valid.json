@@ -457,5 +457,23 @@
             "isPrivkey": false,
             "chain": "main"
         }
+    ],
+    [
+        "Brc3AngqMnEgM3xi4ANgu1coWvSRwgXvK3uMxidgWALk72ihur",
+        "aa209597d6599cfcec094a56d68a262f351e1377bd3015f946daf11053301e6501c087",
+        {
+            "isPrivkey": false,
+            "chain": "main",
+            "comment": "Test a P2SH32 address and payload (mainnet)"
+        }
+    ],
+    [
+        "7behgUKyQEk1WC2DCdfTs7FSfQKbvdfMbPH3t3MHhyTWKEaedtt",
+        "aa20d9839730211d32d232694aa41d295e28deadabc54834dc8a3fabca49b76f7e8a87",
+        {
+            "isPrivkey": false,
+            "chain": "test",
+            "comment": "Test a P2SH32 address and payload (testnet or regtestnet)"
+        }
     ]
 ]

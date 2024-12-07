@@ -1,5 +1,5 @@
 // Copyright (c) 2017 Pieter Wuille
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,12 +8,16 @@
 
 namespace {
 
-typedef std::vector<uint8_t> data;
+using data = std::vector<uint8_t>;
 
 /**
  * The cashaddr character set for encoding.
  */
-const char *CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const char CHARSET[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+// Ensure basic sanity as per the spec. This should match the strlen() of above.
+constexpr const uint8_t PACKED_VAL_LIMIT = 32u;
+static_assert(std::size(CHARSET) - 1u == PACKED_VAL_LIMIT);
 
 /**
  * The cashaddr character set for decoding.
@@ -201,8 +205,8 @@ std::string Encode(const std::string &prefix, const data &payload) {
     std::string ret = prefix + ':';
 
     ret.reserve(ret.size() + combined.size());
-    for (uint8_t c : combined) {
-        ret += CHARSET[c];
+    for (const uint8_t c : combined) {
+        ret += CHARSET[c % PACKED_VAL_LIMIT];
     }
 
     return ret;

@@ -1,21 +1,20 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_COINS_H
-#define BITCOIN_COINS_H
+#pragma once
 
 #include <compressor.h>
+#include <core_memusage.h>
 #include <memusage.h>
 #include <primitives/blockhash.h>
 #include <serialize.h>
-#include <support/allocators/pool.h>
-#include <util/hasher.h>
+#include <util/saltedhashers.h>
 
 #include <cassert>
 #include <cstdint>
-#include <functional>
 #include <unordered_map>
 
 /**
@@ -23,7 +22,7 @@
  *
  * Serialized format:
  * - VARINT((coinbase ? 1 : 0) | (height << 1))
- * - the non-spent CTxOut (via TxOutCompression)
+ * - the non-spent CTxOut (via CTxOutCompressor)
  */
 class Coin {
     //! Unspent transaction output.
@@ -66,78 +65,34 @@ public:
     }
 
     size_t DynamicMemoryUsage() const {
-        return memusage::DynamicUsage(out.scriptPubKey);
+        return memusage::DynamicUsage(out.scriptPubKey) + RecursiveDynamicUsage(out.tokenDataPtr);
     }
 };
 
-/**
- * A Coin in one level of the coins database caching hierarchy.
- *
- * A coin can either be:
- * - unspent or spent (in which case the Coin object will be nulled out - see
- * Coin.Clear())
- * - DIRTY or not DIRTY
- * - FRESH or not FRESH
- *
- * Out of these 2^3 = 8 states, only some combinations are valid:
- * - unspent, FRESH, DIRTY (e.g. a new coin created in the cache)
- * - unspent, not FRESH, DIRTY (e.g. a coin changed in the cache during a reorg)
- * - unspent, not FRESH, not DIRTY (e.g. an unspent coin fetched from the parent
- *   cache)
- * - spent, FRESH, not DIRTY (e.g. a spent coin fetched from the parent cache)
- * - spent, not FRESH, DIRTY (e.g. a coin is spent and spentness needs to be
- *   flushed to the parent)
- */
 struct CCoinsCacheEntry {
     // The actual cached data.
     Coin coin;
     uint8_t flags;
 
     enum Flags {
-        /**
-         * DIRTY means the CCoinsCacheEntry is potentially different from the
-         * version in the parent cache. Failure to mark a coin as DIRTY when
-         * it is potentially different from the parent cache will cause a
-         * consensus failure, since the coin's state won't get written to the
-         * parent when the cache is flushed.
-         */
+        // This cache entry is potentially different from the version in the
+        // parent view.
         DIRTY = (1 << 0),
-        /**
-         * FRESH means the parent cache does not have this coin or that it is a
-         * spent coin in the parent cache. If a FRESH coin in the cache is
-         * later spent, it can be deleted entirely and doesn't ever need to be
-         * flushed to the parent. This is a performance optimization. Marking a
-         * coin as FRESH when it exists unspent in the parent cache will cause a
-         * consensus failure, since it might not be deleted from the parent
-         * when this cache is flushed.
-         */
+        // The parent view does not have this entry (or it is pruned).
         FRESH = (1 << 1),
+        /* Note that FRESH is a performance optimization with which we can erase
+           coins that are fully spent if we know we do not need to flush the
+           changes to the parent cache. It is always safe to not mark FRESH if
+           that condition is not guaranteed. */
     };
 
     CCoinsCacheEntry() : flags(0) {}
     explicit CCoinsCacheEntry(Coin coinIn)
         : coin(std::move(coinIn)), flags(0) {}
-    CCoinsCacheEntry(Coin &&coin_, uint8_t flag)
-        : coin(std::move(coin_)), flags(flag) {}
 };
 
-/**
- * PoolAllocator's MAX_BLOCK_SIZE_BYTES parameter here uses sizeof the data, and
- * adds the size of 4 pointers. We do not know the exact node size used in the
- * std::unordered_node implementation because it is implementation defined. Most
- * implementations have an overhead of 1 or 2 pointers, so nodes can be
- * connected in a linked list, and in some cases the hash value is stored as
- * well. Using an additional sizeof(void*)*4 for MAX_BLOCK_SIZE_BYTES should
- * thus be sufficient so that all implementations can allocate the nodes from
- * the PoolAllocator.
- */
-using CCoinsMap = std::unordered_map<
-    COutPoint, CCoinsCacheEntry, SaltedOutpointHasher, std::equal_to<COutPoint>,
-    PoolAllocator<std::pair<const COutPoint, CCoinsCacheEntry>,
-                  sizeof(std::pair<const COutPoint, CCoinsCacheEntry>) +
-                      sizeof(void *) * 4>>;
-
-using CCoinsMapMemoryResource = CCoinsMap::allocator_type::ResourceType;
+typedef std::unordered_map<COutPoint, CCoinsCacheEntry, SaltedOutpointHasher>
+    CCoinsMap;
 
 /** Cursor for iterating over CoinsView state */
 class CCoinsViewCursor {
@@ -184,11 +139,10 @@ public:
 
     //! Do a bulk modification (multiple Coin changes + BestBlock change).
     //! The passed mapCoins can be modified.
-    virtual bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
-                            bool erase = true);
+    virtual bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock);
 
     //! Get a cursor to iterate over the whole state
-    virtual CCoinsViewCursor *Cursor() const;
+    virtual CCoinsViewCursor *Cursor(bool snapshot = false) const;
 
     //! As we use CCoinsViews polymorphically, have a virtual destructor
     virtual ~CCoinsView() {}
@@ -209,9 +163,8 @@ public:
     BlockHash GetBestBlock() const override;
     std::vector<BlockHash> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
-    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
-                    bool erase = true) override;
-    CCoinsViewCursor *Cursor() const override;
+    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) override;
+    CCoinsViewCursor *Cursor(bool snapshot = false) const override;
     size_t EstimateSize() const override;
 };
 
@@ -219,23 +172,19 @@ public:
  * CCoinsView that adds a memory cache for transactions to another CCoinsView
  */
 class CCoinsViewCache : public CCoinsViewBacked {
-private:
-    const bool m_deterministic;
-
 protected:
     /**
      * Make mutable so that we can "fill the cache" even from Get-methods
      * declared as "const".
      */
     mutable BlockHash hashBlock;
-    mutable CCoinsMapMemoryResource m_cache_coins_memory_resource{};
     mutable CCoinsMap cacheCoins;
 
     /* Cached dynamic memory usage for the inner Coin objects. */
     mutable size_t cachedCoinsUsage;
 
 public:
-    CCoinsViewCache(CCoinsView *baseIn, bool deterministic = false);
+    CCoinsViewCache(CCoinsView *baseIn);
 
     /**
      * By deleting the copy constructor, we prevent accidentally using it when
@@ -248,9 +197,8 @@ public:
     bool HaveCoin(const COutPoint &outpoint) const override;
     BlockHash GetBestBlock() const override;
     void SetBestBlock(const BlockHash &hashBlock);
-    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock,
-                    bool erase = true) override;
-    CCoinsViewCursor *Cursor() const override {
+    bool BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) override;
+    CCoinsViewCursor *Cursor(bool snapshot = false) const override {
         throw std::logic_error(
             "CCoinsViewCache cursor iteration not supported.");
     }
@@ -263,7 +211,7 @@ public:
     bool HaveCoinInCache(const COutPoint &outpoint) const;
 
     /**
-     * Return a reference to Coin in the cache, or coinEmpty if not found.
+     * Return a reference to Coin in the cache, or a pruned one if not found.
      * This is more efficient than GetCoin.
      *
      * Generally, do not hold the reference returned for more than a short
@@ -275,19 +223,11 @@ public:
     const Coin &AccessCoin(const COutPoint &output) const;
 
     /**
-     * Add a coin. Set possible_overwrite to true if an unspent version may
-     * already exist in the cache.
+     * Add a coin. Set potential_overwrite to true if a non-pruned version may
+     * already exist.
      */
-    void AddCoin(const COutPoint &outpoint, Coin coin, bool possible_overwrite);
-
-    /**
-     * Emplace a coin into cacheCoins without performing any checks, marking
-     * the emplaced coin as dirty.
-     *
-     * NOT FOR GENERAL USE. Used only when loading coins from a UTXO snapshot.
-     * @sa ChainstateManager::PopulateAndValidateSnapshot()
-     */
-    void EmplaceCoinInternalDANGER(COutPoint &&outpoint, Coin &&coin);
+    void AddCoin(const COutPoint &outpoint, Coin coin,
+                 bool potential_overwrite);
 
     /**
      * Spend a coin. Pass moveto in order to get the deleted data.
@@ -297,21 +237,12 @@ public:
     bool SpendCoin(const COutPoint &outpoint, Coin *moveto = nullptr);
 
     /**
-     * Push the modifications applied to this cache to its base and wipe local
-     * state. Failure to call this method or Sync() before destruction will
-     * cause the changes to be forgotten. If false is returned, the state of
-     * this cache (and its backing view) will be undefined.
+     * Push the modifications applied to this cache to its base.
+     * Failure to call this method before destruction will cause the changes to
+     * be forgotten. If false is returned, the state of this cache (and its
+     * backing view) will be undefined.
      */
     bool Flush();
-
-    /**
-     * Push the modifications applied to this cache to its base while retaining
-     * the contents of this cache (except for spent coins, which we erase).
-     * Failure to call this method or Flush() before destruction will cause the
-     * changes to be forgotten. If false is returned, the state of this cache
-     * (and its backing view) will be undefined.
-     */
-    bool Sync();
 
     /**
      * Removes the UTXO with the given outpoint from the cache, if it is not
@@ -325,26 +256,23 @@ public:
     //! Calculate the size of the cache (in bytes)
     size_t DynamicMemoryUsage() const;
 
+    /**
+     * Amount of bitcoins coming in to a transaction
+     * Note that lightweight clients may not know anything besides the hash of
+     * previous transactions, so may not be able to calculate this.
+     *
+     * @param[in] tx	transaction for which we are checking input total
+     * @return	Sum of value of all inputs (scriptSigs)
+     */
+    Amount GetValueIn(const CTransaction &tx) const;
+
     //! Check whether all prevouts of the transaction are present in the UTXO
     //! set represented by this view
     bool HaveInputs(const CTransaction &tx) const;
 
-    //! Force a reallocation of the cache map. This is required when downsizing
-    //! the cache because the map's allocator may be hanging onto a lot of
-    //! memory despite having called .clear().
-    //!
-    //! See:
-    //! https://stackoverflow.com/questions/42114044/how-to-release-unordered-map-memory
-    void ReallocateCache();
-
-    //! Run an internal sanity check on the cache data structure.
-    void SanityCheck() const;
+    const CTxOut &GetOutputFor(const CTxIn &input) const;
 
 private:
-    /**
-     * @note this is marked const, but may actually append to `cacheCoins`,
-     * increasing memory usage.
-     */
     CCoinsMap::iterator FetchCoin(const COutPoint &outpoint) const;
 };
 
@@ -362,31 +290,3 @@ void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight,
 //! which is not found in the cache, it can cause up to MAX_OUTPUTS_PER_BLOCK
 //! lookups to database, so it should be used with care.
 const Coin &AccessByTxid(const CCoinsViewCache &cache, const TxId &txid);
-
-/**
- * This is a minimally invasive approach to shutdown on LevelDB read errors from
- * the chainstate, while keeping user interface out of the common library, which
- * is shared between bitcoind, and bitcoin-qt and non-server tools.
- *
- * Writes do not need similar protection, as failure to write is handled by the
- * caller.
- */
-class CCoinsViewErrorCatcher final : public CCoinsViewBacked {
-public:
-    explicit CCoinsViewErrorCatcher(CCoinsView *view)
-        : CCoinsViewBacked(view) {}
-
-    void AddReadErrCallback(std::function<void()> f) {
-        m_err_callbacks.emplace_back(std::move(f));
-    }
-
-    bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
-
-private:
-    /**
-     * A list of callbacks to execute upon leveldb read error.
-     */
-    std::vector<std::function<void()>> m_err_callbacks;
-};
-
-#endif // BITCOIN_COINS_H

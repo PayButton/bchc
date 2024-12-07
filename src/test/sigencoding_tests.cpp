@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2019 The Bitcoin developers
+// Copyright (c) 2018-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,7 +7,7 @@
 #include <script/script_flags.h>
 
 #include <test/lcg.h>
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -18,13 +18,11 @@ static valtype SignatureWithHashType(valtype vchSig, SigHashType sigHash) {
     return vchSig;
 }
 
-static void CheckSignatureEncodingWithSigHashType(const valtype &vchSig,
-                                                  uint32_t flags) {
+static void CheckSignatureEncodingWithSigHashType(const valtype &vchSig, uint32_t flags) {
     ScriptError err = ScriptError::OK;
-    BOOST_CHECK(CheckDataSignatureEncoding(vchSig, flags, &err));
-
-    const bool hasForkId = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
+    const bool hasFork = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
     const bool hasStrictEnc = (flags & SCRIPT_VERIFY_STRICTENC) != 0;
+    const bool hasUpgrade9 = (flags & SCRIPT_ENABLE_TOKENS) != 0;
     const bool is64 = (vchSig.size() == 64);
 
     std::vector<BaseSigHashType> allBaseTypes{
@@ -35,12 +33,14 @@ static void CheckSignatureEncodingWithSigHashType(const valtype &vchSig,
         const SigHashType baseSigHash = SigHashType().withBaseType(baseType);
         baseSigHashes.push_back(baseSigHash);
         baseSigHashes.push_back(baseSigHash.withAnyoneCanPay(true));
+        // SIGHASH_UTXOS requires SIGHASH_FORKID
+        if (hasFork && hasUpgrade9) baseSigHashes.push_back(baseSigHash.withUtxos(true));
     }
 
     for (const SigHashType &baseSigHash : baseSigHashes) {
-        // Check the signature with the proper forkid flag.
-        SigHashType sigHash = baseSigHash.withForkId(hasForkId);
-        valtype validSig = SignatureWithHashType(vchSig, sigHash);
+        // Check the signature with the proper fork flag.
+        const SigHashType sigHash = baseSigHash.withFork(hasFork);
+        const valtype validSig = SignatureWithHashType(vchSig, sigHash);
         BOOST_CHECK(CheckTransactionSignatureEncoding(validSig, flags, &err));
         BOOST_CHECK_EQUAL(!is64, CheckTransactionECDSASignatureEncoding(
                                      validSig, flags, &err));
@@ -48,11 +48,16 @@ static void CheckSignatureEncodingWithSigHashType(const valtype &vchSig,
                                     validSig, flags, &err));
 
         // If we have strict encoding, we prevent the use of undefined flags.
-        std::array<SigHashType, 2> undefSigHashes{
-            {SigHashType(sigHash.getRawSigHashType() | 0x20),
-             sigHash.withBaseType(BaseSigHashType::UNSUPPORTED)}};
+        std::vector<SigHashType> undefSigHashes{{sigHash.withBaseType(BaseSigHashType::UNSUPPORTED),
+                                                 // having both of these set is undefined
+                                                 sigHash.withAnyoneCanPay(true).withUtxos(true)}};
+        if (!hasFork || !hasUpgrade9) {
+            // 0x20 is undefined if forkID is not set in flags or if upgrade9 is not set in flags
+            undefSigHashes.push_back(SigHashType(sigHash.getRawSigHashType() | 0x20));
+        }
 
         for (SigHashType undefSigHash : undefSigHashes) {
+            err = ScriptError::OK;
             valtype undefSighash = SignatureWithHashType(vchSig, undefSigHash);
             BOOST_CHECK_EQUAL(
                 CheckTransactionSignatureEncoding(undefSighash, flags, &err),
@@ -60,8 +65,7 @@ static void CheckSignatureEncodingWithSigHashType(const valtype &vchSig,
             if (hasStrictEnc) {
                 BOOST_CHECK(err == ScriptError::SIG_HASHTYPE);
             }
-            BOOST_CHECK_EQUAL(CheckTransactionECDSASignatureEncoding(
-                                  undefSighash, flags, &err),
+            BOOST_CHECK_EQUAL(CheckTransactionECDSASignatureEncoding(undefSighash, flags, &err),
                               !(hasStrictEnc || is64));
             if (is64 || hasStrictEnc) {
                 BOOST_CHECK(err == (is64 ? ScriptError::SIG_BADLENGTH
@@ -76,32 +80,34 @@ static void CheckSignatureEncodingWithSigHashType(const valtype &vchSig,
             }
         }
 
-        // If we check strict encoding, then invalid forkid is an error.
-        SigHashType invalidSigHash = baseSigHash.withForkId(!hasForkId);
+        // If we check strict encoding, then invalid fork flag is an error.
+        SigHashType invalidSigHash = baseSigHash.withFork(!hasFork);
         valtype invalidSig = SignatureWithHashType(vchSig, invalidSigHash);
 
         BOOST_CHECK_EQUAL(
             CheckTransactionSignatureEncoding(invalidSig, flags, &err),
             !hasStrictEnc);
         if (hasStrictEnc) {
-            BOOST_CHECK(err == (hasForkId ? ScriptError::MUST_USE_FORKID
+            BOOST_CHECK(err == (hasFork ? ScriptError::MUST_USE_FORKID
                                           : ScriptError::ILLEGAL_FORKID));
         }
         BOOST_CHECK_EQUAL(
             CheckTransactionECDSASignatureEncoding(invalidSig, flags, &err),
             !(hasStrictEnc || is64));
         if (is64 || hasStrictEnc) {
-            BOOST_CHECK(err == (is64        ? ScriptError::SIG_BADLENGTH
-                                : hasForkId ? ScriptError::MUST_USE_FORKID
-                                            : ScriptError::ILLEGAL_FORKID));
+            BOOST_CHECK(err == (is64
+                                    ? ScriptError::SIG_BADLENGTH
+                                    : hasFork ? ScriptError::MUST_USE_FORKID
+                                                : ScriptError::ILLEGAL_FORKID));
         }
         BOOST_CHECK_EQUAL(
             CheckTransactionSchnorrSignatureEncoding(invalidSig, flags, &err),
             !(hasStrictEnc || !is64));
         if (!is64 || hasStrictEnc) {
-            BOOST_CHECK(err == (!is64       ? ScriptError::SIG_NONSCHNORR
-                                : hasForkId ? ScriptError::MUST_USE_FORKID
-                                            : ScriptError::ILLEGAL_FORKID));
+            BOOST_CHECK(err == (!is64
+                                    ? ScriptError::SIG_NONSCHNORR
+                                    : hasFork ? ScriptError::MUST_USE_FORKID
+                                                : ScriptError::ILLEGAL_FORKID));
         }
     }
 }
@@ -408,13 +414,13 @@ BOOST_AUTO_TEST_CASE(checkschnorr_test) {
     for (int i = 0; i < 4096; i++) {
         uint32_t flags = lcg.next();
 
-        const bool hasForkId = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
+        const bool hasFork = (flags & SCRIPT_ENABLE_SIGHASH_FORKID) != 0;
 
         ScriptError err = ScriptError::OK;
         valtype DER65_hb =
-            SignatureWithHashType(DER64, SigHashType().withForkId(hasForkId));
+            SignatureWithHashType(DER64, SigHashType().withFork(hasFork));
         valtype Zero65_hb =
-            SignatureWithHashType(Zero64, SigHashType().withForkId(hasForkId));
+            SignatureWithHashType(Zero64, SigHashType().withFork(hasFork));
 
         BOOST_CHECK(CheckDataSignatureEncoding(DER64, flags, &err));
         BOOST_CHECK(CheckTransactionSignatureEncoding(DER65_hb, flags, &err));

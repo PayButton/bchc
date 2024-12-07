@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2017 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -26,25 +27,17 @@ class UacommentTest(BitcoinTestFramework):
 
         self.log.info("test -uacomment max length")
         self.stop_node(0)
-        expected = (
-            r"Error: Total length of network version string \([0-9]+\) exceeds maximum"
-            r" length \(256\). Reduce the number or size of uacomments."
-        )
+        expected = r"Error: Total length of network version string \([0-9]+\) exceeds maximum length \(256\). Reduce the number or size of uacomments."
         self.nodes[0].assert_start_raises_init_error(
-            [f"-uacomment={'a' * 256}"], expected, match=ErrorMatch.FULL_REGEX
-        )
+            ["-uacomment=" + 'a' * 256], expected, match=ErrorMatch.FULL_REGEX)
 
         self.log.info("test -uacomment unsafe characters")
-        for unsafe_char in ["/", ":", "(", ")", "₿", "🏃"]:
-            expected = (
-                r"Error: User Agent comment \("
-                + re.escape(unsafe_char)
-                + r"\) contains unsafe characters."
-            )
+        for unsafe_char in ['/', ':', '(', ')', '₿', '🏃']:
+            expected = r"Error: User Agent comment \(" + re.escape(
+                unsafe_char) + r"\) contains unsafe characters."
             self.nodes[0].assert_start_raises_init_error(
-                [f"-uacomment={unsafe_char}"], expected, match=ErrorMatch.FULL_REGEX
-            )
+                ["-uacomment=" + unsafe_char], expected, match=ErrorMatch.FULL_REGEX)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     UacommentTest().main()

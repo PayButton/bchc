@@ -10,6 +10,7 @@ Runs automatically during `make check`.
 Can also be run manually."""
 
 import argparse
+import binascii
 import configparser
 import difflib
 import json
@@ -22,12 +23,11 @@ import sys
 
 def main():
     config = configparser.ConfigParser()
-    config.read_file(
-        open(os.path.join(os.path.dirname(__file__), "../config.ini"), encoding="utf8")
-    )
+    config.read_file(open(os.path.join(os.path.dirname(
+        __file__), "../config.ini"), encoding="utf8"))
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
     verbose = args.verbose
 
@@ -35,19 +35,16 @@ def main():
         level = logging.DEBUG
     else:
         level = logging.ERROR
-    formatter = "%(asctime)s - %(levelname)s - %(message)s"
+    formatter = '%(asctime)s - %(levelname)s - %(message)s'
     # Add the format/level to the logger
     logging.basicConfig(format=formatter, level=level)
 
-    bctester(
-        os.path.join(config["environment"]["SRCDIR"], "test", "util", "data"),
-        "bitcoin-util-test.json",
-        config["environment"],
-    )
+    bctester(os.path.join(config["environment"]["SRCDIR"], "test",
+                          "util", "data"), "bitcoin-util-test.json", config["environment"])
 
 
 def bctester(testDir, input_basename, buildenv):
-    """Loads and parses the input file, runs all tests and reports results"""
+    """ Loads and parses the input file, runs all tests and reports results"""
     input_filename = os.path.join(testDir, input_basename)
     raw_data = open(input_filename, encoding="utf8").read()
     input_data = json.loads(raw_data)
@@ -58,10 +55,10 @@ def bctester(testDir, input_basename, buildenv):
         try:
             bctest(testDir, testObj, buildenv)
         except Exception:
-            logging.info(f"FAILED: {testObj['description']}")
+            logging.info("FAILED: " + testObj["description"])
             failed_testcases.append(testObj["description"])
         else:
-            logging.info(f"PASSED: {testObj['description']}")
+            logging.info("PASSED: " + testObj["description"])
 
     if failed_testcases:
         error_message = "FAILED_TESTCASES:\n"
@@ -80,12 +77,9 @@ def bctest(testDir, testObj, buildenv):
     """
     # Get the exec names and arguments
     execprog = os.path.join(
-        buildenv["BUILDDIR"], "src", testObj["exec"] + buildenv["EXEEXT"]
-    )
-    execargs = testObj["args"]
+        buildenv["BUILDDIR"], "src", testObj["exec"] + buildenv["EXEEXT"])
+    execargs = testObj['args']
     execrun = [execprog] + execargs
-    if buildenv["EMULATOR"]:
-        execrun = [buildenv["EMULATOR"]] + execrun
 
     # Read the input data (if there is any)
     stdinCfg = None
@@ -100,33 +94,29 @@ def bctest(testDir, testObj, buildenv):
     outputData = None
     outputType = None
     if "output_cmp" in testObj:
-        outputFn = testObj["output_cmp"]
+        outputFn = testObj['output_cmp']
         # output type from file extension (determines how to compare)
         outputType = os.path.splitext(outputFn)[1][1:]
         try:
             outputData = open(os.path.join(testDir, outputFn), encoding="utf8").read()
         except OSError:
-            logging.error(f"Output file {outputFn} can not be opened")
+            logging.error("Output file " + outputFn + " can not be opened")
             raise
         if not outputData:
-            logging.error(f"Output data missing for {outputFn}")
+            logging.error("Output data missing for " + outputFn)
             raise Exception
         if not outputType:
-            logging.error(f"Output file {outputFn} does not have a file extension")
+            logging.error(
+                "Output file {} does not have a file extension".format(outputFn))
             raise Exception
 
     # Run the test
-    proc = subprocess.Popen(
-        execrun,
-        stdin=stdinCfg,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        universal_newlines=True,
-    )
+    proc = subprocess.Popen(execrun, stdin=stdinCfg, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True)
     try:
         outs = proc.communicate(input=inputData)
     except OSError:
-        logging.error(f"OSError, Failed to execute {execprog}")
+        logging.error("OSError, Failed to execute " + execprog)
         raise
 
     if outputData:
@@ -135,30 +125,28 @@ def bctest(testDir, testObj, buildenv):
         try:
             a_parsed = parse_output(outs[0], outputType)
         except Exception as e:
-            logging.error(f"Error parsing command output as {outputType}: {e}")
+            logging.error(
+                'Error parsing command output as {}: {}'.format(outputType, e))
             raise
         try:
             b_parsed = parse_output(outputData, outputType)
         except Exception as e:
-            logging.error(
-                f"Error parsing expected output {outputFn} as {outputType}: {e}"
-            )
+            logging.error('Error parsing expected output {} as {}: {}'.format(
+                outputFn, outputType, e))
             raise
         # Compare data
         if a_parsed != b_parsed:
-            logging.error(f"Output data mismatch for {outputFn} (format {outputType})")
+            logging.error("Output data mismatch for " +
+                          outputFn + " (format " + outputType + ")")
             data_mismatch = True
         # Compare formatting
         if outs[0] != outputData:
-            error_message = f"Output formatting mismatch for {outputFn}:\n"
-            error_message += "".join(
-                difflib.context_diff(
-                    outputData.splitlines(True),
-                    outs[0].splitlines(True),
-                    fromfile=outputFn,
-                    tofile="returned",
-                )
-            )
+            error_message = "Output formatting mismatch for " + outputFn + ":\n"
+            error_message += "".join(difflib.context_diff(outputData.splitlines(True),
+                                                          outs[0].splitlines(
+                                                              True),
+                                                          fromfile=outputFn,
+                                                          tofile="returned"))
             logging.error(error_message)
             formatting_mismatch = True
 
@@ -167,9 +155,9 @@ def bctest(testDir, testObj, buildenv):
     # Compare the return code to the expected return code
     wantRC = 0
     if "return_code" in testObj:
-        wantRC = testObj["return_code"]
+        wantRC = testObj['return_code']
     if proc.returncode != wantRC:
-        logging.error(f"Return code mismatch for {outputFn}")
+        logging.error("Return code mismatch for " + outputFn)
         raise Exception
 
     if "error_txt" in testObj:
@@ -181,9 +169,8 @@ def bctest(testDir, testObj, buildenv):
         # linux through wine. Just assert that the expected error text appears
         # somewhere in stderr.
         if want_error not in outs[1]:
-            logging.error(
-                f"Error mismatch:\nExpected: {want_error}\nReceived: {outs[1].rstrip()}"
-            )
+            logging.error("Error mismatch:\n" + "Expected: " +
+                          want_error + "\nReceived: " + outs[1].rstrip())
             raise Exception
 
 
@@ -191,13 +178,13 @@ def parse_output(a, fmt):
     """Parse the output according to specified format.
 
     Raise an error if the output can't be parsed."""
-    if fmt == "json":  # json: compare parsed data
+    if fmt == 'json':  # json: compare parsed data
         return json.loads(a)
-    elif fmt == "hex":  # hex: parse and compare binary data
-        return bytes.fromhex(a.strip())
+    elif fmt == 'hex':  # hex: parse and compare binary data
+        return binascii.a2b_hex(a.strip())
     else:
-        raise NotImplementedError(f"Don't know how to compare {fmt}")
+        raise NotImplementedError("Don't know how to compare {}".format(fmt))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

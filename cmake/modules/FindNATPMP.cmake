@@ -1,4 +1,4 @@
-# Copyright (c) 2022 The Bitcoin developers
+# Copyright (c) 2022-2024 The Bitcoin developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -36,28 +36,27 @@ find_package(PkgConfig)
 pkg_check_modules(PC_NATPMP QUIET natpmp)
 
 find_path(NATPMP_INCLUDE_DIR
-	NAMES natpmp.h
-	HINTS ${_NATPMP_BREW_HINT}
-	PATHS ${PC_NATPMP_INCLUDE_DIRS}
+    NAMES natpmp.h
+    HINTS ${_NATPMP_BREW_HINT}
+    PATHS ${PC_NATPMP_INCLUDE_DIRS}
 )
 
 set(NATPMP_INCLUDE_DIRS "${NATPMP_INCLUDE_DIR}")
 mark_as_advanced(NATPMP_INCLUDE_DIR)
 
 if(NATPMP_INCLUDE_DIR)
-	include(ExternalLibraryHelper)
-	find_component(NATPMP natpmp
-		NAMES natpmp
-		HINTS ${_NATPMP_BREW_HINT}
-		PATHS ${PC_NATPMP_LIBRARY_DIRS}
-		INCLUDE_DIRS ${NATPMP_INCLUDE_DIRS}
-	)
+    include(ExternalLibraryHelper)
+    find_component(NATPMP natpmp
+        NAMES natpmp
+        HINTS ${_NATPMP_BREW_HINT}
+        PATHS ${PC_NATPMP_LIBRARY_DIRS}
+        INCLUDE_DIRS ${NATPMP_INCLUDE_DIRS}
+    )
 endif()
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(NATPMP
 	REQUIRED_VARS
 		NATPMP_INCLUDE_DIR
-	REASON_FAILURE_MESSAGE "if the NAT-PMP feature is not required, it can be skipped by passing -DENABLE_NATPMP=OFF to the cmake command line"
 	HANDLE_COMPONENTS
 )

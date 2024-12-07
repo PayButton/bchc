@@ -1,10 +1,10 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2023 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SUPPORT_ALLOCATORS_SECURE_H
-#define BITCOIN_SUPPORT_ALLOCATORS_SECURE_H
+#pragma once
 
 #include <support/cleanse.h>
 #include <support/lockedpool.h>
@@ -16,7 +16,8 @@
 // Allocator that locks its contents from being paged
 // out of memory and clears its contents before deletion.
 //
-template <typename T> struct secure_allocator : public std::allocator<T> {
+template <typename T>
+struct secure_allocator : public std::allocator<T> {
     using base = std::allocator<T>;
     using traits = std::allocator_traits<base>;
     using size_type = typename traits::size_type;
@@ -29,17 +30,12 @@ template <typename T> struct secure_allocator : public std::allocator<T> {
     template <typename U>
     secure_allocator(const secure_allocator<U> &a) noexcept : base(a) {}
     ~secure_allocator() noexcept {}
-    template <typename Other> struct rebind {
-        typedef secure_allocator<Other> other;
+    template <typename _Other> struct rebind {
+        typedef secure_allocator<_Other> other;
     };
 
-    T *allocate(std::size_t n, const void *hint = 0) {
-        T *allocation = static_cast<T *>(
-            LockedPoolManager::Instance().alloc(sizeof(T) * n));
-        if (!allocation) {
-            throw std::bad_alloc();
-        }
-        return allocation;
+    T *allocate(std::size_t n, const void *hint [[maybe_unused]] = 0) {
+        return static_cast<T *>(LockedPoolManager::Instance().alloc(sizeof(T) * n));
     }
 
     void deallocate(T *p, std::size_t n) {
@@ -51,7 +47,4 @@ template <typename T> struct secure_allocator : public std::allocator<T> {
 };
 
 // This is exactly like std::string, but with a custom allocator.
-typedef std::basic_string<char, std::char_traits<char>, secure_allocator<char>>
-    SecureString;
-
-#endif // BITCOIN_SUPPORT_ALLOCATORS_SECURE_H
+using SecureString = std::basic_string<char, std::char_traits<char>, secure_allocator<char>>;

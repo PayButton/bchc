@@ -1,17 +1,16 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2021 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_QT_RECENTREQUESTSTABLEMODEL_H
-#define BITCOIN_QT_RECENTREQUESTSTABLEMODEL_H
+#pragma once
 
-#include <qt/sendcoinsrecipient.h>
+#include <qt/guiutil.h>
+#include <qt/walletmodel.h>
 
 #include <QAbstractTableModel>
 #include <QDateTime>
 #include <QStringList>
-
-class WalletModel;
 
 class RecentRequestEntry {
 public:
@@ -28,7 +27,7 @@ public:
         unsigned int date_timet;
         SER_WRITE(obj, date_timet = obj.date.toTime_t());
         READWRITE(obj.nVersion, obj.id, date_timet, obj.recipient);
-        SER_READ(obj, obj.date = QDateTime::fromTime_t(date_timet));
+        SER_READ(obj, obj.date = GUIUtil::dateTimeFromTime(date_timet));
     }
 };
 
@@ -36,8 +35,7 @@ class RecentRequestEntryLessThan {
 public:
     RecentRequestEntryLessThan(int nColumn, Qt::SortOrder fOrder)
         : column(nColumn), order(fOrder) {}
-    bool operator()(const RecentRequestEntry &left,
-                    const RecentRequestEntry &right) const;
+    bool operator()(RecentRequestEntry &left, RecentRequestEntry &right) const;
 
 private:
     int column;
@@ -77,7 +75,6 @@ public:
     bool removeRows(int row, int count,
                     const QModelIndex &parent = QModelIndex()) override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
-    void sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
     /*@}*/
 
     const RecentRequestEntry &entry(int row) const { return list[row]; }
@@ -86,6 +83,7 @@ public:
     void addNewRequest(RecentRequestEntry &recipient);
 
 public Q_SLOTS:
+    void sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
     void updateDisplayUnit();
 
 private:
@@ -101,5 +99,3 @@ private:
      * optionsModel reference available. */
     QString getAmountTitle();
 };
-
-#endif // BITCOIN_QT_RECENTREQUESTSTABLEMODEL_H

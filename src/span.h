@@ -1,9 +1,9 @@
 // Copyright (c) 2018 The Bitcoin Core developers
+// Copyright (c) 2020-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_SPAN_H
-#define BITCOIN_SPAN_H
+#pragma once
 
 #include <algorithm>
 #include <cassert>
@@ -19,18 +19,7 @@
 #define ASSERT_IF_DEBUG(x)
 #endif
 
-#if defined(__clang__)
-#if __has_attribute(lifetimebound)
-#define SPAN_ATTR_LIFETIMEBOUND [[clang::lifetimebound]]
-#else
-#define SPAN_ATTR_LIFETIMEBOUND
-#endif
-#else
-#define SPAN_ATTR_LIFETIMEBOUND
-#endif
-
-/**
- * A Span is an object that can refer to a contiguous sequence of objects.
+/** A Span is an object that can refer to a contiguous sequence of objects.
  *
  * It implements a subset of C++20's std::span.
  *
@@ -91,125 +80,78 @@
  *   is useless in that context.
  */
 template <typename C> class Span {
-    C *m_data;
-    std::size_t m_size;
-
-    template <class T> struct is_Span_int : public std::false_type {};
-    template <class T> struct is_Span_int<Span<T>> : public std::true_type {};
-    template <class T>
-    struct is_Span : public is_Span_int<typename std::remove_cv<T>::type> {};
+    C *m_data{};
+    std::size_t m_size{};
 
 public:
-    constexpr Span() noexcept : m_data(nullptr), m_size(0) {}
+    constexpr Span() noexcept = default;
 
-    /**
-     * Construct a span from a begin pointer and a size.
+    /** Construct a span from a begin pointer and a size.
      *
-     * This implements a subset of the iterator-based std::span constructor in
-     * C++20, which is hard to implement without std::address_of.
+     * This implements a subset of the iterator-based std::span constructor in C++20,
+     * which is hard to implement without std::address_of.
      */
-    template <typename T,
-              typename std::enable_if<
-                  std::is_convertible<T (*)[], C (*)[]>::value, int>::type = 0>
-    constexpr Span(T *begin, std::size_t size) noexcept
-        : m_data(begin), m_size(size) {}
+    template <typename T, typename std::enable_if_t<std::is_convertible_v<T (*)[], C (*)[]>, int> = 0>
+    constexpr Span(T *begin, std::size_t size) noexcept : m_data(begin), m_size(size) {}
 
-    /**
-     * Construct a span from a begin and end pointer.
+    /** Construct a span from a begin and end pointer.
      *
-     * This implements a subset of the iterator-based std::span constructor in
-     * C++20, which is hard to implement without std::address_of.
+     * This implements a subset of the iterator-based std::span constructor in C++20,
+     * which is hard to implement without std::address_of.
      */
-    template <typename T,
-              typename std::enable_if<
-                  std::is_convertible<T (*)[], C (*)[]>::value, int>::type = 0>
-    CONSTEXPR_IF_NOT_DEBUG Span(T *begin, T *end) noexcept
-        : m_data(begin), m_size(end - begin) {
+    template <typename T, typename std::enable_if_t<std::is_convertible_v<T (*)[], C (*)[]>, int> = 0>
+    CONSTEXPR_IF_NOT_DEBUG Span(T *begin, T *end) noexcept : m_data(begin), m_size(end - begin) {
         ASSERT_IF_DEBUG(end >= begin);
     }
 
-    /**
-     * Implicit conversion of spans between compatible types.
+    /** Implicit conversion of spans between compatible types.
      *
-     *  Specifically, if a pointer to an array of type O can be implicitly
-     * converted to a pointer to an array of type C, then permit implicit
-     * conversion of Span<O> to Span<C>. This matches the behavior of the
-     * corresponding C++20 std::span constructor.
+     *  Specifically, if a pointer to an array of type O can be implicitly converted to a pointer to an array of type
+     *  C, then permit implicit conversion of Span<O> to Span<C>. This matches the behavior of the corresponding
+     *  C++20 std::span constructor.
      *
-     *  For example this means that a Span<T> can be converted into a Span<const
-     * T>.
+     *  For example this means that a Span<T> can be converted into a Span<const T>.
      */
-    template <typename O,
-              typename std::enable_if<
-                  std::is_convertible<O (*)[], C (*)[]>::value, int>::type = 0>
-    constexpr Span(const Span<O> &other) noexcept
-        : m_data(other.m_data), m_size(other.m_size) {}
+    template <typename O, typename std::enable_if_t<std::is_convertible_v<O (*)[], C (*)[]>, int> = 0>
+    constexpr Span(const Span<O>& other) noexcept : m_data(other.m_data), m_size(other.m_size) {}
 
     /** Default copy constructor. */
-    constexpr Span(const Span &) noexcept = default;
+    constexpr Span(const Span&) noexcept = default;
 
-    /** Default assignment operator. */
-    Span &operator=(const Span &other) noexcept = default;
-
-    /** Construct a Span from an array. This matches the corresponding C++20
-     * std::span constructor. */
-    template <int N>
+    /** Construct a Span from an array. This matches the corresponding C++20 std::span constructor. */
+    template <std::size_t N>
     constexpr Span(C (&a)[N]) noexcept : m_data(a), m_size(N) {}
 
-    /**
-     * Construct a Span for objects with .data() and .size() (std::string,
-     * std::array, std::vector, ...).
+    /** Construct a Span for objects with .data() and .size() (std::string, std::array, std::vector, ...).
      *
-     * This implements a subset of the functionality provided by the C++20
-     * std::span range-based constructor.
+     * This implements a subset of the functionality provided by the C++20 std::span range-based constructor.
      *
-     * To prevent surprises, only Spans for constant value types are supported
-     * when passing in temporaries. Note that this restriction does not exist
-     * when converting arrays or other Spans (see above).
+     * To prevent surprises, only Spans for constant value types are supported when passing in temporaries.
+     * Note that this restriction does not exist when converting arrays or other Spans (see above).
      */
-    template <typename V>
-    constexpr Span(
-        V &other SPAN_ATTR_LIFETIMEBOUND,
-        typename std::enable_if<
-            !is_Span<V>::value &&
-                std::is_convertible<
-                    typename std::remove_pointer<
-                        decltype(std::declval<V &>().data())>::type (*)[],
-                    C (*)[]>::value &&
-                std::is_convertible<decltype(std::declval<V &>().size()),
-                                    std::size_t>::value,
-            std::nullptr_t>::type = nullptr)
-        : m_data(other.data()), m_size(other.size()) {}
+    template <typename V,
+              typename std::enable_if_t<
+                  (std::is_const_v<C> || std::is_lvalue_reference_v<V>) && std::is_convertible_v<
+                      typename std::remove_pointer_t<decltype(std::declval<V &>().data())> (*)[], C (*)[]> &&
+                      std::is_convertible_v<decltype(std::declval<V &>().size()), std::size_t>,
+                  int> = 0>
+    constexpr Span(V &&v) noexcept : m_data(v.data()), m_size(v.size()) {}
 
-    template <typename V>
-    constexpr Span(
-        const V &other SPAN_ATTR_LIFETIMEBOUND,
-        typename std::enable_if<
-            !is_Span<V>::value &&
-                std::is_convertible<
-                    typename std::remove_pointer<
-                        decltype(std::declval<const V &>().data())>::type (*)[],
-                    C (*)[]>::value &&
-                std::is_convertible<decltype(std::declval<const V &>().size()),
-                                    std::size_t>::value,
-            std::nullptr_t>::type = nullptr)
-        : m_data(other.data()), m_size(other.size()) {}
+    /** Default assignment operator. */
+    Span& operator=(const Span& other) noexcept = default;
 
     constexpr C *data() const noexcept { return m_data; }
     constexpr C *begin() const noexcept { return m_data; }
     constexpr C *end() const noexcept { return m_data + m_size; }
     CONSTEXPR_IF_NOT_DEBUG C &front() const noexcept {
         ASSERT_IF_DEBUG(size() > 0);
-        return m_data[0];
+        return *begin();
     }
     CONSTEXPR_IF_NOT_DEBUG C &back() const noexcept {
         ASSERT_IF_DEBUG(size() > 0);
-        return m_data[m_size - 1];
+        return *(end() - 1);
     }
     constexpr std::size_t size() const noexcept { return m_size; }
-    constexpr std::size_t size_bytes() const noexcept {
-        return sizeof(C) * m_size;
-    }
     constexpr bool empty() const noexcept { return size() == 0; }
     CONSTEXPR_IF_NOT_DEBUG C &operator[](std::size_t pos) const noexcept {
         ASSERT_IF_DEBUG(size() > pos);
@@ -217,126 +159,94 @@ public:
     }
     CONSTEXPR_IF_NOT_DEBUG Span<C> subspan(std::size_t offset) const noexcept {
         ASSERT_IF_DEBUG(size() >= offset);
-        return Span<C>(m_data + offset, m_size - offset);
+        return offset <= m_size? Span<C>(m_data + offset, m_size - offset) : Span<C>(end(), std::size_t{0});
     }
-    CONSTEXPR_IF_NOT_DEBUG Span<C> subspan(std::size_t offset,
-                                           std::size_t count) const noexcept {
+    CONSTEXPR_IF_NOT_DEBUG Span<C> subspan(std::size_t offset, std::size_t count) const noexcept {
         ASSERT_IF_DEBUG(size() >= offset + count);
-        return Span<C>(m_data + offset, count);
+        return offset + count <= m_size ? Span<C>(m_data + offset, count) : Span<C>(end(), std::size_t{0});
     }
     CONSTEXPR_IF_NOT_DEBUG Span<C> first(std::size_t count) const noexcept {
         ASSERT_IF_DEBUG(size() >= count);
-        return Span<C>(m_data, count);
+        return count <= m_size ? Span<C>(m_data, count) : Span<C>(begin(), std::size_t{0});
     }
     CONSTEXPR_IF_NOT_DEBUG Span<C> last(std::size_t count) const noexcept {
         ASSERT_IF_DEBUG(size() >= count);
-        return Span<C>(m_data + m_size - count, count);
+        return count <= m_size ? Span<C>(m_data + m_size - count, count) : Span<C>(end(), std::size_t{0});
+    }
+
+    /** Pop the last element off, and return a reference to that element.
+        Span must not be empty(); span will decrease in size by 1, having its end() moved back by 1. */
+    constexpr C & pop_back() noexcept {
+        assert(!empty());
+        return m_data[--m_size];
+    }
+
+    /** Pop the first element off, and return a reference to that element.
+        Span must not be empty(); span will decrease in size by 1, having its begin() moved up by 1. */
+    constexpr C & pop_front() noexcept {
+        assert(!empty());
+        --m_size;
+        return *m_data++;
     }
 
     friend constexpr bool operator==(const Span &a, const Span &b) noexcept {
-        return a.size() == b.size() &&
-               std::equal(a.begin(), a.end(), b.begin());
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
     }
     friend constexpr bool operator!=(const Span &a, const Span &b) noexcept {
         return !(a == b);
     }
     friend constexpr bool operator<(const Span &a, const Span &b) noexcept {
-        return std::lexicographical_compare(a.begin(), a.end(), b.begin(),
-                                            b.end());
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
     }
     friend constexpr bool operator<=(const Span &a, const Span &b) noexcept {
         return !(b < a);
     }
     friend constexpr bool operator>(const Span &a, const Span &b) noexcept {
-        return (b < a);
+        return b < a;
     }
     friend constexpr bool operator>=(const Span &a, const Span &b) noexcept {
         return !(a < b);
     }
 
+    /** Ensures the convertible-to constructor works */
     template <typename O> friend class Span;
+
+    /** value_type is used for generic code compatibility */
+    using value_type = C;
 };
 
 // Deduction guides for Span
 // For the pointer/size based and iterator based constructor:
-template <typename T, typename EndOrSize> Span(T *, EndOrSize) -> Span<T>;
+template <typename T, typename EndOrSize> Span(T*, EndOrSize) -> Span<T>;
 // For the array constructor:
 template <typename T, std::size_t N> Span(T (&)[N]) -> Span<T>;
-// For the temporaries/rvalue references constructor, only supporting const
-// output.
-template <typename T>
-Span(T &&) -> Span<std::enable_if_t<
-    !std::is_lvalue_reference_v<T>,
-    const std::remove_pointer_t<decltype(std::declval<T &&>().data())>>>;
+// For the temporaries/rvalue references constructor, only supporting const output.
+template <typename T> Span(T&&) -> Span<std::enable_if_t<!std::is_lvalue_reference_v<T>, const std::remove_pointer_t<decltype(std::declval<T&&>().data())>>>;
 // For (lvalue) references, supporting mutable output.
-template <typename T>
-Span(T &) -> Span<std::remove_pointer_t<decltype(std::declval<T &>().data())>>;
-
-/** Pop the last element off a span, and return a reference to that element. */
-template <typename T> T &SpanPopBack(Span<T> &span) {
-    size_t size = span.size();
-    ASSERT_IF_DEBUG(size > 0);
-    T &back = span[size - 1];
-    span = Span<T>(span.data(), size - 1);
-    return back;
-}
-
-//! Convert a data pointer to a std::byte data pointer.
-//! Where possible, please use the safer AsBytes helpers.
-inline const std::byte *BytePtr(const void *data) {
-    return reinterpret_cast<const std::byte *>(data);
-}
-inline std::byte *BytePtr(void *data) {
-    return reinterpret_cast<std::byte *>(data);
-}
-
-// From C++20 as_bytes and as_writeable_bytes
-template <typename T> Span<const std::byte> AsBytes(Span<T> s) noexcept {
-    return {BytePtr(s.data()), s.size_bytes()};
-}
-template <typename T> Span<std::byte> AsWritableBytes(Span<T> s) noexcept {
-    return {BytePtr(s.data()), s.size_bytes()};
-}
-
-template <typename V> Span<const std::byte> MakeByteSpan(V &&v) noexcept {
-    return AsBytes(Span(std::forward<V>(v)));
-}
-template <typename V> Span<std::byte> MakeWritableByteSpan(V &&v) noexcept {
-    return AsWritableBytes(Span(std::forward<V>(v)));
-}
+template <typename T> Span(T&) -> Span<std::remove_pointer_t<decltype(std::declval<T&>().data())>>;
 
 // Helper functions to safely cast to uint8_t pointers.
-inline uint8_t *UCharCast(char *c) {
-    return (uint8_t *)c;
+inline uint8_t *UInt8Cast(char *c) {
+    return reinterpret_cast<uint8_t *>(c);
 }
-inline uint8_t *UCharCast(uint8_t *c) {
+inline uint8_t *UInt8Cast(uint8_t *c) {
     return c;
 }
-inline const uint8_t *UCharCast(const char *c) {
-    return (uint8_t *)c;
-}
-inline const uint8_t *UCharCast(const uint8_t *c) {
-    return c;
-}
-inline const uint8_t *UCharCast(const std::byte *c) {
+inline const uint8_t *UInt8Cast(const char *c) {
     return reinterpret_cast<const uint8_t *>(c);
+}
+inline const uint8_t *UInt8Cast(const uint8_t *c) {
+    return c;
 }
 
 // Helper function to safely convert a Span to a Span<[const] uint8_t>.
 template <typename T>
-constexpr auto UCharSpanCast(Span<T> s)
-    -> Span<typename std::remove_pointer<decltype(UCharCast(s.data()))>::type> {
-    return {UCharCast(s.data()), s.size()};
+constexpr auto UInt8SpanCast(Span<T> s) -> Span<typename std::remove_pointer_t<decltype(UInt8Cast(s.data()))>> {
+    return {UInt8Cast(s.data()), s.size()};
 }
 
-/**
- * Like the Span constructor, but for (const) uint8_t member types only. Only
- * works for (un)signed char containers.
- */
+/** Like the Span constructor, but for (const) uint8_t member types only. Only works for (un)signed char containers. */
 template <typename V>
-constexpr auto MakeUCharSpan(V &&v)
-    -> decltype(UCharSpanCast(Span{std::forward<V>(v)})) {
-    return UCharSpanCast(Span{std::forward<V>(v)});
+constexpr auto MakeUInt8Span(V&& v) -> decltype(UInt8SpanCast(Span{std::forward<V>(v)})) {
+    return UInt8SpanCast(Span{std::forward<V>(v)});
 }
-
-#endif // BITCOIN_SPAN_H

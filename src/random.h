@@ -1,14 +1,13 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_RANDOM_H
-#define BITCOIN_RANDOM_H
+#pragma once
 
 #include <crypto/chacha20.h>
 #include <crypto/common.h>
-#include <span.h>
 #include <uint256.h>
 
 #include <chrono>
@@ -38,24 +37,25 @@
  * everything that fast seeding includes, but additionally:
  *   - OS entropy (/dev/urandom, getrandom(), ...). The application will
  * terminate if this entropy source fails.
+ *   - Bytes from OpenSSL's RNG (which itself may be seeded from various
+ * sources)
  *   - Another high-precision timestamp (indirectly committing to a benchmark of
  * all the previous sources). These entropy sources are slower, but designed to
  * make sure the RNG state contains fresh data that is unpredictable to
  * attackers.
  *
- * - RandAddPeriodic() seeds everything that fast seeding includes, but
+ * - RandAddSeedSleep() seeds everything that fast seeding includes, but
  * additionally:
- *   - A high-precision timestamp
- *   - Dynamic environment data (performance monitoring, ...)
- *   - Strengthen the entropy for 10 ms using repeated SHA512.
- *   This is run once every minute.
+ *   - A high-precision timestamp before and after sleeping 1ms.
+ *   - (On Windows) Once every 10 minutes, performance monitoring data from the
+ * OS. These just exploit the fact the system is idle to improve the quality of
+ * the RNG slightly.
  *
  * On first use of the RNG (regardless of what function is called first), all
  * entropy sources used in the 'slow' seeder are included, but also:
  * - 256 bits from the hardware RNG (rdseed or rdrand) when available.
- * - Dynamic environment data (performance monitoring, ...)
- * - Static environment data
- * - Strengthen the entropy for 100 ms using repeated SHA512.
+ * - (On Windows) Performance monitoring data from the OS.
+ * - (On Windows) Through OpenSSL, the screen contents.
  *
  * When mixing in new entropy, H = SHA512(entropy || old_rng_state) is computed,
  * and (up to) the first 32 bytes of H are produced as output, while the last 32
@@ -70,55 +70,31 @@
  *
  * Thread-safe.
  */
-void GetRandBytes(Span<uint8_t> bytes) noexcept;
-/**
- * Generate a uniform random integer in the range [0..range).
- * Precondition: range > 0
- */
-uint64_t GetRandInternal(uint64_t nMax) noexcept;
-/**
- * Generate a uniform random integer of type T in the range [0..nMax)
- * nMax defaults to std::numeric_limits<T>::max()
- * Precondition: nMax > 0, T is an integral type, no larger than uint64_t
- */
-template <typename T>
-T GetRand(T nMax = std::numeric_limits<T>::max()) noexcept {
-    static_assert(std::is_integral<T>(), "T must be integral");
-    static_assert(std::numeric_limits<T>::max() <=
-                      std::numeric_limits<uint64_t>::max(),
-                  "GetRand only supports up to uint64_t");
-    return T(GetRandInternal(nMax));
+void GetRandBytes(uint8_t *buf, int num) noexcept;
+/** Generate a uniform random integer in the range [0..nMax). Precondition: nMax > 0 */
+uint64_t GetRand(uint64_t nMax) noexcept;
+/** Generate a uniform random integer in the full 64-bit range */
+uint64_t GetRand64() noexcept;
+/** Generate a uniform random duration in the range [0..max), scaled to duration Ret. */
+template <typename Ret, typename Rep, typename Period>
+Ret GetRandomDuration(std::chrono::duration<Rep, Period> max) noexcept {
+    // explicitly use duration_cast here to require Ret to be a std::chrono::duration, otherwise fail at compile-time.
+    const Ret scaledMax = std::chrono::duration_cast<Ret>(max);
+    if (const uint64_t val = scaledMax.count(); val > 0) { // GetRand() doesn't like 0 as input argument
+        return Ret{static_cast<typename Ret::rep>(GetRand(val))};
+    } else {
+        return Ret{static_cast<typename Ret::rep>(0)};
+    }
 }
-/**
- * Generate a uniform random duration in the range [0..max).
- * Precondition: max.count() > 0
- */
-template <typename D>
-D GetRandomDuration(typename std::common_type<D>::type max) noexcept {
-    // Having the compiler infer the template argument from the function
-    // argument is dangerous, because the desired return value generally has a
-    // different type than the function argument. So std::common_type is used to
-    // force the call site to specify the type of the return value.
-
-    assert(max.count() > 0);
-    return D{GetRand(max.count())};
-};
-constexpr auto GetRandMicros = GetRandomDuration<std::chrono::microseconds>;
-constexpr auto GetRandMillis = GetRandomDuration<std::chrono::milliseconds>;
-
-/**
- * Return a timestamp in the future sampled from an exponential distribution
- * (https://en.wikipedia.org/wiki/Exponential_distribution). This distribution
- * is memoryless and should be used for repeated network events (e.g. sending a
- * certain type of message) to minimize leaking information to observers.
- *
- * The probability of an event occuring before time x is 1 - e^-(x/a) where a
- * is the average interval between events.
- * */
-std::chrono::microseconds
-GetExponentialRand(std::chrono::microseconds now,
-                   std::chrono::seconds average_interval);
-
+template <typename Rep, typename Period>
+std::chrono::microseconds GetRandMicros(std::chrono::duration<Rep, Period> max) noexcept {
+    return GetRandomDuration<std::chrono::microseconds>(max);
+}
+template <typename Rep, typename Period>
+std::chrono::milliseconds GetRandMillis(std::chrono::duration<Rep, Period> max) noexcept {
+    return GetRandomDuration<std::chrono::milliseconds>(max);
+}
+int GetRandInt(int nMax) noexcept;
 uint256 GetRandHash() noexcept;
 
 /**
@@ -129,23 +105,15 @@ uint256 GetRandHash() noexcept;
  *
  * Thread-safe.
  */
-void GetStrongRandBytes(Span<uint8_t> bytes) noexcept;
+void GetStrongRandBytes(uint8_t *buf, int num) noexcept;
 
 /**
- * Gather entropy from various expensive sources, and feed them to the PRNG
+ * Sleep for 1ms, gather entropy from various sources, and feed them to the PRNG
  * state.
  *
  * Thread-safe.
  */
-void RandAddPeriodic() noexcept;
-
-/**
- * Gathers entropy from the low bits of the time at which events occur. Should
- * be called with a uint32_t describing the event at the time an event occurs.
- *
- * Thread-safe.
- */
-void RandAddEvent(const uint32_t event_info) noexcept;
+void RandAddSeedSleep();
 
 /**
  * Fast randomness source. This is seeded once with secure random data, but
@@ -170,7 +138,7 @@ private:
         if (requires_seed) {
             RandomSeed();
         }
-        rng.Keystream(bytebuf, sizeof(bytebuf));
+        rng.Output(bytebuf, sizeof(bytebuf));
         bytebuf_size = sizeof(bytebuf);
     }
 
@@ -224,12 +192,8 @@ public:
         }
     }
 
-    /**
-     * Generate a random integer in the range [0..range).
-     * Precondition: range > 0.
-     */
+    /** Generate a random integer in the range [0..range). */
     uint64_t randrange(uint64_t range) noexcept {
-        assert(range);
         --range;
         int bits = CountBits(range);
         while (true) {
@@ -246,27 +210,19 @@ public:
     /** Generate a random 32-bit integer. */
     uint32_t rand32() noexcept { return randbits(32); }
 
-    /** generate a random uint160. */
-    uint160 rand160() noexcept;
+    /** generate a random uint256 in-place.
+     *  Use this to avoid copies if filling a derived type e.g. TxId, BlockHash, etc. */
+    void rand256(uint256 &u) noexcept;
 
     /** generate a random uint256. */
-    uint256 rand256() noexcept;
+    uint256 rand256() noexcept {
+        uint256 ret{uint256::Uninitialized};
+        rand256(ret);
+        return ret;
+    }
 
     /** Generate a random boolean. */
     bool randbool() noexcept { return randbits(1); }
-
-    /** Return the time point advanced by a uniform random duration. */
-    template <typename Tp>
-    Tp rand_uniform_delay(const Tp &time, typename Tp::duration range) {
-        using Dur = typename Tp::duration;
-        Dur dur{range.count() > 0
-                    ? /* interval [0..range) */ Dur{randrange(range.count())}
-                : range.count() < 0
-                    ? /* interval (range..0] */ -Dur{randrange(-range.count())}
-                    :
-                    /* interval [0..0] */ Dur{0}};
-        return time + dur;
-    }
 
     // Compatibility with the C++11 UniformRandomBitGenerator concept
     typedef uint64_t result_type;
@@ -305,7 +261,7 @@ template <typename I, typename R> void Shuffle(I first, I last, R &&rng) {
  * sure that the underlying OS APIs for all platforms support the number.
  * (many cap out at 256 bytes).
  */
-static const int NUM_OS_RANDOM_BYTES = 32;
+static const ssize_t NUM_OS_RANDOM_BYTES = 32;
 
 /**
  * Get 32 bytes of system entropy. Do not use this in application code: use
@@ -326,5 +282,3 @@ bool Random_SanityCheck();
  * needed if it is not called.
  */
 void RandomInit();
-
-#endif // BITCOIN_RANDOM_H

@@ -1,18 +1,18 @@
-// Copyright (c) 2012-2019 The Bitcoin Core developers
+// Copyright (c) 2012-2015 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <key.h>
 
 #include <chainparams.h> // For Params()
-#include <common/system.h>
 #include <key_io.h>
-#include <streams.h>
+#include <script/script.h>
 #include <uint256.h>
 #include <util/strencodings.h>
-#include <util/string.h>
+#include <util/system.h>
 
-#include <test/util/setup_common.h>
+#include <test/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -25,8 +25,6 @@ static const std::string strSecret2 =
     "5KC4ejrDjv152FGwP386VD1i2NYc5KkfSMyv1nGy1VGDxGHqVY3";
 static const std::string strSecret1C =
     "Kwr371tjA9u2rFSMZjTNun2PXXP3WPZu2afRHTcta6KxEUdm1vEw";
-static const std::string strTestSecret1C =
-    "cND2ZvtabDbJ1gucx9GWH6XT9kgTAqfb6cotPt5Q5CyxVDhid2EN";
 static const std::string strSecret2C =
     "L3Hq7a8FEQwJkW1M2GNKDW28546Vp5miewcCzSqUD9kCAXrJdS3g";
 static const std::string addr1 = "1QFqqMUD55ZV3PJEJZtaKCsQmjLT6JkjvJ";
@@ -85,50 +83,6 @@ BOOST_AUTO_TEST_CASE(internal_test) {
                          "24c22e00b7bc7944a1f78"));
 }
 
-BOOST_AUTO_TEST_CASE(encode_decode_secret_test) {
-    const auto mainParams =
-        CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
-    const auto testParams =
-        CreateChainParams(*m_node.args, CBaseChainParams::TESTNET);
-    const auto regParams =
-        CreateChainParams(*m_node.args, CBaseChainParams::TESTNET);
-
-    {
-        // Check the mainnet base58 key
-        CKey mainKey = DecodeSecret(strSecret1C, *mainParams);
-        BOOST_CHECK(mainKey.IsValid() && mainKey.IsCompressed());
-
-        CKey testKey = DecodeSecret(strSecret1C, *testParams);
-        BOOST_CHECK(!testKey.IsValid());
-
-        CKey regKey = DecodeSecret(strSecret1C, *regParams);
-        BOOST_CHECK(!regKey.IsValid());
-    }
-
-    {
-        // Check the testnet and regnet base58 key
-        CKey mainKey = DecodeSecret(strTestSecret1C, *mainParams);
-        BOOST_CHECK(!mainKey.IsValid());
-
-        CKey testKey = DecodeSecret(strTestSecret1C, *testParams);
-        BOOST_CHECK(testKey.IsValid() && testKey.IsCompressed());
-
-        CKey regKey = DecodeSecret(strTestSecret1C, *regParams);
-        BOOST_CHECK(regKey.IsValid() && regKey.IsCompressed());
-    }
-
-    CKey mainKey = DecodeSecret(strSecret1C, *mainParams);
-    CKey testKey = DecodeSecret(strTestSecret1C, *testParams);
-
-    // Check key conversion.
-    BOOST_CHECK_EQUAL(EncodeSecret(mainKey, *mainParams), strSecret1C);
-    BOOST_CHECK_EQUAL(EncodeSecret(mainKey, *testParams), strTestSecret1C);
-    BOOST_CHECK_EQUAL(EncodeSecret(mainKey, *regParams), strTestSecret1C);
-    BOOST_CHECK_EQUAL(EncodeSecret(testKey, *mainParams), strSecret1C);
-    BOOST_CHECK_EQUAL(EncodeSecret(testKey, *testParams), strTestSecret1C);
-    BOOST_CHECK_EQUAL(EncodeSecret(testKey, *regParams), strTestSecret1C);
-}
-
 BOOST_AUTO_TEST_CASE(key_test1) {
     CKey key1 = DecodeSecret(strSecret1);
     BOOST_CHECK(key1.IsValid() && !key1.IsCompressed());
@@ -168,13 +122,13 @@ BOOST_AUTO_TEST_CASE(key_test1) {
 
     const CChainParams &chainParams = Params();
     BOOST_CHECK(DecodeDestination(addr1, chainParams) ==
-                CTxDestination(PKHash(pubkey1)));
+                CTxDestination(pubkey1.GetID()));
     BOOST_CHECK(DecodeDestination(addr2, chainParams) ==
-                CTxDestination(PKHash(pubkey2)));
+                CTxDestination(pubkey2.GetID()));
     BOOST_CHECK(DecodeDestination(addr1C, chainParams) ==
-                CTxDestination(PKHash(pubkey1C)));
+                CTxDestination(pubkey1C.GetID()));
     BOOST_CHECK(DecodeDestination(addr2C, chainParams) ==
-                CTxDestination(PKHash(pubkey2C)));
+                CTxDestination(pubkey2C.GetID()));
 
     for (int n = 0; n < 16; n++) {
         std::string strMsg = strprintf("Very secret message %i: 11", n);
@@ -366,7 +320,7 @@ BOOST_AUTO_TEST_CASE(key_signature_tests) {
     bool found_small = false;
     for (int i = 0; i < 256; ++i) {
         sig.clear();
-        msg = "A message to be signed" + ToString(i);
+        msg = "A message to be signed" + std::to_string(i);
         msg_hash = Hash(msg);
         BOOST_CHECK(key.SignECDSA(msg_hash, sig));
         found = sig[3] == 0x20;
@@ -375,78 +329,6 @@ BOOST_AUTO_TEST_CASE(key_signature_tests) {
     }
     BOOST_CHECK(found);
     BOOST_CHECK(found_small);
-}
-
-BOOST_AUTO_TEST_CASE(key_key_negation) {
-    // create a dummy hash for signature comparison
-    uint8_t rnd[8];
-    std::string str = "Bitcoin key verification\n";
-    GetRandBytes(rnd);
-    uint256 hash;
-    CHash256().Write(MakeUCharSpan(str)).Write(rnd).Finalize(hash);
-
-    // import the static test key
-    CKey key = DecodeSecret(strSecret1C);
-
-    // create a signature
-    std::vector<uint8_t> vch_sig;
-    std::vector<uint8_t> vch_sig_cmp;
-    key.SignECDSA(hash, vch_sig);
-
-    // negate the key twice
-    BOOST_CHECK(key.GetPubKey().data()[0] == 0x03);
-    key.Negate();
-    // after the first negation, the signature must be different
-    key.SignECDSA(hash, vch_sig_cmp);
-    BOOST_CHECK(vch_sig_cmp != vch_sig);
-    BOOST_CHECK(key.GetPubKey().data()[0] == 0x02);
-    key.Negate();
-    // after the second negation, we should have the original key and thus the
-    // same signature
-    key.SignECDSA(hash, vch_sig_cmp);
-    BOOST_CHECK(vch_sig_cmp == vch_sig);
-    BOOST_CHECK(key.GetPubKey().data()[0] == 0x03);
-}
-
-static CPubKey UnserializePubkey(const std::vector<uint8_t> &data) {
-    CDataStream stream{SER_NETWORK, INIT_PROTO_VERSION};
-    stream << data;
-    CPubKey pubkey;
-    stream >> pubkey;
-    return pubkey;
-}
-
-static unsigned int GetLen(uint8_t chHeader) {
-    if (chHeader == 2 || chHeader == 3) {
-        return CPubKey::COMPRESSED_SIZE;
-    }
-    if (chHeader == 4 || chHeader == 6 || chHeader == 7) {
-        return CPubKey::SIZE;
-    }
-    return 0;
-}
-
-static void CmpSerializationPubkey(const CPubKey &pubkey) {
-    CDataStream stream{SER_NETWORK, INIT_PROTO_VERSION};
-    stream << pubkey;
-    CPubKey pubkey2;
-    stream >> pubkey2;
-    BOOST_CHECK(pubkey == pubkey2);
-}
-
-BOOST_AUTO_TEST_CASE(pubkey_unserialize) {
-    for (uint8_t i = 2; i <= 7; ++i) {
-        CPubKey key = UnserializePubkey({0x02});
-        BOOST_CHECK(!key.IsValid());
-        CmpSerializationPubkey(key);
-        key = UnserializePubkey(std::vector<uint8_t>(GetLen(i), i));
-        CmpSerializationPubkey(key);
-        if (i == 5) {
-            BOOST_CHECK(!key.IsValid());
-        } else {
-            BOOST_CHECK(key.IsValid());
-        }
-    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
