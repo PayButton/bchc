@@ -25,8 +25,7 @@ Indexer Documentation
 
 BCHC uses the Chronik indexer. Documentation can be found [here](https://chronik.e.cash/).
 
-License
--------
+## License
 
 BCHC is released under the terms of the MIT license. See
 [COPYING](COPYING) for more information or see
