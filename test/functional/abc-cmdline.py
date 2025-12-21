@@ -54,7 +54,7 @@ class ABC_CmdLine_Test (BitcoinTestFramework):
             DEFAULT_MAX_GENERATED_BLOCK_SIZE)])
         self.check_excessive(DEFAULT_MAX_GENERATED_BLOCK_SIZE)
         # Check for EB correctness in the subver string
-        self.check_subversion(r"/Bitcoin Cash Node:.*\(EB"
+        self.check_subversion(r"/BCHC:.*\(EB"
                               + str(DEFAULT_MAX_GENERATED_BLOCK_SIZE // ONE_MEGABYTE)
                               + r"\.0; .*\)/")
 
@@ -63,7 +63,7 @@ class ABC_CmdLine_Test (BitcoinTestFramework):
         self.start_node(0, self.extra_args[0] + ["-excessiveblocksize={}".format(MAX_CONSENSUS_BLOCK_SIZE)])
         self.check_excessive(MAX_CONSENSUS_BLOCK_SIZE)
         # Check for EB correctness in the subver string
-        self.check_subversion(r"/Bitcoin Cash Node:.*\(EB" + str(MAX_CONSENSUS_BLOCK_SIZE // ONE_MEGABYTE)
+        self.check_subversion(r"/BCHC:.*\(EB" + str(MAX_CONSENSUS_BLOCK_SIZE // ONE_MEGABYTE)
                               + r"\.0; .*\)/")
 
         self.log.info("  Attempt to set below legacy limit of 1MB - try {} bytes".format(
