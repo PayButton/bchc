@@ -35,7 +35,8 @@ PATTERN_ONION = re.compile(
 # Used to only select nodes with a user agent string compatible with the
 # Bitcoin Cash specification.
 PATTERN_AGENT = re.compile(
-    r"^(/Bitcoin Cash Node:2[6-9]\.(\d+)\.(\d+)[^/]*/"
+    r"^(/BCHC:2\.(\d+)\.(\d+)[^/]*/"
+    r"|/Bitcoin Cash Node:2[6-9]\.(\d+)\.(\d+)[^/]*/"
     r"|/kth-bch:0\.3[2-9]\.(\d+)[^/]*/"
     r"|/Bitcoin Verde:2\.4\.(\d+)[^/]*/"
     r"|/BCH Unlimited:2\.(\d+)\.(\d+)[^/]*/)")
