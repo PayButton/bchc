@@ -1,0 +1,32 @@
+# Copyright (c) 2023 The Bitcoin developers
+
+[package]
+name = "bitcoinsuite-slp"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT"
+
+[dependencies]
+abc-rust-lint = { path = "../abc-rust-lint" }
+
+bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+
+# Efficient byte strings, with ref counted substrings
+bytes = { version = "1.4", features = ["serde"] }
+
+# En-/decode byte strings from/to hex
+hex = "0.4"
+
+# Extension on iterators
+itertools = "0.10"
+
+# Serialize structs
+serde = { version = "1.0", features = ["derive"] }
+
+# Derive error enums
+thiserror = "2.0.3"
+
+[dev-dependencies]
+# Colorful diffs for assertions
+pretty_assertions = "1.0"

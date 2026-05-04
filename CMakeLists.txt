@@ -115,7 +115,14 @@ if(ENABLE_COVERAGE)
 	add_custom_target_coverage(check-upgrade-activated-extended)
 endif()
 
+option(BUILD_CHRONIK "Activate the Chronik indexer" OFF)
+option(BUILD_CHRONIK_PLUGINS "Activate the plugin system for Chronik" OFF)
+
 add_subdirectory(src)
+if(BUILD_CHRONIK)
+	add_subdirectory(chronik)
+endif()
+
 if(ENABLE_TEST)
     add_subdirectory(test)
 endif()

@@ -1,0 +1,62 @@
+# Copyright (c) 2022 The Bitcoin developers
+
+[package]
+name = "chronik-indexer"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT"
+
+[features]
+default = []
+plugins = ["chronik-db/plugins", "chronik-plugin/enabled"]
+
+[dependencies]
+abc-rust-lint = { path = "../abc-rust-lint" }
+abc-rust-error = { path = "../abc-rust-error" }
+
+bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
+
+chronik-bridge = { path = "../chronik-bridge" }
+chronik-db = { path = "../chronik-db" }
+chronik-plugin = { path = "../chronik-plugin" }
+chronik-proto = { path = "../chronik-proto" }
+chronik-util = { path = "../chronik-util" }
+
+# Efficient byte strings, with ref counted substrings
+bytes = "1.4"
+
+# Bridge to C++
+cxx = "1.0"
+
+# Async toolkit
+futures = "0.3"
+
+# Protobuf en-/decoding
+prost = "0.11"
+
+# Derive error enums
+thiserror = "2.0.3"
+
+# En-/decode byte strings from/to hex
+hex = "0.4"
+
+# hex!() macro for byte array hex literals
+hex-literal = "0.3"
+
+# Async runtime
+[dependencies.tokio]
+version = "1.25"
+features = ["sync", "rt", "rt-multi-thread", "macros"]
+
+[dev-dependencies]
+# Colorful diffs for assertions
+pretty_assertions = "1.0"
+
+# Temporary directory that's deleted when dropped
+tempdir = "0.3"
+
+[build-dependencies]
+# Build structs for protobuf messages from a *.proto file
+prost-build = "0.11"

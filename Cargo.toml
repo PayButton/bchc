@@ -1,0 +1,28 @@
+# Copyright (c) 2022 The Bitcoin developers
+
+[workspace]
+
+members = [
+    "chronik/abc-rust-error",
+    "chronik/abc-rust-lint",
+    "chronik/bitcoinsuite-core",
+    "chronik/bitcoinsuite-slp",
+    "chronik/chronik-bridge",
+    "chronik/chronik-db",
+    "chronik/chronik-http",
+    "chronik/chronik-indexer",
+    "chronik/chronik-lib",
+    "chronik/chronik-plugin",
+    "chronik/chronik-plugin-common",
+    "chronik/chronik-plugin-impl",
+    "chronik/chronik-proto",
+    "chronik/chronik-util",
+]
+
+[workspace.package]
+rust-version = "1.80.0"
+
+[profile.release-wasm]
+inherits = "release"
+lto = true
+opt-level = "z"

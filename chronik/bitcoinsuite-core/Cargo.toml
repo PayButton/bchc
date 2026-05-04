@@ -1,0 +1,39 @@
+# Copyright (c) 2022 The Bitcoin developers
+
+[package]
+name = "bitcoinsuite-core"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT"
+
+[dependencies]
+abc-rust-lint = { path = "../abc-rust-lint" }
+abc-rust-error = { path = "../abc-rust-error"}
+
+# Efficient byte strings, with ref counted substrings
+bytes = { version = "1.4", features = ["serde"] }
+
+# En-/decode byte strings from/to hex
+hex = "0.4"
+
+# hex!() macro for byte array hex literals
+hex-literal = "0.3"
+
+# Pattern matching
+regex = "1.12.2"
+
+# Implementation of RIPEMD-160 etc. cryptographic hash functions
+ripemd = "0.1"
+
+# Serialize structs
+serde = { version = "1.0", features = ["derive"] }
+
+# JSON en-/decoding
+serde_json = "1.0.133"
+
+# Implementation of SHA-256 etc. cryptographic hash functions
+sha2 = "0.10"
+
+# Derive error enums
+thiserror = "2.0.3"

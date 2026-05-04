@@ -1,0 +1,662 @@
+// Copyright (c) 2023 The Bitcoin developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+syntax = "proto3";
+
+package chronik;
+
+// Block on the blockchain
+message Block {
+    // Info about the block
+    BlockInfo block_info = 1;
+}
+
+// Range of blocks
+message Blocks {
+    // Queried blocks
+    repeated BlockInfo blocks = 1;
+}
+
+// Header on the blockchain
+message BlockHeader {
+    // Raw data
+    bytes raw_header = 1;
+    // Merkle root
+    bytes root = 2;
+    // Merkle branch of header up to root, deepest pairing first
+    repeated bytes branch = 3;
+}
+
+// Range of headers
+message BlockHeaders {
+    // Queried headers
+    repeated BlockHeader headers = 1;
+}
+
+// Info about the state of the blockchain.
+message BlockchainInfo {
+    // Hash (little-endian) of the current tip
+    bytes tip_hash = 1;
+    // Height of the current tip (genesis has height = 0)
+    int32 tip_height = 2;
+}
+
+// Info about the chronik software this server is running
+message ChronikInfo {
+    // chronik server version from chronik-http/Cargo.toml
+    string version = 1;
+}
+
+// Info about a block
+message BlockInfo {
+    // Hash (little-endian)
+    bytes hash = 1;
+    // Hash of the previous block (little-endian)
+    bytes prev_hash = 2;
+    // Height in the chain
+    int32 height = 3;
+    // nBits field encoding the target
+    uint32 n_bits = 4;
+    // Timestamp field of the block
+    int64 timestamp = 5;
+    // Whether the block has been finalized by Avalanche
+    bool is_final = 14;
+    // Block size of this block in bytes (including headers etc.)
+    uint64 block_size = 6;
+    // Number of txs in this block
+    uint64 num_txs = 7;
+    // Total number of tx inputs in block (including coinbase)
+    uint64 num_inputs = 8;
+    // Total number of tx output in block (including coinbase)
+    uint64 num_outputs = 9;
+    // Total number of satoshis spent by tx inputs
+    int64 sum_input_sats = 10;
+    // Block reward for this block
+    int64 sum_coinbase_output_sats = 11;
+    // Total number of satoshis in non-coinbase tx outputs
+    int64 sum_normal_output_sats = 12;
+    // Total number of satoshis burned using OP_RETURN
+    int64 sum_burned_sats = 13;
+}
+
+// Details about a transaction
+message Tx {
+    // TxId (little-endian) of the tx
+    bytes txid = 1;
+    // nVersion
+    int32 version = 2;
+    // Inputs of the tx (aka. `vin`)
+    repeated TxInput inputs = 3;
+    // Outputs of the tx (aka. `vout`)
+    repeated TxOutput outputs = 4;
+    // nLockTime
+    uint32 lock_time = 5;
+    // Which block this tx is in, or None, if in the mempool
+    BlockMetadata block = 8;
+    // Time this tx has first been added to the mempool, or 0 if unknown
+    int64 time_first_seen = 9;
+    // Serialized size of the tx
+    uint32 size = 11;
+    // Whether this tx is a coinbase tx
+    bool is_coinbase = 12;
+    // Tokens involved in this txs
+    repeated TokenEntry token_entries = 13;
+    // Failed parsing attempts of this tx
+    repeated TokenFailedParsing token_failed_parsings = 14;
+    // Token status, i.e. whether this tx has any tokens or unintentional token burns
+    // or something unexpected, like failed parsings etc.
+    TokenStatus token_status = 15;
+    // Whether the transaction has been finalized by avalanche
+    bool is_final = 16;
+}
+
+// UTXO of a script.
+message ScriptUtxo {
+    // txid and out_idx of the unspent output.
+    OutPoint outpoint = 1;
+    // Block height of the UTXO, or -1 if in mempool.
+    int32 block_height = 2;
+    // Whether the UTXO has been created in a coinbase tx.
+    bool is_coinbase = 3;
+    // Value of the output, in satoshis.
+    int64 sats = 5;
+    // Whether the UTXO has been finalized by Avalanche.
+    bool is_final = 10;
+    // Token value attached to this UTXO
+    Token token = 11;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 12;
+}
+
+// UTXO, but with a script attached.
+message Utxo {
+    // txid and out_idx of the unspent output.
+    OutPoint outpoint = 1;
+    // Block height of the UTXO, or -1 if in mempool.
+    int32 block_height = 2;
+    // Whether the UTXO has been created in a coinbase tx.
+    bool is_coinbase = 3;
+    // Value of the output, in satoshis.
+    int64 sats = 4;
+    // Bytecode of the script of the output
+    bytes script = 5;
+    // Whether the UTXO has been finalized by Avalanche.
+    bool is_final = 6;
+    // Token value attached to this UTXO
+    Token token = 7;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 8;
+}
+
+// COutPoint, points to a coin being spent by an input.
+message OutPoint {
+    // TxId of the tx of the output being spent.
+    bytes txid = 1;
+    // Index of the output spent within the transaction.
+    uint32 out_idx = 2;
+}
+
+// Points to an input spending a coin.
+message SpentBy {
+    // TxId of the tx with the input.
+    bytes txid = 1;
+    // Index in the inputs of the tx.
+    uint32 input_idx = 2;
+}
+
+// CTxIn, spends a coin.
+message TxInput {
+    // Reference to the coin being spent.
+    OutPoint prev_out = 1;
+    // scriptSig, script unlocking the coin.
+    bytes input_script = 2;
+    // scriptPubKey, script of the output locking the coin.
+    bytes output_script = 3;
+    // value of the output being spent, in satoshis.
+    int64 sats = 4;
+    // nSequence of the input.
+    uint32 sequence_no = 5;
+    // Token value attached to this input
+    Token token = 8;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 9;
+}
+
+// CTxOut, creates a new coin.
+message TxOutput {
+    // Value of the coin, in satoshis.
+    int64 sats = 1;
+    // scriptPubKey, script locking the output.
+    bytes output_script = 2;
+    // Which tx and input spent this output, if any.
+    SpentBy spent_by = 4;
+    // Token value attached to this output
+    Token token = 5;
+    // Data attached to this output by plugins
+    map<string, PluginEntry> plugins = 6;
+}
+
+// Data about a block which a Tx is in.
+message BlockMetadata {
+    // Height of the block the tx is in.
+    int32 height = 1;
+    // Hash of the block the tx is in.
+    bytes hash = 2;
+    // nTime of the block the tx is in.
+    int64 timestamp = 3;
+    // Whether the block has been finalized by Avalanche.
+    bool is_final = 4;
+}
+
+// Status of a token tx
+enum TokenStatus {
+    // Tx involves no tokens whatsover, i.e. neither any burns nor any failed
+    // parsing/coloring or any tokens being created / moved.
+    TOKEN_STATUS_NON_TOKEN = 0;
+    // Tx involves tokens but no unintentional burns or failed parsings/colorings
+    TOKEN_STATUS_NORMAL = 1;
+    // Tx involves tokens but contains unintentional burns or failed parsings/colorings
+    TOKEN_STATUS_NOT_NORMAL = 2;
+}
+
+// ALP token type
+enum AlpTokenType {
+    // Standard ALP token type
+    ALP_TOKEN_TYPE_STANDARD = 0;
+}
+
+// SLP token type
+enum SlpTokenType {
+    // Unknown "0" token type
+    SLP_TOKEN_TYPE_NONE = 0;
+    // SLP V1 token type
+    SLP_TOKEN_TYPE_FUNGIBLE = 1;
+    // SLP V2 mint vault token type
+    SLP_TOKEN_TYPE_MINT_VAULT = 2;
+    // NFT1 group token type
+    SLP_TOKEN_TYPE_NFT1_GROUP = 0x81;
+    // NFT1 child token type
+    SLP_TOKEN_TYPE_NFT1_CHILD = 0x41;
+}
+
+// SLP/ALP token type
+message TokenType {
+    // SLP/ALP token type
+    oneof token_type {
+        // SLP token type. Can have unknown values for unknown token types
+        SlpTokenType slp = 1;
+        // ALP token type. Can have unknown values for unknown token types
+        AlpTokenType alp = 2;
+    }
+}
+
+// SLP/ALP tx type
+enum TokenTxType {
+    // No tx type, e.g. when input tokens are burned
+    NONE = 0;
+    // Unknown tx type, i.e. for unknown token types
+    UNKNOWN = 1;
+    // GENESIS tx
+    GENESIS = 2;
+    // SEND tx
+    SEND = 3;
+    // MINT tx
+    MINT = 4;
+    // BURN tx
+    BURN = 5;
+}
+
+// Info about a token
+message TokenInfo {
+    // Hex token_id (in big-endian, like usually displayed to users) of the token.
+    // This is not `bytes` because SLP and ALP use different endiannnes, so to avoid this we use hex, which conventionally implies big-endian in a bitcoin context.
+    string token_id = 1;
+    // Token type of the token
+    TokenType token_type = 2;
+    // Info found in the token's GENESIS tx
+    GenesisInfo genesis_info = 3;
+    // Block of the GENESIS tx, if it's mined already
+    BlockMetadata block = 4;
+    // Time the GENESIS tx has first been seen by the indexer
+    int64 time_first_seen = 5;
+}
+
+// Token involved in a transaction
+message TokenEntry {
+    // Hex token_id (in big-endian, like usually displayed to users) of the token.
+    // This is not `bytes` because SLP and ALP use different endiannes, so to avoid
+    // this we use hex, which conventionally implies big-endian in a bitcoin context.
+    string token_id = 1;
+    // Token type of the token
+    TokenType token_type = 2;
+    // Tx type of the token; NONE if there's no section that introduced it (e.g. in an accidental burn)
+    TokenTxType tx_type = 3;
+    // For NFT1 Child tokens: group ID
+    string group_token_id = 4;
+    // Whether the validation rules have been violated for this section
+    bool is_invalid = 5;
+    // Human-readable error message of why this entry burned tokens
+    string burn_summary = 6;
+    // Human-readable error messages of why colorings failed
+    repeated TokenFailedColoring failed_colorings = 7;
+    // Number of actually burned tokens (as decimal integer 
+    // string, e.g. "2000"; in atoms aka base tokens).
+    // This is because burns can exceed the 64-bit range of 
+    // values and protobuf doesn't have a nice type to encode this.
+    string actual_burn_atoms = 8;
+    // Burn amount (in atoms aka base tokens) the user explicitly opted into
+    uint64 intentional_burn_atoms = 9;
+    // Whether any mint batons have been burned of this token
+    bool burns_mint_batons = 10;
+}
+
+// Genesis info found in GENESIS txs of tokens
+message GenesisInfo {
+    // token_ticker of the token
+    bytes token_ticker = 1;
+    // token_name of the token
+    bytes token_name = 2;
+    // URL of the token
+    bytes url = 3;
+    // token_document_hash of the token (only on SLP)
+    bytes hash = 4;
+    // mint_vault_scripthash (only on SLP V2 Mint Vault)
+    bytes mint_vault_scripthash = 5;
+    // Arbitray payload data of the token (only on ALP)
+    bytes data = 6;
+    // auth_pubkey of the token (only on ALP)
+    bytes auth_pubkey = 7;
+    // decimals of the token, i.e. how many decimal places the token should be displayed with.
+    uint32 decimals = 8;
+}
+
+// Token coloring an input or output
+message Token {
+    // Hex token_id of the token, see `TokenInfo` for details
+    string token_id = 1;
+    // Token type of the token
+    TokenType token_type = 2;
+    // Index into `token_entries` for `Tx`. -1 for UTXOs
+    int32 entry_idx = 3;
+    // Base token amount of the input/output
+    uint64 atoms = 4;
+    // Whether the token is a mint baton
+    bool is_mint_baton = 5;
+}
+
+// A report of a failed parsing attempt of SLP/ALP.
+// This should always indicate something went wrong when building the tx.
+message TokenFailedParsing {
+    // For ALP, the index of the pushdata in the OP_RETURN that failed parsing.
+    // -1 if the whole OP_RETURN failed, e.g. for SLP or eMPP
+    int32 pushdata_idx = 1;
+    // The bytes that failed parsing, useful for debugging
+    bytes bytes = 2;
+    // Human-readable message of what went wrong
+    string error = 3;
+}
+
+// A report of a failed coloring attempt of SLP/ALP.
+// This should always indicate something went wrong when building the tx.
+message TokenFailedColoring {
+    // For ALP, the index of the pushdata in the OP_RETURN that failed parsing.
+    int32 pushdata_idx = 1;
+    // Human-readable message of what went wrong
+    string error = 3;
+}
+
+// Data attached by a plugin to an output
+message PluginEntry {
+    // Groups assigned to this output
+    repeated bytes groups = 1;
+    // Data assigned to the output
+    repeated bytes data = 2;
+}
+
+// Data about a plugin group
+message PluginGroup {
+    // Group bytes
+    bytes group = 1;
+}
+
+// List of plugin groups
+message PluginGroups {
+    // Groups
+    repeated PluginGroup groups = 1;
+    // Group that if specified as `start` will give us the next groups,
+    // or empty if groups have been exausted.
+    bytes next_start = 2;
+}
+
+// Page with txs
+message TxHistoryPage {
+    // Txs of the page
+    repeated Tx txs = 1;
+    // How many pages there are total
+    uint32 num_pages = 2;
+    // How many txs there are total
+    uint32 num_txs = 3;
+}
+
+// List of UTXOs of a script
+message ScriptUtxos {
+    // The serialized script of the UTXOs
+    bytes script = 1;
+    // UTXOs of the script.
+    repeated ScriptUtxo utxos = 2;
+}
+
+// Script identity by type and payload. Same field layout as `WsSubScript`.
+message ScriptRef {
+    // Script type to subscribe to ("p2pkh", "p2sh", "p2pk", "other").
+    string script_type = 1;
+    // Payload for the given script type:
+    // - 20-byte hash for "p2pkh" and "p2sh"
+    // - 33-byte or 65-byte pubkey for "p2pk"
+    // - Serialized script for "other"
+    bytes payload = 2;
+}
+
+// Parameters for requesting the utxos for a batch of scripts.
+message ScriptBatchUtxosParams {
+    // Scripts to query.
+    repeated ScriptRef scripts = 1;
+}
+
+// Request the utxos for a batch of scripts.
+message ScriptBatchUtxosRequest {
+    // Batch inputs (scripts to resolve UTXOs for).
+    ScriptBatchUtxosParams params = 1;
+}
+
+// One row in the batch response (echoes the request script from the same index).
+message ScriptBatchUtxosRow {
+    // The requested script.
+    ScriptRef script = 1;
+    // UTXO set for this script.
+    ScriptUtxos utxos = 2;
+}
+
+// The utxos from a batch of scripts.
+message ScriptBatchUtxosResponse {
+    // One row per requested script, same order as `ScriptBatchUtxosParams.scripts`.
+    repeated ScriptBatchUtxosRow rows = 1;
+}
+
+// List of UTXOs
+message Utxos {
+    // UTXOs
+    repeated Utxo utxos = 1;
+}
+
+// Broadcast a single tx
+message BroadcastTxRequest {
+    // Serialized tx
+    bytes raw_tx = 1;
+    // Whether to skip token checks and broadcast even if tokens are unintentionally burned
+    bool skip_token_checks = 2;
+    // Waits for finalization of the transaction before returning the request,
+    // for up to the given seconds.
+    // Set to 0 to not wait at all and return right after broadcast.
+    uint64 finalization_timeout_secs = 3;
+}
+
+// Response of broadcasting the tx
+message BroadcastTxResponse {
+    // TxId of the broadcast tx
+    bytes txid = 1;
+}
+
+// Broadcast multiple txs. If one of the txs fails token validation, the entire batch will not be broadcast.
+message BroadcastTxsRequest {
+    // Serialized txs.
+    repeated bytes raw_txs = 1;
+    // Whether to skip token checks and broadcast even if tokens are unintentionally burned
+    bool skip_token_checks = 2;
+    // Waits for finalization of the transaction before returning the request,
+    // for up to the given seconds.
+    // Set to 0 to not wait at all and return right after broadcast.
+    uint64 finalization_timeout_secs = 3;
+}
+
+// Response of broadcasting txs
+message BroadcastTxsResponse {
+    // TxIds of the broadcast txs
+    repeated bytes txids = 1;
+}
+
+// Raw serialized tx.
+message RawTx {
+    // Bytes of the serialized tx.
+    bytes raw_tx = 1;
+}
+
+// Subscription to WebSocket updates.
+message WsSub {
+    // Set this to `true` to unsubscribe from the event.
+    bool is_unsub = 1;
+    // What kind of updates to subscribe to.
+    oneof sub_type {
+        // Subscription to block updates
+        WsSubBlocks blocks = 2;
+        // Subscription to all txs
+        WsSubTxs txs = 8;
+        // Subscription to a script
+        WsSubScript script = 3;
+        // Subscription to a token ID
+        WsSubTokenId token_id = 4;
+        // Subscription to a lokad ID
+        WsSubLokadId lokad_id = 5;
+        // Subscription to a plugin group
+        WsPlugin plugin = 6;
+        // Subscription to a txid
+        WsSubTxId txid = 7;
+    }
+}
+
+// Subscription to blocks. They will be sent any time a block got connected,
+// disconnected or finalized.
+message WsSubBlocks {}
+
+// Subscription to all txs.
+message WsSubTxs {}
+
+// Subscription to a script. They will be sent every time a tx spending the
+// given script or sending to the given script has been added to/removed from
+// the mempool, or confirmed in a block.
+message WsSubScript {
+    // Script type to subscribe to ("p2pkh", "p2sh", "p2pk", "other").
+    string script_type = 1;
+    // Payload for the given script type:
+    // - 20-byte hash for "p2pkh" and "p2sh"
+    // - 33-byte or 65-byte pubkey for "p2pk"
+    // - Serialized script for "other"
+    bytes payload = 2;
+}
+
+// Subscription to a token ID. They will be sent every time a tx spending or
+// sending tokens with the token ID.
+message WsSubTokenId {
+    // Hex token ID to subscribe to.
+    string token_id = 1;
+}
+
+// Subscription to a LOKAD ID. They will be sent every time a tx matches the given LOKAD ID in one of the following ways:
+// - `OP_RETURN <LOKAD ID> ...`: The first output has an OP_RETURN with the given LOKAD ID as first pushop
+// - `OP_RETURN OP_RESERVED "<LOKAD_ID>..." "<LOKAD_ID>..." ...`: The first output has an eMPP encoded OP_RETURN, and one (or more) of the pushops has the LOKAD ID as prefix.
+// - `<LOKAD ID> ...`: An input's scriptSig has the given LOKAD ID as the first pushop
+message WsSubLokadId {
+    // 4-byte LOKAD ID.
+    bytes lokad_id = 1;
+}
+
+// Subscription to a group assigned by a plugin to outputs.
+message WsPlugin {
+    // Name of the plugin to subscribe to
+    string plugin_name = 1;
+    // Group assigned by the plugin to subscribe to
+    bytes group = 2;
+}
+
+// Subscription to a txid. They will be sent every time a tx status confirmation changes.
+message WsSubTxId {
+    // Hex txid to subscribe to.
+    string txid = 1;
+}
+
+// Message coming from the WebSocket
+message WsMsg {
+    // Kind of message
+    oneof msg_type {
+        // Error, e.g. when a bad message has been sent into the WebSocket.
+        Error error = 1;
+        // Block got connected, disconnected, finalized, etc.
+        MsgBlock block = 2;
+        // Tx got added to/removed from the mempool, or confirmed in a block.
+        MsgTx tx = 3;
+    }
+}
+
+// The relevant coinbase data
+message CoinbaseData {
+    // The coinbase input scriptsig
+    bytes coinbase_scriptsig = 1;
+    // Outputs of the coinbase tx
+    repeated TxOutput coinbase_outputs = 2;
+}
+
+// Block got connected, disconnected, finalized, invalidated, etc.
+message MsgBlock {
+    // What happened to the block
+    BlockMsgType msg_type = 1;
+    // Hash of the block (little-endian)
+    bytes block_hash = 2;
+    // Height of the block
+    int32 block_height = 3;
+    // Timestamp field of the block
+    int64 block_timestamp = 4;
+    // The coinbase data, only available if the block is disconnected or
+    // invalidated
+    CoinbaseData coinbase_data = 5;
+}
+
+// Type of message for the block
+enum BlockMsgType {
+    // Block connected to the blockchain
+    BLK_CONNECTED = 0;
+    // Block disconnected from the blockchain
+    BLK_DISCONNECTED = 1;
+    // Block has been finalized by Avalanche
+    BLK_FINALIZED = 2;
+    // Block has been invalidated by Avalanche
+    BLK_INVALIDATED = 3;
+}
+
+// Type of tx finalization
+enum TxFinalizationReasonType {
+    // The transaction is finalized by post-consensus
+    TX_FINALIZATION_REASON_POST_CONSENSUS = 0;
+    // The transaction is finalized by pre-consensus
+    TX_FINALIZATION_REASON_PRE_CONSENSUS = 1;
+}
+
+// The reason that caused a tx to finalize
+message TxFinalizationReason {
+    // What kind of finalization occured
+    TxFinalizationReasonType finalization_type = 1;
+}
+
+// Tx got added to/removed from mempool, or confirmed in a block, etc.
+message MsgTx {
+    // What happened to the tx
+    TxMsgType msg_type = 1;
+    // Txid of the tx (little-endian)
+    bytes txid = 2;
+    // If the transaction is finalized, whether it's from pre-consensus or
+    // post-consensus
+    TxFinalizationReason finalization_reason = 3;
+}
+
+// Type of message for a tx
+enum TxMsgType {
+    // Tx added to the mempool
+    TX_ADDED_TO_MEMPOOL = 0;
+    // Tx removed from the mempool
+    TX_REMOVED_FROM_MEMPOOL = 1;
+    // Tx confirmed in a block
+    TX_CONFIRMED = 2;
+    // Tx finalized by Avalanche
+    TX_FINALIZED = 3;
+    // Tx invalidated by Avalanche
+    TX_INVALIDATED = 4;
+}
+
+// Empty msg without any data
+message Empty {}
+
+// Error message returned from our APIs.
+message Error {
+    // 2, as legacy chronik uses this for the message so we're still compatible.
+    string msg = 2;
+}

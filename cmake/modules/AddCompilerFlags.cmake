@@ -6,6 +6,14 @@ include(SanitizeHelper)
 function(check_compiler_flags RESULT LANGUAGE)
 	sanitize_c_cxx_definition("have_${LANGUAGE}_" "${ARGN}" TEST_NAME)
 
+	# Assume the flag exists for the C++ compiler if it's supported for the C
+	# compiler.
+	set(WERROR_UNUSED_ARG "-Werror=unused-command-line-argument")
+	CHECK_C_COMPILER_FLAG(${WERROR_UNUSED_ARG} IS_C_WERROR_UNUSED_ARG_SUPPORTED)
+	if(${IS_C_WERROR_UNUSED_ARG_SUPPORTED})
+		list(APPEND CMAKE_REQUIRED_FLAGS ${WERROR_UNUSED_ARG})
+	endif()
+
 	if("${LANGUAGE}" STREQUAL "C")
 		CHECK_C_COMPILER_FLAG("${ARGN}" ${TEST_NAME})
 	elseif("${LANGUAGE}" STREQUAL "CXX")
@@ -36,6 +44,28 @@ endmacro()
 macro(add_compiler_flags)
 	add_c_compiler_flags(${ARGN})
 	add_cxx_compiler_flags(${ARGN})
+endmacro()
+
+function(add_target_compiler_flags_for_language LANGUAGE TARGET SCOPE)
+	foreach(f ${ARGN})
+		check_compiler_flags(FLAG_IS_SUPPORTED ${LANGUAGE} ${f})
+		if(${FLAG_IS_SUPPORTED})
+			target_compile_options(${TARGET} ${SCOPE} $<$<COMPILE_LANGUAGE:${LANGUAGE}>:${f}>)
+		endif()
+	endforeach()
+endfunction()
+
+macro(add_target_c_compiler_flags TARGET SCOPE)
+	add_target_compiler_flags_for_language(C ${TARGET} ${SCOPE} ${ARGN})
+endmacro()
+
+macro(add_target_cxx_compiler_flags TARGET SCOPE)
+	add_target_compiler_flags_for_language(CXX ${TARGET} ${SCOPE} ${ARGN})
+endmacro()
+
+macro(add_target_compiler_flags TARGET SCOPE)
+	add_target_c_compiler_flags(${TARGET} ${SCOPE} ${ARGN})
+	add_target_cxx_compiler_flags(${TARGET} ${SCOPE} ${ARGN})
 endmacro()
 
 function(add_compiler_flag_group_for_language LANGUAGE)
@@ -117,47 +147,94 @@ function(add_compile_definitions_to_configuration CONFIGURATION)
 	endforeach()
 endfunction()
 
-# Note that CMake does not provide any facility to check that a linker flag is
-# supported by the compiler.
-# However since CMake 3.2 introduced the CMP0056 policy, the
-# CMAKE_EXE_LINKER_FLAGS variable is used by the try_compile function, so there
-# is a workaround that allow for testing the linker flags.
-function(check_linker_flag RESULT FLAG)
+# Note that CMake provides a facility to check that a linker flag is supported
+# by the compiler starting with 3.18 but we require 3.16 so we have our own
+# function.
+# ***WARNING***: it should not collide with any CMake name (including internal
+# names!), or it can cause infinite recursion, so we use some boring one here.
+#
+# Since CMake 3.2 introduced the CMP0056 policy, the CMAKE_EXE_LINKER_FLAGS
+# variable is used by the try_compile function, so there is a workaround that
+# allow for testing the linker flags from versions before 3.18.
+function(_internal_custom_check_linker_flag RESULT FLAG)
 	sanitize_c_cxx_definition("have_linker_" ${FLAG} FLAG_IS_SUPPORTED)
 
 	# Some linkers (e.g.: Clang) will issue a -Wunused-command-line-argument
 	# warning when an unknown linker flag is set.
 	# Using -Werror will promote these warnings to errors so
-	# CHECK_CXX_COMPILER_FLAG() will return false, preventing the flag from
-	# being set.
+	# CHECK_C_COMPILER_FLAG() will return false, preventing the flag from being
+	# added.
+	# Assume the flag exists for the C++ compiler if it's supported for the C
+	# compiler.
 	set(WERROR_UNUSED_ARG -Werror=unused-command-line-argument)
-	check_compiler_flags(IS_WERROR_SUPPORTED CXX ${WERROR_UNUSED_ARG})
-	if(${IS_WERROR_SUPPORTED})
-		set(CMAKE_REQUIRED_FLAGS ${WERROR_UNUSED_ARG})
+	check_compiler_flags(IS_C_WERROR_UNUSED_ARG_SUPPORTED C ${WERROR_UNUSED_ARG})
+	if(${IS_C_WERROR_UNUSED_ARG_SUPPORTED})
+		list(APPEND CMAKE_REQUIRED_FLAGS ${WERROR_UNUSED_ARG})
 	endif()
 
 	# Save the current linker flags
-	set(SAVE_CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
+	set(SAVED_CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS})
 
 	# Append the flag under test to the linker flags
-	string(APPEND CMAKE_EXE_LINKER_FLAGS " ${FLAG}")
+	string(APPEND CMAKE_EXE_LINKER_FLAGS " ${FLAG} ${ARGN}")
 
-	# CHECK_CXX_COMPILER_FLAG calls CHECK_CXX_SOURCE_COMPILES which in turn
-	# calls try_compile, so it will check our flag
-	CHECK_CXX_COMPILER_FLAG("" ${FLAG_IS_SUPPORTED})
+	# CHECK_C(XX)_COMPILER_FLAG calls cmake_check_source_compiles,
+	# so it will check our flag
+	if(CMAKE_CXX_COMPILER_LOADED)
+		CHECK_CXX_COMPILER_FLAG("" ${FLAG_IS_SUPPORTED})
+	elseif(CMAKE_C_COMPILER_LOADED)
+		CHECK_C_COMPILER_FLAG("" ${FLAG_IS_SUPPORTED})
+	else()
+		message(FATAL_ERROR "Cannot check compiler flags when neither C nor CXX is enabled.")
+	endif()
 
 	# Restore CMAKE_EXE_LINKER_FLAGS
-	set(CMAKE_EXE_LINKER_FLAGS ${SAVE_CMAKE_EXE_LINKER_FLAGS})
+	set(CMAKE_EXE_LINKER_FLAGS ${SAVED_CMAKE_EXE_LINKER_FLAGS})
 
 	set(${RESULT} ${${FLAG_IS_SUPPORTED}} PARENT_SCOPE)
 endfunction()
 
+function(custom_check_linker_flag RESULT FLAG)
+	set(EXTRA_LD_FLAGS ${GLOBAL_LINKER_FLAGS})
+
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		# Include -Wl,--disable-reloc-section so work around a bug from ld.bfd,
+		# the MinGw linker used to cross compile for Windows.
+		# CMake will always attempt to create an import library, despite this
+		# try_compile is building an  executable and not a library, by adding a
+		# --out-implib linker flag. For executables with no exported symbols
+		# this causes ld to segfault when section relocations is enabled, which
+		# is the default for recent MinGw versions (and it is a good thing).
+		# But since here we're building for the sole purpose of detecting if a
+		# flag is supported or not it's totally fine to manually disable it.
+		# See https://gitlab.kitware.com/cmake/cmake/-/merge_requests/5194
+		set(_LD_DISABLE_RELOC_SECTION "-Wl,--disable-reloc-section")
+		_internal_custom_check_linker_flag(_LD_DISABLE_RELOC_SECTION_SUPPORTED ${_LD_DISABLE_RELOC_SECTION} ${EXTRA_LD_FLAGS})
+		if(_LD_DISABLE_RELOC_SECTION_SUPPORTED)
+			list(APPEND EXTRA_LD_FLAGS ${_LD_DISABLE_RELOC_SECTION})
+		endif()
+	endif()
+
+	_internal_custom_check_linker_flag(_RESULT ${FLAG} ${EXTRA_LD_FLAGS})
+	set(${RESULT} ${_RESULT} PARENT_SCOPE)
+endfunction()
+
 function(add_linker_flags)
 	foreach(f ${ARGN})
-		check_linker_flag(FLAG_IS_SUPPORTED ${f})
+		custom_check_linker_flag(FLAG_IS_SUPPORTED ${f})
 
 		if(${FLAG_IS_SUPPORTED})
 			add_link_options(${f})
+		endif()
+	endforeach()
+endfunction()
+
+function(add_target_linker_flags TARGET SCOPE)
+	foreach(f ${ARGN})
+		custom_check_linker_flag(FLAG_IS_SUPPORTED ${f})
+
+		if(${FLAG_IS_SUPPORTED})
+			target_link_options(${TARGET} ${SCOPE} ${f})
 		endif()
 	endforeach()
 endfunction()

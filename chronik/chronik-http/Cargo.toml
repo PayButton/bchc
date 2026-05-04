@@ -1,0 +1,91 @@
+# Copyright (c) 2022 The Bitcoin developers
+
+[package]
+name = "chronik-http"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT"
+
+[features]
+default = []
+plugins = ["chronik-db/plugins", "chronik-indexer/plugins"]
+
+[dependencies]
+abc-rust-error = { path = "../abc-rust-error" }
+abc-rust-lint = { path = "../abc-rust-lint" }
+
+bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+bitcoinsuite-slp = { path = "../bitcoinsuite-slp" }
+
+chronik-bridge = { path = "../chronik-bridge" }
+chronik-db = { path = "../chronik-db" }
+chronik-indexer = { path = "../chronik-indexer" }
+chronik-proto = { path = "../chronik-proto" }
+chronik-plugin = { path = "../chronik-plugin" }
+chronik-util = { path = "../chronik-util" }
+
+# Allow traits to use async functions
+async-trait = "0.1"
+
+# Async websocket library
+async-tungstenite = "0.29.1"
+
+# HTTP webapps
+axum = { version = "0.7", features = ["ws"] }
+
+# Efficient byte strings
+bytes = "1.4"
+
+# Async toolkit
+futures = "0.3"
+
+# En-/decode hex
+hex = "0.4"
+
+# HTTP types
+http = "1.0"
+
+# Helpers for dealing with the http 1.0 Body type
+http-body-util = "0.1"
+
+# HTTP implementation
+hyper = "1.1"
+
+# Iterator utilities
+itertools = "0.13.0"
+
+# JSON RPC network library
+karyon_jsonrpc = { version = "0.6.1", default-features = false, features = ["tokio", "tcp", "tls", "ws"] }
+
+# Protobuf en-/decoding
+prost = "0.11"
+
+# TLS library
+rustls = "0.23.19"
+
+# JSON en-/decoding
+serde_json = "1.0.133"
+
+# Implementation of SHA-256 etc. cryptographic hash functions
+sha2 = "0.10"
+
+# Derive error enums
+thiserror = "2.0.3"
+
+# Tower middleware and utilities for HTTP clients and servers 
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Trait representing an asynchronous server. 
+tower-service = "0.3"
+
+# Semantic version string parser
+versions = "6.2"
+
+# Root certificates for use with rustls
+webpki-roots = "1.0.1"
+
+# Async runtime
+[dependencies.tokio]
+version = "1.25"
+features = ["sync", "rt", "rt-multi-thread", "macros"]

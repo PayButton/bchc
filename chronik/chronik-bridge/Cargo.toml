@@ -1,0 +1,20 @@
+# Copyright (c) 2022 The Bitcoin developers
+
+[package]
+name = "chronik-bridge"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT"
+
+[dependencies]
+abc-rust-lint = { path = "../abc-rust-lint" }
+
+bitcoinsuite-core = { path = "../bitcoinsuite-core" }
+
+# Bridge to C++
+cxx = "1.0"
+
+[build-dependencies]
+# Build scripts for the cxx crate
+cxx-build = "1.0"
