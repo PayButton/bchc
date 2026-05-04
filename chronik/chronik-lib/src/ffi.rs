@@ -118,11 +118,11 @@ mod ffi_inner {
     }
 
     unsafe extern "C++" {
-        include!("blockindex.h");
+        include!("chain.h"); // ABC: include!("blockindex.h");
         include!("chronik-cpp/chronik_validationinterface.h");
         include!("coins.h");
         include!("config.h");
-        include!("node/context.h");
+        include!("chronik-cpp/util/context.h"); // ABC: include!("node/context.h");
         include!("primitives/block.h");
         include!("primitives/transaction.h");
 

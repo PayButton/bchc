@@ -70,6 +70,8 @@
 #include <walletinitinterface.h>
 #include <warnings.h>
 
+#include <chronik-cpp/chronik.h>
+
 #if ENABLE_ZMQ
 #include <zmq/zmqnotificationinterface.h>
 #include <zmq/zmqrpc.h>
@@ -240,6 +242,9 @@ void Shutdown(NodeContext &node) {
     // using the other before destroying them.
     if (node.peerLogic) {
         UnregisterValidationInterface(node.peerLogic.get());
+    }
+    if (gArgs.GetArg("-chronik", false)) {
+        chronik::Stop();
     }
     if (g_connman) {
         g_connman->Stop();
@@ -621,6 +626,140 @@ void SetupServerArgs() {
                            "getrawtransaction rpc call (default: %d)",
                            DEFAULT_TXINDEX),
                  ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+
+    gArgs.AddArg(
+        "-chronik",
+        strprintf("Enable the Chronik indexer, which can be read via a "
+                  "dedicated HTTP/Protobuf interface (default: %d)",
+                  false),
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikbind=<addr>[:port]",
+        strprintf(
+            "Bind the Chronik indexer to the given address to listen for "
+            "HTTP/Protobuf connections to access the index. Unlike the "
+            "JSON-RPC, it's ok to have this publicly exposed on the internet. "
+            "This option can be specified multiple times (default: %s; default "
+            "port: %u, testnet: %u, regtest: %u)",
+            "...",
+            0, 0,
+            0),
+        ArgsManager::ALLOW_ANY |
+            ArgsManager::NETWORK_ONLY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg("-chroniktokenindex",
+                   "Enable token indexing in Chronik (default: 1)",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-chroniklokadidindex",
+                   "Enable LOKAD ID indexing in Chronik (default: 1)",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-chronikreindex",
+                   "Reindex the Chronik indexer from genesis, but leave the "
+                   "other indexes untouched",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chroniktxnumcachebuckets",
+        strprintf(
+            "Tuning param of the TxNumCache, specifies how many buckets "
+            "to use on the belt. Caution against setting this too high, "
+            "it may slow down indexing. Set to 0 to disable. (default: %d)",
+            chronik::DEFAULT_TX_NUM_CACHE_BUCKETS),
+        ArgsManager::ALLOW_ANY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chroniktxnumcachebucketsize",
+        strprintf(
+            "Tuning param of the TxNumCache, specifies the size of each bucket "
+            "on the belt. Unlike the number of buckets, this may be increased "
+            "without much danger of slowing the indexer down. The total cache "
+            "size will be `num_buckets * bucket_size * 40B`, so by default the "
+            "cache will require %dkB of memory. (default: %d)",
+            chronik::DEFAULT_TX_NUM_CACHE_BUCKETS *
+                chronik::DEFAULT_TX_NUM_CACHE_BUCKET_SIZE * 40 / 1000,
+            chronik::DEFAULT_TX_NUM_CACHE_BUCKET_SIZE),
+        ArgsManager::ALLOW_ANY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg("-chronikperfstats",
+                   "Output some performance statistics (e.g. num cache hits, "
+                   "seconds spent) into a <datadir>/perf folder. (default: 0)",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-chronikscripthashindex",
+                   "Enable the scripthash index for the Chronik indexer "
+                   "(default: 1 if chronikelectrumbind is set, 0 otherwise) ",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrumbind=<addr>[:port][:t|s|w|y]",
+        strprintf(
+            "Bind the Chronik Electrum interface to the given "
+            "address:port:protocol. If not set, the Electrum interface will "
+            "not start. This option can be specified multiple times. The "
+            "protocol is selected by a single letter, where 't' means TCP, 's' "
+            "means TLS, 'w' means WS and 'y' means WSS. If TLS and/or WSS is "
+            "selected, the certificate chain and private key must both be "
+            "passed (see -chronikelectrumcert and -chronikelectrumprivkey "
+            "(default: disabled; default port: %u, testnet: %u, regtest: %u; "
+            "default protocol: TLS)",
+            0,
+            0,
+            0),
+        ArgsManager::ALLOW_ANY |
+            ArgsManager::NETWORK_ONLY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrumcert",
+        "Path to the certificate file to be used by the Chronik Electrum "
+        "server when the TLS protocol is selected. The file should contain "
+        "the whole certificate chain (typically a .pem file). If used the "
+        "-chronikelectrumprivkey must be set as well.",
+        ArgsManager::ALLOW_ANY |
+            ArgsManager::NETWORK_ONLY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrumprivkey",
+        "Path to the private key file to be used by the Chronik Electrum "
+        "server when the TLS protocol is selected. If used the "
+        "-chronikelectrumcert must be set as well.",
+        ArgsManager::ALLOW_ANY |
+            ArgsManager::NETWORK_ONLY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrumurl",
+        "The URL to advertise to the Electrum peers. This needs to be set to "
+        "the server public URL to instruct the other Electrum peers that they "
+        "don't have to drop the connection. See the 'hosts' key in "
+        "https://electrum-cash-protocol.readthedocs.io/en/latest/"
+        "protocol-methods.html#server.features (default: 127.0.0.1).",
+        ArgsManager::ALLOW_ANY |
+            ArgsManager::NETWORK_ONLY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrummaxhistory",
+        strprintf("Largest tx history we are willing to serve. (default: %u)",
+                  chronik::DEFAULT_ELECTRUM_MAX_HISTORY),
+        ArgsManager::ALLOW_ANY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrumdonationaddress",
+        strprintf(
+            "The server donation address. No checks are done on the server "
+            "side to ensure this is a valid eCash address, it is just relayed "
+            "to clients verbatim as a text string (%u characters maximum).",
+            chronik::MAX_LENGTH_DONATION_ADDRESS),
+        ArgsManager::ALLOW_ANY,
+        OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-chronikelectrumpeersvalidationinterval",
+        strprintf(
+            "The peers submitted via the Chronik Electrum server.add_peer "
+            "endpoint are periodically checked for validity and are only "
+            "returned after they passed the validation. This option controls "
+            "the interval duration between successive peers validation "
+            "processes in seconds (default: %u). Setting this value to 0 "
+            "disables the peer validation completely.",
+            chronik::DEFAULT_ELECTRUM_PEER_VALIDATION_INTERVAL_SECS),
+        ArgsManager::ALLOW_ANY,
+        OptionsCategory::OPTIONS);
+
     gArgs.AddArg("-coinstatsindex",
                  strprintf("Maintain coinstats index used by the gettxoutsetinfo RPC (default: %u)", DEFAULT_COINSTATSINDEX),
                  ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);

@@ -127,7 +127,9 @@ add_custom_command(
 # Contains all the C++ functions used by Rust, and the code bridging both
 add_library(chronik-bridge
     chronik-cpp/chronik_bridge.cpp
+    chronik-cpp/util/chaintype.cpp
     chronik-cpp/util/hash.cpp
+    chronik-cpp/util/storage.cpp
     ${CHRONIK_BRIDGE_GENERATED_CPP_FILES}
 )
 target_include_directories(chronik-bridge

@@ -2,15 +2,16 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blockindex.h>
+//#include <blockindex.h>
 #include <chronik-cpp/util/hash.h>
 #include <chronik_lib/src/ffi.rs.h>
-#include <kernel/chain.h>
+//#include <kernel/chain.h>
 #include <logging.h>
-#include <node/context.h>
 #include <primitives/block.h>
 #include <txmempool.h>
 #include <validationinterface.h>
+
+#include <chronik-cpp/util/context.h> // ABC: node/context.h
 
 namespace chronik {
 
@@ -41,7 +42,7 @@ private:
     rust::Box<chronik_bridge::Chronik> m_chronik;
     const node::NodeContext &m_node;
 
-    void TransactionAddedToMempool(
+    /*void TransactionAddedToMempool(
         const CTransactionRef &ptx,
         std::shared_ptr<const std::vector<Coin>> spent_coins,
         uint64_t mempool_sequence) override {
@@ -95,7 +96,7 @@ private:
         const CTransactionRef &tx,
         std::shared_ptr<const std::vector<Coin>> spent_coins) override {
         m_chronik->handle_tx_invalidated(*tx, *spent_coins);
-    }
+    }*/
 };
 
 std::unique_ptr<ChronikValidationInterface> g_chronik_validation_interface;

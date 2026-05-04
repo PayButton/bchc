@@ -2,23 +2,23 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <blockindex.h>
+//#include <blockindex.h>
 #include <chainparams.h>
 #include <chronik-bridge/src/ffi.rs.h>
 #include <chronik-cpp/chronik_bridge.h>
 #include <chronik-cpp/util/collection.h>
 #include <chronik-cpp/util/hash.h>
 #include <clientversion.h>
-#include <common/messages.h>
+//#include <common/messages.h>
 #include <compressor.h>
 #include <config.h>
 #include <feerate.h>
 #include <logging.h>
 #include <node/blockstorage.h>
-#include <node/coin.h>
+#include <coins.h> // ABC: node/coin.h
 #include <node/context.h>
 #include <node/transaction.h>
-#include <node/ui_interface.h>
+#include <ui_interface.h> // ABC: node/ui_interface.h
 #include <shutdown.h>
 #include <span.h>
 #include <streams.h>
@@ -27,8 +27,17 @@
 #include <validation.h>
 #include <validationinterface.h>
 
-using common::TransactionErrorString;
-using node::TransactionError;
+#include <node/transaction.h>
+#include <univalue.h>
+#include <rpc/protocol.h>
+
+#include <chronik-cpp/util/context.h>
+#include <chronik-cpp/util/span.h>
+#include <chronik-cpp/util/streams.h>
+#include <chronik-cpp/util/storage.h>
+
+//using common::TransactionErrorString;
+//using node::TransactionError;
 
 chronik_bridge::OutPoint BridgeOutPoint(const COutPoint &outpoint) {
     return {
@@ -122,7 +131,7 @@ inline size_t GetFirstUndoOffset(const CBlock &block,
 chronik_bridge::Block BridgeBlock(const CBlock &block,
                                   const CBlockUndo &block_undo,
                                   const CBlockIndex &bindex)
-    EXCLUSIVE_LOCKS_REQUIRED(!::cs_main) {
+    LOCKS_EXCLUDED(::cs_main) {
     AssertLockNotHeld(::cs_main);
 
     uint32_t block_file_num{0};
@@ -180,7 +189,7 @@ namespace chronik_bridge {
 void log_print(const rust::Str logging_function, const rust::Str source_file,
                const uint32_t source_line, const rust::Str msg) {
     LogInstance().LogPrintStr(std::string(msg), std::source_location::current(),
-                              BCLog::LogFlags::NONE, BCLog::Level::Info,
+                              /* ABC: BCLog::LogFlags::NONE, BCLog::Level::Info, */
                               /*should_ratelimit=*/false);
 }
 
@@ -194,13 +203,12 @@ void log_print_chronik(const rust::Str logging_function,
 
 ChronikBridge::ChronikBridge(const node::NodeContext &node) : m_node{node} {
     // This class relies on these two members not being nullptr
-    Assert(m_node.chainman);
-    Assert(m_node.mempool);
+    //Assert(m_node.chainman);
+    //Assert(m_node.mempool);
 }
 
 const CBlockIndex &ChronikBridge::get_chain_tip() const {
-    const CBlockIndex *tip =
-        WITH_LOCK(cs_main, return m_node.chainman->ActiveTip());
+    const CBlockIndex *tip = WITH_LOCK(cs_main, return ChainActive().Tip());
     if (tip == nullptr) {
         throw block_index_not_found();
     }
@@ -210,22 +218,19 @@ const CBlockIndex &ChronikBridge::get_chain_tip() const {
 const CBlockIndex &
 ChronikBridge::lookup_block_index(std::array<uint8_t, 32> hash) const {
     BlockHash block_hash{chronik::util::ArrayToHash(hash)};
-    const CBlockIndex *pindex = WITH_LOCK(
-        cs_main,
-        return m_node.chainman->m_blockman.LookupBlockIndex(block_hash));
+    const CBlockIndex *pindex =
+        WITH_LOCK(cs_main, return LookupBlockIndex(block_hash));
     if (!pindex) {
         throw block_index_not_found();
     }
-    return *pindex;
 }
 
 const CBlockIndex &
 ChronikBridge::lookup_block_index_by_height(int height) const {
     // The boundary check is performed in the CChain::operator[](int nHeight)
     // method, a nullptr is returned if height is out of bounds.
-    const CBlockIndex *pindex = WITH_LOCK(
-        cs_main,
-        return m_node.chainman->GetChainstateForIndexing().m_chain[height]);
+    const CBlockIndex *pindex =
+        WITH_LOCK(cs_main, return ChainActive()[height]);
     if (!pindex) {
         throw block_index_not_found();
     }
@@ -240,8 +245,7 @@ ChronikBridge::get_block_headers_by_range(int start, int end) const {
     LOCK(cs_main);
     std::vector<RawBlockHeader> headers;
     for (int height = start; height <= end; height++) {
-        const CBlockIndex *pindex =
-            m_node.chainman->GetChainstateForIndexing().m_chain[height];
+        const CBlockIndex *pindex = ChainActive()[height];
         if (!pindex) {
             // We allow partial results or empty result.
             // We can assume that if a block height does not exist the following
@@ -261,8 +265,7 @@ ChronikBridge::get_block_hashes_by_range(int start, int end) const {
     LOCK(cs_main);
     std::vector<WrappedBlockHash> block_hashes;
     for (int height = start; height <= end; height++) {
-        const CBlockIndex *pindex =
-            m_node.chainman->GetChainstateForIndexing().m_chain[height];
+        const CBlockIndex *pindex = ChainActive()[height];
         if (!pindex) {
             throw block_index_not_found();
         }
@@ -275,7 +278,8 @@ ChronikBridge::get_block_hashes_by_range(int start, int end) const {
 std::unique_ptr<CBlock>
 ChronikBridge::load_block(const CBlockIndex &bindex) const {
     CBlock block;
-    if (!m_node.chainman->m_blockman.ReadBlock(block, bindex)) {
+    if (!ReadBlockFromDisk(block, &bindex,
+                           GetConfig().GetChainParams().GetConsensus())) {
         throw std::runtime_error("Reading block data failed");
     }
     return std::make_unique<CBlock>(std::move(block));
@@ -286,7 +290,7 @@ ChronikBridge::load_block_undo(const CBlockIndex &bindex) const {
     CBlockUndo block_undo;
     // Read undo data (genesis block doesn't have undo data)
     if (bindex.nHeight > 0) {
-        if (!m_node.chainman->m_blockman.ReadBlockUndo(block_undo, bindex)) {
+        if (!UndoReadFromDisk(block_undo, &bindex)) {
             throw std::runtime_error("Reading block undo data failed");
         }
     }
@@ -298,13 +302,11 @@ Tx ChronikBridge::load_tx(uint32_t file_num, uint32_t data_pos,
     CMutableTransaction tx;
     CTxUndo txundo{};
     const bool isCoinbase = undo_pos == 0;
-    if (!m_node.chainman->m_blockman.ReadTxFromDisk(
-            tx, FlatFilePos(file_num, data_pos))) {
+    if (!ReadTxFromDisk(tx, FlatFilePos(file_num, data_pos))) {
         throw std::runtime_error("Reading tx data from disk failed");
     }
     if (!isCoinbase) {
-        if (!m_node.chainman->m_blockman.ReadTxUndoFromDisk(
-                txundo, FlatFilePos(file_num, undo_pos))) {
+        if (!ReadTxUndoFromDisk(txundo, FlatFilePos(file_num, undo_pos))) {
             throw std::runtime_error("Reading tx undo data from disk failed");
         }
     }
@@ -314,17 +316,17 @@ Tx ChronikBridge::load_tx(uint32_t file_num, uint32_t data_pos,
 rust::Vec<uint8_t> ChronikBridge::load_raw_tx(uint32_t file_num,
                                               uint32_t data_pos) const {
     CMutableTransaction tx;
-    if (!m_node.chainman->m_blockman.ReadTxFromDisk(
-            tx, FlatFilePos(file_num, data_pos))) {
+    if (!ReadTxFromDisk(tx, FlatFilePos(file_num, data_pos))) {
         throw std::runtime_error("Reading tx data from disk failed");
     }
-    DataStream raw_tx{};
+    CDataStream raw_tx{SER_NETWORK, PROTOCOL_VERSION};
     raw_tx << tx;
-    return chronik::util::ToRustVec<uint8_t>(MakeUCharSpan(raw_tx));
+    return chronik::util::ToRustVec<uint8_t>(MakeUInt8Span(raw_tx));
 }
 
 bool ChronikBridge::is_avalanche_finalized_preconsensus(
     const std::array<uint8_t, 32> &mempool_txid) const {
+/* ABC:
     if (!m_node.mempool) {
         return false;
     }
@@ -335,6 +337,8 @@ bool ChronikBridge::is_avalanche_finalized_preconsensus(
     return WITH_LOCK(
         m_node.mempool->cs,
         return m_node.mempool->isAvalancheFinalizedPreConsensus(txid));
+    */
+    return false; // Always disabled on BCHC
 }
 
 Tx bridge_tx(const CTransaction &tx, const std::vector<::Coin> &spent_coins) {
@@ -342,10 +346,8 @@ Tx bridge_tx(const CTransaction &tx, const std::vector<::Coin> &spent_coins) {
 }
 
 const CBlockIndex &ChronikBridge::find_fork(const CBlockIndex &index) const {
-    const CBlockIndex *fork = WITH_LOCK(
-        cs_main,
-        return m_node.chainman->GetChainstateForIndexing().m_chain.FindFork(
-            &index));
+    const CBlockIndex *fork =
+        WITH_LOCK(cs_main, return ChainActive().FindFork(&index));
     if (!fork) {
         throw block_index_not_found();
     }
@@ -358,9 +360,8 @@ void ChronikBridge::lookup_spent_coins(
     not_found.clear();
     coins_to_uncache.clear();
     LOCK(cs_main);
-    CCoinsViewCache &coins_cache =
-        m_node.chainman->GetChainstateForIndexing().CoinsTip();
-    CCoinsViewMemPool coin_view(&coins_cache, *m_node.mempool);
+    CCoinsViewCache &coins_cache = *pcoinsTip;
+    CCoinsViewMemPool coin_view(&coins_cache, g_mempool);
     for (TxInput &input : tx.inputs) {
         TxId txid = TxId(chronik::util::ArrayToHash(input.prev_out.txid));
         COutPoint outpoint = COutPoint(txid, input.prev_out.out_idx);
@@ -388,8 +389,7 @@ void ChronikBridge::lookup_spent_coins(
 void ChronikBridge::uncache_coins(
     rust::Slice<const OutPoint> coins_to_uncache) const {
     LOCK(cs_main);
-    CCoinsViewCache &coins_cache =
-        m_node.chainman->GetChainstateForIndexing().CoinsTip();
+    CCoinsViewCache &coins_cache = *pcoinsTip;
     for (const OutPoint &outpoint : coins_to_uncache) {
         TxId txid = TxId(chronik::util::ArrayToHash(outpoint.txid));
         coins_cache.Uncache(COutPoint(txid, outpoint.out_idx));
@@ -400,30 +400,30 @@ std::array<uint8_t, 32>
 ChronikBridge::broadcast_tx(rust::Slice<const uint8_t> raw_tx,
                             int64_t max_fee) const {
     std::vector<uint8_t> vec = chronik::util::FromRustSlice(raw_tx);
-    DataStream stream{vec};
+    CDataStream stream{vec, SER_NETWORK, PROTOCOL_VERSION};
     CMutableTransaction tx;
     stream >> tx;
     CTransactionRef tx_ref = MakeTransactionRef(tx);
     std::string err_str;
-    TransactionError error = node::BroadcastTransaction(
-        m_node, tx_ref, err_str, max_fee * Amount::satoshi(), /*relay=*/true,
-        /*wait_callback=*/false);
-    if (error != TransactionError::OK) {
-        bilingual_str txErrorMsg = TransactionErrorString(error);
-        if (err_str.empty()) {
-            throw std::runtime_error(txErrorMsg.original.c_str());
-        } else {
-            std::string msg = strprintf("%s: %s", txErrorMsg.original, err_str);
-            throw std::runtime_error(msg.c_str());
-        }
+    try {
+        LogPrintf("Trying to broadcast tx %s\n", tx_ref->GetId().ToString());
+        TxId txid = BroadcastTransaction(GetConfig(), tx_ref, false/*,
+                                         wait_callback=false*/);
+        LogPrintf("Broadcast tx %s\n", txid.ToString());
+    } catch (JSONRPCError error) {
+        std::string msg = error.message;
+        LogPrintf("Error broadcasting %s: %s\n", tx_ref->GetId().ToString(),
+                  UniValue::stringify(std::move(error).toObj()));
+        throw std::runtime_error(msg);
+    } catch (...) {
+        throw std::runtime_error("Unknown error");
     }
     return chronik::util::HashToArray(tx_ref->GetId());
 }
 
 void ChronikBridge::fatal_error(const rust::Str msg,
                                 const rust::Str user_msg) const {
-    m_node.chainman->GetNotifications().fatalError(
-        std::string(msg), Untranslated(std::string(user_msg)));
+    AbortNode(std::string(msg), std::string(user_msg));
 }
 
 bool ChronikBridge::shutdown_requested() const {
@@ -431,26 +431,34 @@ bool ChronikBridge::shutdown_requested() const {
 }
 
 WrappedBlockHash ChronikBridge::get_genesis_hash() const {
-    const CBlock &genesis = m_node.chainman->GetParams().GenesisBlock();
+    const CBlock &genesis = GetConfig().GetChainParams().GenesisBlock();
     return WrappedBlockHash{.data =
                                 chronik::util::HashToArray(genesis.GetHash())};
 }
 
 int64_t ChronikBridge::estimate_feerate_sats_per_kb() const {
+    /*
     if (!m_node.mempool) {
         return -1;
     }
 
     const Amount feeRateSatsPerK = m_node.mempool->estimateFee().GetFeePerK();
     return feeRateSatsPerK / Amount::satoshi();
+    */
+
+    return -1;
 }
 
 int64_t ChronikBridge::min_relay_feerate_sats_per_kb() const {
+    /*
     if (!m_node.mempool) {
         return -1;
     }
 
     return m_node.mempool->m_min_relay_feerate.GetFeePerK() / Amount::satoshi();
+    */
+
+    return -1;
 }
 
 bool ChronikBridge::get_feerate_info(std::array<uint8_t, 32> mempool_txid,
@@ -458,21 +466,21 @@ bool ChronikBridge::get_feerate_info(std::array<uint8_t, 32> mempool_txid,
                                      uint32_t &virtual_size_bytes) const {
     TxId txid{chronik::util::ArrayToHash(mempool_txid)};
 
-    if (!m_node.mempool) {
+    /*if (!m_node.mempool) {
         return false;
-    }
+    }*/
 
-    AssertLockNotHeld(m_node.mempool->cs);
-    LOCK(m_node.mempool->cs);
+    AssertLockNotHeld(GetMempool().cs);
+    LOCK(GetMempool().cs);
 
-    auto iter = m_node.mempool->GetIter(txid);
+    auto iter = GetMempool().GetIter(txid);
     if (!iter) {
         return false;
     }
 
     modified_fee_rate_sats_per_kb =
-        (**iter)->GetModifiedFeeRate().GetFeePerK() / Amount::satoshi();
-    virtual_size_bytes = (**iter)->GetTxVirtualSize();
+        (*iter)->GetModifiedFeeRate().GetFeePerK() / Amount::satoshi();
+    virtual_size_bytes = (*iter)->GetTxVirtualSize();
 
     return true;
 }
@@ -484,7 +492,7 @@ std::unique_ptr<ChronikBridge> make_bridge(const node::NodeContext &node) {
 chronik_bridge::Block bridge_block(const CBlock &block,
                                    const CBlockUndo &block_undo,
                                    const CBlockIndex &bindex)
-    EXCLUSIVE_LOCKS_REQUIRED(!::cs_main) {
+    LOCKS_EXCLUDED(::cs_main) {
     return BridgeBlock(block, block_undo, bindex);
 }
 
@@ -496,7 +504,7 @@ BlockInfo get_block_info(const CBlockIndex &bindex) {
 }
 
 std::array<uint8_t, 80> get_block_header(const CBlockIndex &index) {
-    DataStream ser_header{};
+    DataStream ser_header{0,0};
     ser_header << index.GetBlockHeader();
     std::array<uint8_t, 80> array;
     std::copy_n(MakeUCharSpan(ser_header).begin(), 80, array.begin());
@@ -515,14 +523,14 @@ const CBlockIndex &get_block_ancestor(const CBlockIndex &index,
 rust::Vec<uint8_t> compress_script(rust::Slice<const uint8_t> bytecode) {
     std::vector<uint8_t> vec = chronik::util::FromRustSlice(bytecode);
     CScript script{vec.begin(), vec.end()};
-    DataStream compressed{};
+    DataStream compressed{0,0};
     compressed << Using<ScriptCompression>(script);
     return chronik::util::ToRustVec<uint8_t>(MakeUCharSpan(compressed));
 }
 
 rust::Vec<uint8_t> decompress_script(rust::Slice<const uint8_t> compressed) {
     std::vector<uint8_t> vec = chronik::util::FromRustSlice(compressed);
-    DataStream stream{vec};
+    DataStream stream{vec, 0,0};
     CScript script;
     stream >> Using<ScriptCompression>(script);
     return chronik::util::ToRustVec<uint8_t>(script);
@@ -533,7 +541,7 @@ int64_t calc_fee(size_t num_bytes, int64_t sats_fee_per_kb) {
 }
 
 int64_t default_max_raw_tx_fee_rate_per_kb() {
-    return node::DEFAULT_MAX_RAW_TX_FEE_RATE.GetFeePerK() / SATOSHI;
+    return 0; //node::DEFAULT_MAX_RAW_TX_FEE_RATE.GetFeePerK() / SATOSHI;
 }
 
 void sync_with_validation_interface_queue() {
@@ -541,7 +549,7 @@ void sync_with_validation_interface_queue() {
 }
 
 bool init_error(const rust::Str msg) {
-    return InitError(Untranslated(std::string(msg)));
+    return InitError(std::string(msg));
 }
 
 rust::String client_name() {

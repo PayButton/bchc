@@ -5,15 +5,16 @@
 #include <chainparams.h>
 #include <chainparamsbase.h>
 #include <chrono>
-#include <common/args.h>
+//#include <common/args.h>
 #include <config.h>
 #include <logging.h>
 #include <node/context.h>
-#include <node/ui_interface.h>
-#include <util/chaintype.h>
-#include <util/result.h>
-#include <util/time.h>
-#include <util/translation.h>
+#include <ui_interface.h> // ABC: node/ui_interface.h
+//#include <util/time.h>
+
+#include <chronik-cpp/util/args.h>
+#include <chronik-cpp/util/result.h> // ABC: util/result.h
+#include <chronik-cpp/util/chaintype.h> // ABC: util/chaintype.h
 
 #include <chronik-cpp/chronik.h>
 #include <chronik-cpp/chronik_validationinterface.h>
@@ -26,11 +27,11 @@ namespace chronik {
 // Duration between WebSocket pings initiated by Chronik.
 // 45s has been empirically established as a reliable duration for both browser
 // and NodeJS WebSockets.
-static constexpr std::chrono::seconds WS_PING_INTERVAL_DEFAULT{45s};
+static constexpr uint64_t WS_PING_INTERVAL_DEFAULT_SECS{45};
 
 // Ping duration is just 5s on regtest to speed up ping tests and make
 // functional tests more reliable.
-static constexpr std::chrono::seconds WS_PING_INTERVAL_REGTEST{5s};
+static constexpr uint64_t WS_PING_INTERVAL_REGTEST_SECS{5};
 
 template <typename T, typename C> rust::Vec<T> ToRustVec(const C &container) {
     rust::Vec<T> vec;
@@ -75,7 +76,7 @@ ParseChronikParams(const ArgsManager &args, const Config &config, bool fWipe) {
         }
     }
 
-    const int64_t electrum_max_history = args.GetIntArg(
+    const int64_t electrum_max_history = GetIntArg(args,
         "-chronikelectrummaxhistory", DEFAULT_ELECTRUM_MAX_HISTORY);
     if (electrum_max_history < 1 ||
         electrum_max_history > std::numeric_limits<uint32_t>::max()) {
@@ -97,10 +98,8 @@ ParseChronikParams(const ArgsManager &args, const Config &config, bool fWipe) {
     }
 
     const int64_t electrum_peers_validation_interval =
-        args.GetIntArg("-chronikelectrumpeersvalidationinterval",
-                       std::chrono::duration_cast<std::chrono::seconds>(
-                           chronik::DEFAULT_ELECTRUM_PEER_VALIDATION_INTERVAL)
-                           .count());
+        GetIntArg(args, "-chronikelectrumpeersvalidationinterval",
+                  chronik::DEFAULT_ELECTRUM_PEER_VALIDATION_INTERVAL_SECS);
     if (electrum_peers_validation_interval < 0 ||
         electrum_peers_validation_interval >
             std::numeric_limits<uint32_t>::max()) {
@@ -110,14 +109,16 @@ ParseChronikParams(const ArgsManager &args, const Config &config, bool fWipe) {
                        .c_str())}};
     }
 
+    const ChainType chainType = *ChainTypeFromString(params.NetworkIDString());
+
     return {{
-        .net = ParseNet(params.GetChainType()),
-        .datadir = args.GetDataDirBase().u8string(),
-        .datadir_net = args.GetDataDirNet().u8string(),
+        .net = ParseNet(chainType),
+        .datadir = GetDataDirBase().string(),
+        .datadir_net = GetDataDirNet().string(),
         .hosts = ToRustVec<rust::String>(args.IsArgSet("-chronikbind")
                                              ? args.GetArgs("-chronikbind")
                                              : DEFAULT_BINDS),
-        .default_port = BaseParams().ChronikPort(),
+        .default_port = DefaultChronikPort(chainType),
         .wipe_db = fWipe,
         .enable_token_index = args.GetBoolArg("-chroniktokenindex", true),
         .enable_lokad_id_index = args.GetBoolArg("-chroniklokadidindex", true),
@@ -125,21 +126,21 @@ ParseChronikParams(const ArgsManager &args, const Config &config, bool fWipe) {
         .is_pause_allowed = is_pause_allowed,
         .enable_perf_stats = args.GetBoolArg("-chronikperfstats", false),
         .ws_ping_interval_secs =
-            params.GetChainType() == ChainType::REGTEST
-                ? uint64_t(count_seconds(WS_PING_INTERVAL_REGTEST))
-                : uint64_t(count_seconds(WS_PING_INTERVAL_DEFAULT)),
+            chainType == ChainType::REGTEST
+                ? WS_PING_INTERVAL_REGTEST_SECS
+                : WS_PING_INTERVAL_DEFAULT_SECS,
         .enable_cors = args.GetBoolArg("-chronikcors", false),
         .tx_num_cache =
             {
-                .num_buckets = (size_t)args.GetIntArg(
+                .num_buckets = (size_t)GetIntArg(args,
                     "-chroniktxnumcachebuckets", DEFAULT_TX_NUM_CACHE_BUCKETS),
                 .bucket_size =
-                    (size_t)args.GetIntArg("-chroniktxnumcachebucketsize",
-                                           DEFAULT_TX_NUM_CACHE_BUCKET_SIZE),
+                    (size_t)GetIntArg(args, "-chroniktxnumcachebucketsize",
+                                      DEFAULT_TX_NUM_CACHE_BUCKET_SIZE),
             },
         .electrum_hosts = ToRustVec<rust::String>(electrum_hosts),
         .electrum_url = args.GetArg("-chronikelectrumurl", "127.0.0.1"),
-        .electrum_default_port = BaseParams().ChronikElectrumPort(),
+        .electrum_default_port = DefaultChronikElectrumPort(chainType),
         .electrum_default_protocol = 's',
         .electrum_cert_path = args.GetArg("-chronikelectrumcert", ""),
         .electrum_privkey_path = args.GetArg("-chronikelectrumprivkey", ""),

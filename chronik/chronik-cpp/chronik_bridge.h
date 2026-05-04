@@ -13,6 +13,8 @@
 #include <rust/cxx.h>
 #include <vector>
 
+#include <chronik-cpp/util/context.h>
+
 class CBlock;
 class CBlockIndex;
 class CBlockUndo;
@@ -86,8 +88,8 @@ public:
     rust::Vec<uint8_t> load_raw_tx(uint32_t file_num, uint32_t data_pos) const;
 
     bool is_avalanche_finalized_preconsensus(
-        const std::array<uint8_t, 32> &txid) const
-        EXCLUSIVE_LOCKS_REQUIRED(!m_node.mempool->cs);
+        const std::array<uint8_t, 32> &txid) const;
+        // ABC: EXCLUSIVE_LOCKS_REQUIRED(!m_node.mempool->cs);
 
     const CBlockIndex &find_fork(const CBlockIndex &index) const;
 
@@ -110,8 +112,8 @@ public:
 
     bool get_feerate_info(std::array<uint8_t, 32> mempool_txid,
                           int64_t &modified_fee_rate_sats_per_kb,
-                          uint32_t &virtual_size_bytes) const
-        EXCLUSIVE_LOCKS_REQUIRED(!m_node.mempool->cs);
+                          uint32_t &virtual_size_bytes) const;
+        // ABC: EXCLUSIVE_LOCKS_REQUIRED(!m_node.mempool->cs);
 };
 
 std::unique_ptr<ChronikBridge> make_bridge(const node::NodeContext &node);

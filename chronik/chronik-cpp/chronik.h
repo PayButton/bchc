@@ -9,10 +9,12 @@
 #include <string>
 #include <vector>
 
+#include <util/system.h> // ABC: common/args.h
+
 class Config;
-namespace node {
+//namespace node {
 struct NodeContext;
-} // namespace node
+//} // namespace node
 
 namespace chronik {
 
@@ -32,11 +34,11 @@ static const uint32_t DEFAULT_ELECTRUM_MAX_HISTORY{200'000};
 
 static constexpr size_t MAX_LENGTH_DONATION_ADDRESS{80};
 
-static constexpr auto DEFAULT_ELECTRUM_PEER_VALIDATION_INTERVAL{10min};
+static constexpr int64_t DEFAULT_ELECTRUM_PEER_VALIDATION_INTERVAL_SECS{10 * 60};
 
 // Registers Chronik indexer as ValidationInterface, listens to HTTP queries
 bool Start(const ArgsManager &args, const Config &config,
-           const node::NodeContext &node, bool fWipe);
+           const NodeContext &node, bool fWipe);
 
 // Unregisters Chronik indexer as ValidationInterface, stops the HTTP server
 void Stop();
