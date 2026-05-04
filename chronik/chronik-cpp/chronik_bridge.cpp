@@ -223,6 +223,7 @@ ChronikBridge::lookup_block_index(std::array<uint8_t, 32> hash) const {
     if (!pindex) {
         throw block_index_not_found();
     }
+    return *pindex;
 }
 
 const CBlockIndex &

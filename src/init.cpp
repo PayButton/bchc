@@ -2891,6 +2891,14 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
         g_coin_stats_index->Start();
     }
 
+    if (gArgs.GetBoolArg("-chronik", true)) {
+        const bool fReindexChronik =
+            fReindex || gArgs.GetBoolArg("-chronikreindex", false);
+        if (!chronik::Start(gArgs, config, node, fReindexChronik)) {
+            return false;
+        }
+    }
+
     // Step 9: load wallet
     for (const auto &client : node.chain_clients) {
         if (!client->load(chainparams)) {

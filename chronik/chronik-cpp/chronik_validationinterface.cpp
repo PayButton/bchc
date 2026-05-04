@@ -11,6 +11,7 @@
 #include <txmempool.h>
 #include <validationinterface.h>
 
+#include <coins.h>
 #include <chronik-cpp/util/context.h> // ABC: node/context.h
 
 namespace chronik {
@@ -42,32 +43,27 @@ private:
     rust::Box<chronik_bridge::Chronik> m_chronik;
     const node::NodeContext &m_node;
 
-    /*void TransactionAddedToMempool(
+    void TransactionAddedToMempool(
         const CTransactionRef &ptx,
-        std::shared_ptr<const std::vector<Coin>> spent_coins,
-        uint64_t mempool_sequence) override {
-        const TxMempoolInfo info = m_node.mempool->info(ptx->GetId());
+        std::shared_ptr<const std::vector<Coin>> spent_coins) override {
+        const TxMempoolInfo info = GetMempool().info(ptx->GetId());
         m_chronik->handle_tx_added_to_mempool(*ptx, *spent_coins,
-                                              info.m_time.count());
+                                              info.nTime);
     }
 
-    void TransactionRemovedFromMempool(const CTransactionRef &ptx,
-                                       MemPoolRemovalReason reason,
-                                       uint64_t mempool_sequence) override {
+    void TransactionRemovedFromMempool(const CTransactionRef &ptx) override {
         m_chronik->handle_tx_removed_from_mempool(
             chronik::util::HashToArray(ptx->GetId()));
     }
 
-    void BlockConnected(ChainstateRole role,
-                        const std::shared_ptr<const CBlock> &block,
-                        const CBlockIndex *pindex) override {
-        // Ignore events from the assumed-valid chain; we will process its
-        // blocks (sequentially) after it is fully verified by the background
-        // chainstate.
-        if (role == ChainstateRole::ASSUMEDVALID) {
-            return;
+    void BlockConnected(
+            const std::shared_ptr<const CBlock> &block,
+            const CBlockIndex *pindex,
+            const std::vector<CTransactionRef> &txnConflicted) override {
+        for (const CTransactionRef &ptx : txnConflicted) {
+            m_chronik->handle_tx_removed_from_mempool(
+                chronik::util::HashToArray(ptx->GetId()));
         }
-
         // We can safely pass T& here as Rust guarantees us that no references
         // can be kept after the below function call completed.
         m_chronik->handle_block_connected(*block, *pindex);
@@ -79,6 +75,7 @@ private:
         m_chronik->handle_block_disconnected(*block, *pindex);
     }
 
+    /*
     void BlockFinalized(const CBlockIndex *pindex) override {
         m_chronik->handle_block_finalized(*pindex);
     }

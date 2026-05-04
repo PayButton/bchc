@@ -481,6 +481,19 @@ static bool CheckInputsFromMempoolAndCache(
     return CheckInputs(tx, state, view, true, flags, cacheSigStore, true, txdata, nSigChecksOut);
 }
 
+std::vector<Coin> GetSpentCoins(const CTransactionRef &ptx,
+                                const CCoinsViewCache &coins_view) {
+    std::vector<Coin> spent_coins;
+    spent_coins.reserve(ptx->vin.size());
+    for (const CTxIn &input : ptx->vin) {
+        Coin coin;
+        const bool coinFound = coins_view.GetCoin(input.prevout, coin);
+        assert(coinFound);
+        spent_coins.push_back(std::move(coin));
+    }
+    return spent_coins;
+}
+
 static bool
 AcceptToMemoryPoolWorker(const Config &config, CTxMemPool &pool,
                          CValidationState &state, const CTransactionRef &ptx,
@@ -821,9 +834,11 @@ AcceptToMemoryPoolWorker(const Config &config, CTxMemPool &pool,
         if (pinfo) {
             pinfo->entryId = entryId;
         }
-    }
 
-    GetMainSignals().TransactionAddedToMempool(ptx);
+        GetMainSignals().TransactionAddedToMempool(ptx, 
+            std::make_shared<const std::vector<Coin>>(
+                GetSpentCoins(ptx, view)));
+    }
 
     // Handle double spend proof orphans (if any)
     if (!rescuedDSPOrphans.empty()) {
@@ -2347,7 +2362,7 @@ bool CChainState::DisconnectTip(const Config &config,
     UpdateTip(config, pindexDelete->pprev);
     // Let wallets know transactions went from 1-confirmed to
     // 0-confirmed or conflicted:
-    GetMainSignals().BlockDisconnected(pblock);
+    GetMainSignals().BlockDisconnected(pblock, pindexDelete);
     return true;
 }
 

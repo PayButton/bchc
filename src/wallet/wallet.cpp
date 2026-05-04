@@ -1352,7 +1352,8 @@ void CWallet::SyncTransaction(const CTransactionRef &ptx,
     MarkInputsDirty(ptx);
 }
 
-void CWallet::TransactionAddedToMempool(const CTransactionRef &ptx) {
+void CWallet::TransactionAddedToMempool(const CTransactionRef &ptx,
+        std::shared_ptr<const std::vector<Coin>> spent_coins) {
     auto locked_chain = chain().lock();
     LOCK(cs_wallet);
     SyncTransaction(ptx, BlockHash(), 0 /* position in block */);
@@ -1397,7 +1398,9 @@ void CWallet::BlockConnected(
     m_last_block_processed = pindex->GetBlockHash();
 }
 
-void CWallet::BlockDisconnected(const std::shared_ptr<const CBlock> &pblock) {
+void CWallet::BlockDisconnected(
+        const std::shared_ptr<const CBlock> &pblock,
+        const CBlockIndex *pindex) {
     auto locked_chain = chain().lock();
     LOCK(cs_wallet);
 

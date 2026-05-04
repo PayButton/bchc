@@ -20,6 +20,7 @@ class CBlock;
 class CBlockIndex;
 struct CBlockLocator;
 class CBlockIndex;
+class Coin;
 class CConnman;
 class CReserveScript;
 class CValidationInterface;
@@ -108,7 +109,8 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void TransactionAddedToMempool(const CTransactionRef &ptxn) {}
+    virtual void TransactionAddedToMempool(const CTransactionRef &ptxn, 
+        std::shared_ptr<const std::vector<Coin>> spent_coins) {}
 
     /**
      * Notifies listeners of a new valid double-spend proof having been
@@ -155,7 +157,9 @@ protected:
      *
      * Called on a background thread.
      */
-    virtual void BlockDisconnected(const std::shared_ptr<const CBlock> &block) {
+    virtual void BlockDisconnected(
+        const std::shared_ptr<const CBlock> &block,
+        const CBlockIndex *pindex) {
     }
     /**
      * Notifies listeners of the new active block chain on-disk.
@@ -231,14 +235,15 @@ public:
 
     void UpdatedBlockTip(const CBlockIndex *, const CBlockIndex *,
                          bool fInitialDownload);
-    void TransactionAddedToMempool(const CTransactionRef &);
+    void TransactionAddedToMempool(const CTransactionRef &,
+                                   std::shared_ptr<const std::vector<Coin>>);
     void TransactionDoubleSpent(const CTransactionRef &, const DspId &);
     void BadDSProofsDetectedFromNodeIds(const std::vector<NodeId> &);
     void
     BlockConnected(const std::shared_ptr<const CBlock> &,
                    const CBlockIndex *pindex,
                    const std::shared_ptr<const std::vector<CTransactionRef>> &);
-    void BlockDisconnected(const std::shared_ptr<const CBlock> &);
+    void BlockDisconnected(const std::shared_ptr<const CBlock> &, const CBlockIndex *);
     void ChainStateFlushed(const CBlockLocator &);
     void Broadcast(int64_t nBestBlockTime, CConnman *connman);
     void BlockChecked(const CBlock &, const CValidationState &);
